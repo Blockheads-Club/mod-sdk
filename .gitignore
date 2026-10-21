@@ -1,0 +1,5 @@
+/target
+target/
+*.bhmod
+examples/hello-rust/server/mod.wasm
+/lcov.info

@@ -1,0 +1,12 @@
+[package]
+name = "bhmod-core"
+description = "Shared Blockheads mod host core (placeholder; implemented in milestone M1)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license = "GPL-3.0-or-later"
+repository.workspace = true
+authors.workspace = true
+publish = false
+
+[dependencies]
