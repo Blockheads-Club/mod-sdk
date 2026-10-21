@@ -1,0 +1,15 @@
+id = "hello-draft"
+name = "Hello (draft)"
+owners = ["Blockheads-Club"]
+repo = "https://github.com/Blockheads-Club/mod-sdk"
+draft = true
+
+[[versions]]
+version = "0.1.0"
+url = "https://example.invalid/TODO/hello-draft-0.1.0.bhmod"
+sha256 = "0000000000000000000000000000000000000000000000000000000000000000"
+size = 1
+sides = ["server"]
+api = "^0.1"
+permissions = {}
+published = 2026-10-21
