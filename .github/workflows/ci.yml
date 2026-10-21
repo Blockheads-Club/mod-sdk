@@ -1,0 +1,107 @@
+name: CI
+
+on:
+  push:
+    branches: [main, dev, "fix/**"]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+  LUAU_VERSION: "0.743"
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: rustfmt
+        run: cargo fmt --all --check
+      - name: clippy
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools-preview
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@cargo-llvm-cov
+      - name: Schema tests (JSON Schemas vs fixtures and the Rust validator)
+        run: cargo test -p bhmod-manifest --test schema --locked
+      - name: Protocol vectors (byte-exact)
+        run: cargo test -p bhmod-proto --test vectors --locked
+      - name: Tests with 100 % line coverage gate
+        run: cargo llvm-cov --workspace --locked --fail-under-lines 100 --lcov --output-path lcov.info
+      - name: Coverage summary
+        run: cargo llvm-cov report --summary-only
+
+  wit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: wasm-tools
+      - name: Validate the blockheads:api WIT package
+        run: wasm-tools component wit wit/blockheads-api > /dev/null
+
+  examples:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-wasip2
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            .
+            examples/hello-rust
+      - name: Build bhmod
+        run: cargo build -p bhmod --locked
+      - name: Install Luau
+        run: |
+          curl -sSfL "https://github.com/luau-lang/luau/releases/download/${LUAU_VERSION}/luau-ubuntu.zip" -o "$RUNNER_TEMP/luau.zip"
+          unzip -q "$RUNNER_TEMP/luau.zip" -d "$RUNNER_TEMP/luau"
+          echo "$RUNNER_TEMP/luau" >> "$GITHUB_PATH"
+      - name: Luau syntax check (examples and templates)
+        run: luau-compile --null examples/hello-lua/server/main.luau crates/bhmod-cli/templates/lua/main.luau
+      - name: hello-rust (fmt, clippy, build the WASM component)
+        working-directory: examples/hello-rust
+        run: |
+          cargo fmt --check
+          cargo clippy --target wasm32-wasip2 -- -D warnings
+          ./build.sh
+      - name: bhmod check on the examples
+        run: |
+          ./target/debug/bhmod check --index examples/hello-lua
+          ./target/debug/bhmod check --index examples/hello-rust
+      - name: bhmod pack on the examples
+        run: |
+          ./target/debug/bhmod pack examples/hello-lua -o "$RUNNER_TEMP/hello-lua.bhmod"
+          ./target/debug/bhmod pack examples/hello-rust -o "$RUNNER_TEMP/hello-rust.bhmod"
+          ./target/debug/bhmod check --index "$RUNNER_TEMP/hello-lua.bhmod"
+          ./target/debug/bhmod check --index "$RUNNER_TEMP/hello-rust.bhmod"
+      - name: Templates build and pass check
+        run: |
+          ./target/debug/bhmod new tpl-lua --lang lua --dir "$RUNNER_TEMP"
+          ./target/debug/bhmod check "$RUNNER_TEMP/tpl-lua"
+          ./target/debug/bhmod new tpl-rust --lang rust --dir "$RUNNER_TEMP"
+          (cd "$RUNNER_TEMP/tpl-rust" && ./build.sh)
+          ./target/debug/bhmod check "$RUNNER_TEMP/tpl-rust"
