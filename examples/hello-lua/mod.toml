@@ -1,0 +1,19 @@
+schema = 1
+id = "hello-lua"
+version = "0.1.0"
+name = { en = "Hello (Lua)", tr = "Merhaba (Lua)" }
+description = { en = "Adds /hello and greets players who join. Example Luau mod." }
+authors = ["Blockheads Club"]
+license = "MIT OR Apache-2.0"
+homepage = "https://github.com/Blockheads-Club/mod-sdk"
+api = "^0.1"
+
+[sides]
+server = true
+client = false
+
+[entry]
+server = { runtime = "lua", path = "server/main.luau" }
+
+[permissions]
+players = ["chat"]
