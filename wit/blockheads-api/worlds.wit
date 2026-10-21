@@ -1,0 +1,29 @@
+package blockheads:api@0.1.0;
+
+/// The interfaces every mod may import, on both sides.
+world core {
+    import types;
+    import host;
+    import log;
+    import players;
+    import events;
+    import commands;
+    import scheduler;
+    import storage;
+    import services;
+    import channels;
+}
+
+/// A server mod (`[entry] server` in `mod.toml`). Runs in the dedicated server or the host of a local world.
+world server-mod {
+    include core;
+    export guest;
+}
+
+/// A client mod (`[entry] client`). Runs in the game client (PC port or Android loader). In 0.1 it gets the same
+/// core imports; player-join, player-quit and kicks are server-only, and `players` lists the players the client
+/// knows about. Client-specific interfaces (HUD, input, rendering, assets) arrive with milestone M6.
+world client-mod {
+    include core;
+    export guest;
+}
