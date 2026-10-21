@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Example of the extra key a modded client adds to its 0x1f player-information dict after READY.
+     Only the key and the two inner values are normative; the other keys of the vanilla 0x1f dict are omitted here
+     and whitespace is free. acceptedHash = modsHash of vectors/01-server-hello.hex as 64 lowercase hex chars. -->
+<plist version="1.0">
+<dict>
+	<key>bhcModLoader</key>
+	<dict>
+		<key>acceptedHash</key>
+		<string>cde01a3cfbdf76fb3bc63bfacf9f9a8be3f119f4bd3d9d627774508fc9226f4a</string>
+		<key>proto</key>
+		<integer>1</integer>
+	</dict>
+</dict>
+</plist>

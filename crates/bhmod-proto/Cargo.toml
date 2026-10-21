@@ -1,0 +1,15 @@
+[package]
+name = "bhmod-proto"
+description = "Encode and decode the Blockheads Club 0xBC mod protocol"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+sha2.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
