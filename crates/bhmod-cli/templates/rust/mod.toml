@@ -1,0 +1,16 @@
+schema = 1
+id = "{{id}}"
+version = "0.1.0"
+name = { en = "{{id}}" }
+description = { en = "My first Blockheads mod." }
+authors = ["your-name"]
+# Your mod, your licence: pick any (MIT, GPL-3.0-or-later, Apache-2.0, ...). Add a LICENSE file before publishing.
+license = "MIT"
+api = "^0.1"
+
+[sides]
+server = true
+client = false
+
+[entry]
+server = { runtime = "wasm", path = "server/mod.wasm" }
