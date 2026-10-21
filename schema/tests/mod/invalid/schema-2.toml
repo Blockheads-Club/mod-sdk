@@ -1,0 +1,13 @@
+schema = 2
+id = "bad"
+version = "0.1.0"
+name = { en = "Bad" }
+authors = ["me"]
+license = "MIT"
+api = "^0.1"
+
+[sides]
+server = true
+
+[entry]
+server = { runtime = "lua", path = "server/main.luau" }

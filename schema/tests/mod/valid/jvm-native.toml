@@ -1,0 +1,19 @@
+schema = 1
+id = "jvm-mod"
+version = "2.0.0"
+name = { en = "JVM mod" }
+authors = ["me"]
+license = "Proprietary"
+api = "0.1.*"
+
+[sides]
+server = true
+client = true
+client-required = false
+
+[entry]
+server = { runtime = "jvm", path = "server/mod.jar" }
+client = { runtime = "wasm", path = "client/mod.wasm" }
+
+[permissions]
+native = true

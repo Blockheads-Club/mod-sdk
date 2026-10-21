@@ -1,0 +1,29 @@
+id = "landclaim"
+name = "Land Claim"
+description = "Claim and protect land with signs."
+owners = ["github-user"]
+repo = "https://github.com/someone/landclaim"
+tags = ["protection", "admin"]
+
+[[versions]]
+version = "1.4.0"
+url = "https://github.com/someone/landclaim/releases/download/v1.4.0/landclaim-1.4.0.bhmod"
+sha256 = "3f2a8c1d9e0b7a6f5e4d3c2b1a0f9e8d7c6b5a4f3e2d1c0b9a8f7e6d5c4b3a29"
+size = 48213
+sides = ["server", "client"]
+client-required = false
+api = "^0.1"
+depends = { economy = "^1.1" }
+permissions = { world = "write", players = ["chat", "teleport", "kick"], native = false }
+published = 2026-11-02
+
+[[versions]]
+version = "1.4.1"
+url = "https://github.com/someone/landclaim/releases/download/v1.4.1/landclaim-1.4.1.bhmod"
+mirror = "https://github.com/Blockheads-Club/mods/releases/download/landclaim-1.4.1/landclaim-1.4.1.bhmod"
+sha256 = "0000000000000000000000000000000000000000000000000000000000000001"
+sides = ["server"]
+api = "^0.1"
+permissions = {}
+published = 2026-11-20
+yanked = true

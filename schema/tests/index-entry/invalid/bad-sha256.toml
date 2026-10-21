@@ -1,0 +1,13 @@
+id = "x1"
+name = "X"
+owners = ["me"]
+repo = "https://github.com/me/x1"
+
+[[versions]]
+version = "0.1.0"
+url = "https://example.com/x1-0.1.0.bhmod"
+sha256 = "ABC"
+sides = ["server"]
+api = "^0.1"
+permissions = {}
+published = 2026-01-01

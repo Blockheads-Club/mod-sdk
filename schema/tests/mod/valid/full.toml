@@ -1,0 +1,40 @@
+schema = 1
+id = "landclaim"
+version = "1.4.0-beta.1+build.5"
+name = { en = "Land Claim", tr = "Arazi Sahipliği", pt-BR = "Terrenos" }
+description = { en = "Claim and protect land with signs." }
+authors = ["someone", "someone-else"]
+license = "GPL-3.0-or-later"
+homepage = "https://github.com/someone/landclaim"
+api = ">=0.1, <0.3"
+loader = ">=0.3"
+
+[sides]
+server = true
+client = true
+
+[entry]
+server = { runtime = "wasm", path = "server/mod.wasm" }
+client = { runtime = "lua", path = "client/main.luau" }
+
+[dependencies]
+economy = { version = "^1.1", side = "server" }
+permissions-core = "^2"
+
+[soft-dependencies]
+dynmap = "*"
+
+[permissions]
+world = "write"
+players = ["chat", "teleport", "kick"]
+net-http = ["api.example.com", "*.cdn.example.org"]
+channels = true
+native = false
+
+[provides]
+services = [{ name = "landclaim", version = "1.4.0", wit = "wit/landclaim.wit" }]
+
+[content]
+blocks = [{ key = "landclaim:marker", texture = "assets/textures/blocks/marker.png", hardness = 2.0 }]
+items = [{ key = "landclaim:deed", texture = "assets/textures/items/deed.png", name = { en = "Deed" } }]
+cosmetics = [{ key = "landclaim:flag-hat", slot = "head", texture = "assets/cosmetics/flag-hat.png" }]
