@@ -221,6 +221,7 @@ fn services_custom_events_channels_values() {
     h.poll();
     assert!(b.has_log("eco got hello from shop"), "{}", b.log_text());
     // Network input (milestone M5) reaches every mod that opened the channel.
+    assert!(h.channel_names().contains(&"eco:bus".to_string()), "{:?}", h.channel_names());
     assert!(h.channel_receive("eco:bus", ChannelSource::Player("p1".into()), b"net".to_vec()));
     assert!(h.channel_receive("eco:bus", ChannelSource::Server, b"srv".to_vec()));
     h.tick(0.2);

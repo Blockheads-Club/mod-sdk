@@ -71,6 +71,12 @@ impl Channels {
         self.open.iter().find(|o| o.owner == owner && o.id == id).map(|o| o.name.as_str())
     }
 
+    /// Every open channel name, sorted, without duplicates (the server announces them to modded clients).
+    pub fn names(&self) -> Vec<String> {
+        let set: std::collections::BTreeSet<&str> = self.open.iter().map(|o| o.name.as_str()).collect();
+        set.into_iter().map(str::to_string).collect()
+    }
+
     /// Closes one of `owner`'s channels.
     pub fn close(&mut self, owner: usize, id: ChannelId) -> bool {
         let before = self.open.len();
@@ -140,6 +146,7 @@ mod tests {
         c.open(2, "m:y").unwrap();
         assert_eq!(c.name_of(1, b), Some("m:x"));
         assert_eq!(c.name_of(0, b), None);
+        assert_eq!(c.names(), vec!["m:x".to_string(), "m:y".to_string()]);
         assert!(!c.has_queued());
         assert!(c.enqueue(msg("m:x", Some(0))));
         assert!(c.enqueue(msg("m:x", None)));
