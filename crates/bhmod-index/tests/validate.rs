@@ -47,10 +47,17 @@ fn new_mod_passes_with_package() {
     let out = validate(&head, &opts(Some(p.path()))).unwrap();
     assert!(out.is_ok(), "{:#?}", out.errors);
     assert!(out.labels.contains(LABEL_NEW_MOD));
-    assert!(!out.needs_review());
+    // Every new mod gets a security review, even with harmless permissions.
+    assert!(out.needs_review());
     assert_eq!(out.changes[0].kind, ChangeKind::New);
     let md = out.markdown();
-    assert!(md.contains("**Passed.**") && md.contains("`players:chat`") && md.contains("Labels: `new-mod`"), "{md}");
+    assert!(
+        md.contains("**Passed.**")
+            && md.contains("`players:chat`")
+            && md.contains("Labels: `needs-security-review`, `new-mod`")
+            && md.contains("every new mod"),
+        "{md}"
+    );
     assert_eq!(new_versions(&head, None).len(), 1);
     assert_eq!(downloads(&head, None), [("https://example.com/demo-1.0.0.bhmod".into(), "demo-1.0.0.bhmod".into())]);
 }
@@ -220,7 +227,18 @@ fn permission_diff_and_labels() {
         "{md}"
     );
 
-    // New mod: native needs review; net-http needs review; plain chat does not.
+    // Update with the same permissions: no review.
+    let (v2b, b2b) = pkg_v("1.1.0", "players = [\"chat\"]");
+    let head = repo(&[("demo", &entry("demo", "\"me\"", &format!("{v1}{v2b}")))]);
+    let p = pkgdir(&[("demo-1.1.0.bhmod", &b2b)]);
+    let mut o = opts(Some(p.path()));
+    o.base = Some(load(&base));
+    let out = validate(&load(&head), &o).unwrap();
+    assert!(out.is_ok(), "{:#?}", out.errors);
+    assert!(!out.needs_review(), "{out:#?}");
+    assert!(!out.markdown().contains("must review"));
+
+    // New mods always need review, whatever they ask for.
     let (vn, bn) = pkg_v("1.0.0", "native = true");
     let head = repo(&[("demo", &entry("demo", "\"me\"", &vn))]);
     let p = pkgdir(&[("demo-1.0.0.bhmod", &bn)]);
@@ -236,6 +254,7 @@ fn permission_diff_and_labels() {
     assert!(out.needs_review());
     let none = entry("demo", "\"me\"", &version("1.0.0", b"x", "").replace("{ players = [\"chat\"] }", "{}"));
     let out = validate(&load(&repo(&[("demo", &none)])), &opts(None)).unwrap();
+    assert!(out.needs_review());
     assert!(out.markdown().contains("- none"));
 }
 

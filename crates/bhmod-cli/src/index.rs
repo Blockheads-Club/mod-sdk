@@ -1,13 +1,11 @@
-//! `bhmod index`: validate, build and sign the mod index (Blockheads-Club/mods).
+//! `bhmod index`: validate and build the mod index (Blockheads-Club/mods).
 
-use std::env;
 use std::fs;
 use std::io::{self, Write};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use bhmod_index::build::{build, utc_now, BuildOptions};
 use bhmod_index::repo::Repo;
-use bhmod_index::sign::{keygen, sign, verify};
 use bhmod_index::validate::{downloads, validate, Options};
 use bhmod_manifest::API_VERSION;
 use clap::{Args, Subcommand};
@@ -35,34 +33,6 @@ pub(crate) enum IndexCommand {
     },
     /// Build index.json from every entry.
     Build(BuildArgs),
-    /// Sign a file with a minisign secret key; writes <file>.minisig.
-    Sign {
-        /// File to sign.
-        file: PathBuf,
-        /// Secret key file.
-        #[arg(long, conflicts_with = "key_env", required_unless_present = "key_env")]
-        key: Option<PathBuf>,
-        /// Environment variable holding the secret key text.
-        #[arg(long)]
-        key_env: Option<String>,
-        /// Environment variable holding the key password (encrypted keys only).
-        #[arg(long)]
-        password_env: Option<String>,
-    },
-    /// Verify <file>.minisig with a public key.
-    Verify {
-        /// Signed file.
-        file: PathBuf,
-        /// Public key file (minisign .pub).
-        #[arg(long)]
-        pubkey: PathBuf,
-    },
-    /// Create a new signing key pair (index.pub, index.key) in a folder.
-    Keygen {
-        /// Output folder.
-        #[arg(long, default_value = ".")]
-        dir: PathBuf,
-    },
 }
 
 #[derive(Args)]
@@ -130,58 +100,7 @@ pub(crate) fn run(cmd: IndexCommand, out: &mut dyn Write) -> io::Result<bool> {
             Ok(true)
         }
         IndexCommand::Build(a) => cmd_build(a, out),
-        IndexCommand::Sign { file, key, key_env, password_env } => {
-            // clap makes sure one of --key and --key-env is given.
-            let secret = match key {
-                Some(k) => fs::read_to_string(k)?,
-                None => env_var(&key_env.unwrap_or_default())?,
-            };
-            let password = password_env.as_deref().map(env_var).transpose()?;
-            let data = fs::read(&file)?;
-            let name = file.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-            let comment = format!("file:{name} signed:{}", utc_now());
-            let sig = sign(&data, &secret, password, &comment).map_err(io::Error::other)?;
-            let sig_path = minisig_path(&file);
-            fs::write(&sig_path, sig)?;
-            writeln!(out, "signed {} -> {}", file.display(), sig_path.display())?;
-            Ok(true)
-        }
-        IndexCommand::Verify { file, pubkey } => {
-            let data = fs::read(&file)?;
-            let sig = fs::read_to_string(minisig_path(&file))?;
-            match verify(&data, &fs::read_to_string(pubkey)?, &sig) {
-                Ok(()) => writeln!(out, "ok: signature of {} is valid", file.display())?,
-                Err(e) => {
-                    writeln!(out, "error: {e}")?;
-                    return Ok(false);
-                }
-            }
-            Ok(true)
-        }
-        IndexCommand::Keygen { dir } => {
-            let (pk, sk) = (dir.join("index.pub"), dir.join("index.key"));
-            if pk.exists() || sk.exists() {
-                writeln!(out, "error: {} or {} already exists", pk.display(), sk.display())?;
-                return Ok(false);
-            }
-            let (pub_text, key_text) = keygen();
-            fs::create_dir_all(&dir)?;
-            fs::write(&pk, pub_text)?;
-            fs::write(&sk, key_text)?;
-            writeln!(out, "created {} and {} (keep the .key secret)", pk.display(), sk.display())?;
-            Ok(true)
-        }
     }
-}
-
-fn env_var(name: &str) -> io::Result<String> {
-    env::var(name).map_err(|_| io::Error::other(format!("environment variable {name} is not set")))
-}
-
-fn minisig_path(file: &Path) -> PathBuf {
-    let mut s = file.as_os_str().to_owned();
-    s.push(".minisig");
-    PathBuf::from(s)
 }
 
 fn cmd_validate(a: ValidateArgs, out: &mut dyn Write) -> io::Result<bool> {

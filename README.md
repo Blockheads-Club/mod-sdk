@@ -75,7 +75,7 @@ rewrite chat), [`examples/scheduler-lua`](examples/scheduler-lua) (`/countdown`,
 | [`wit/blockheads-api/`](wit/blockheads-api/) | The mod API (`blockheads:api@0.1.0`, WIT): events, commands, scheduler, storage, players, services, channels |
 | [`docs/luau-api.md`](docs/luau-api.md) | How the API looks from Lua |
 | [`docs/package.md`](docs/package.md) | The `.bhmod` package and its rules |
-| [`schema/`](schema/) | JSON Schemas for `mod.toml`, index entries and the signed `index.json` |
+| [`schema/`](schema/) | JSON Schemas for `mod.toml`, index entries and the published `index.json` |
 | [`docs/protocol-0xbc.md`](docs/protocol-0xbc.md), [`vectors/`](vectors/) | Client ⇄ server mod protocol and its byte-exact test vectors |
 | `crates/bhmod-manifest` | Reads and checks `mod.toml` and packages |
 | `crates/bhmod-proto` | Encodes and decodes the 0xBC protocol |

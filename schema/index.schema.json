@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://blockheads-club.github.io/mod-sdk/schema/index.schema.json",
-  "title": "Blockheads signed mod index (index.json)",
-  "description": "Built by the Blockheads-Club/mods CI from every entry file and signed with the index ed25519 key. The signature is a detached minisign file `index.json.minisig` next to `index.json`, made over the exact bytes of `index.json`; consumers (game, Patcher, website, server) ship the public key and must verify it before reading the file. Entries are sorted by id, versions in publication order.",
+  "title": "Blockheads mod index (index.json)",
+  "description": "Built by the Blockheads-Club/mods CI from every entry file and served over HTTPS at https://blockheads.club/mods/index.json. The file is not signed: integrity comes from the `sha256` and `size` of every package version, which consumers (game, Patcher, website, server) must check before installing a package. Entries are sorted by id, versions in publication order.",
   "type": "object",
   "additionalProperties": false,
   "required": ["schema", "generated", "api", "mods"],

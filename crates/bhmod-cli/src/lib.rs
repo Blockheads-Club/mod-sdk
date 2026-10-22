@@ -50,7 +50,7 @@ enum Command {
         #[arg(long, default_value = ".")]
         dir: PathBuf,
     },
-    /// Validate, build and sign the public mod index (Blockheads-Club/mods).
+    /// Validate and build the public mod index (Blockheads-Club/mods).
     Index(index::IndexArgs),
 }
 

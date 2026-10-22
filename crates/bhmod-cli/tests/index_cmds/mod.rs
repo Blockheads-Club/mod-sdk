@@ -77,7 +77,7 @@ fn validate_downloads_and_build() {
     assert_eq!(code, 0, "{out}");
     assert!(out.contains("label: new-mod") && out.contains("ok: 1 changed mod(s): hello-lua"), "{out}");
     assert!(fs::read_to_string(&report).unwrap().contains("**Passed.**"));
-    assert_eq!(fs::read_to_string(&labels).unwrap(), "new-mod\n");
+    assert_eq!(fs::read_to_string(&labels).unwrap(), "needs-security-review\nnew-mod\n");
 
     // Against itself as base: nothing changed.
     let (code, out, _) = run(&["index", "validate", "--repo", s(&repo), "--base", s(&repo)]);
@@ -132,43 +132,4 @@ fn drafts_are_left_out() {
     let (_, out, _) =
         run(&["index", "build", "--repo", s(&d.path().join("repo")), "-o", s(&index), "--include-drafts"]);
     assert!(out.contains("(1 mods,"), "{out}");
-}
-
-#[test]
-fn keygen_sign_verify() {
-    let d = tempfile::tempdir().unwrap();
-    let keys = d.path().join("keys");
-    let (code, out, _) = run(&["index", "keygen", "--dir", s(&keys)]);
-    assert_eq!(code, 0, "{out}");
-    let (code, out, _) = run(&["index", "keygen", "--dir", s(&keys)]);
-    assert_eq!(code, 1);
-    assert!(out.contains("already exists"));
-
-    let file = d.path().join("index.json");
-    fs::write(&file, "{}").unwrap();
-    let (code, out, _) = run(&["index", "sign", s(&file), "--key", s(&keys.join("index.key"))]);
-    assert_eq!(code, 0, "{out}");
-    assert!(fs::read_to_string(d.path().join("index.json.minisig"))
-        .unwrap()
-        .contains("trusted comment: file:index.json"));
-    let pubkey = keys.join("index.pub");
-    let (code, out, _) = run(&["index", "verify", s(&file), "--pubkey", s(&pubkey)]);
-    assert_eq!(code, 0, "{out}");
-    assert!(out.starts_with("ok: signature"));
-
-    std::env::set_var("BHMOD_TEST_KEY", fs::read_to_string(keys.join("index.key")).unwrap());
-    fs::write(&file, "{\"x\":1}").unwrap();
-    let (code, _, err) = run(&["index", "verify", s(&file), "--pubkey", s(&pubkey)]);
-    assert_eq!(code, 1, "{err}");
-    let (code, out, _) = run(&["index", "sign", s(&file), "--key-env", "BHMOD_TEST_KEY"]);
-    assert_eq!(code, 0, "{out}");
-    let (code, _, err) =
-        run(&["index", "sign", s(&file), "--key-env", "BHMOD_TEST_KEY", "--password-env", "BHMOD_NOPE"]);
-    assert_eq!(code, 1);
-    assert!(err.contains("BHMOD_NOPE is not set"), "{err}");
-    let (code, _, err) =
-        run(&["index", "sign", s(&file), "--key-env", "BHMOD_TEST_KEY", "--password-env", "BHMOD_TEST_KEY"]);
-    assert_eq!(code, 1, "{err}");
-    let (code, _, _) = run(&["index", "sign", s(&file)]);
-    assert_eq!(code, 2);
 }

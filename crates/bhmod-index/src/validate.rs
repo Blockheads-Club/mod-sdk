@@ -18,7 +18,7 @@ use crate::{luau, wasm, Issue};
 
 /// Label: the PR adds a mod id that is not in the index yet.
 pub const LABEL_NEW_MOD: &str = "new-mod";
-/// Label: native code or new permissions; a maintainer must review before merge.
+/// Label: a new mod, native code or new permissions; a maintainer must review the code before merge.
 pub const LABEL_SECURITY: &str = "needs-security-review";
 /// Label: the PR yanks a version.
 pub const LABEL_YANK: &str = "yank";
@@ -153,7 +153,10 @@ impl Outcome {
             let _ = writeln!(s, "Labels: {}\n", labels.join(", "));
         }
         if self.needs_review() {
-            s.push_str("A maintainer must review this mod's code before it can be merged (native code or new permissions).\n\n");
+            s.push_str(
+                "A maintainer must review this mod's code before it can be merged \
+                 (every new mod, native code, and updates that add permissions).\n\n",
+            );
         }
         for (title, list) in [("Errors", &self.errors), ("Warnings", &self.warnings)] {
             if !list.is_empty() {
@@ -249,6 +252,7 @@ fn check_mod(head: &Repo, opts: &Options, id: &str, kind: ChangeKind, out: &mut 
     let is_owner = |owners: &[String], a: &str| owners.iter().any(|o| o.to_lowercase() == a);
     if kind == ChangeKind::New {
         out.labels.insert(LABEL_NEW_MOD.into());
+        out.labels.insert(LABEL_SECURITY.into());
         if let Some(a) = author.as_deref().filter(|a| !is_owner(&h.entry.owners, a)) {
             out.errors.push(Issue::new(path, format!("the PR author `{a}` must be listed in owners")));
         }
@@ -284,10 +288,8 @@ fn check_mod(head: &Repo, opts: &Options, id: &str, kind: ChangeKind, out: &mut 
             removed: old.iter().filter(|p| !all.contains(p)).cloned().collect(),
             all,
         };
-        let native = added.iter().any(|v| v.permissions.native);
-        let risky =
-            if prev.is_some() { !diff.added.is_empty() } else { diff.all.iter().any(|p| p.starts_with("net-http:")) };
-        if native || risky {
+        // New mods are labelled above; here: native code, or permissions the last published version did not have.
+        if added.iter().any(|v| v.permissions.native) || !diff.added.is_empty() {
             out.labels.insert(LABEL_SECURITY.into());
         }
         change.permissions = Some(diff);

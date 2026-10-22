@@ -1,6 +1,6 @@
 [package]
 name = "bhmod-index"
-description = "Validate, build and sign the Blockheads mod index (Blockheads-Club/mods)"
+description = "Validate and build the Blockheads mod index (Blockheads-Club/mods)"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -15,7 +15,6 @@ serde_json.workspace = true
 toml.workspace = true
 semver.workspace = true
 jsonschema = { version = "0.59", default-features = false }
-minisign = "0.10"
 wasmparser = "0.262"
 tempfile.workspace = true
 

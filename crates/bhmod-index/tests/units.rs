@@ -5,7 +5,7 @@ use std::path::Path;
 
 use bhmod_index::build::{build, format_utc, utc_now, BuildOptions};
 use bhmod_index::repo::Repo;
-use bhmod_index::{luau, sign, wasm};
+use bhmod_index::{luau, wasm};
 use common::*;
 
 fn wat(text: &str) -> Vec<u8> {
@@ -88,24 +88,4 @@ fn build_index() {
     assert!(msgs.iter().any(|m| m.contains("size is required")), "{msgs:?}");
     assert!(msgs.iter().any(|m| m.starts_with("mods/junk")), "{msgs:?}");
     assert!(msgs.iter().any(|m| m.starts_with("index.json")), "{msgs:?}");
-}
-
-#[test]
-fn signatures() {
-    let (pk, sk) = sign::keygen();
-    let sig = sign::sign(b"data", &sk, None, "file:index.json").unwrap();
-    sign::verify(b"data", &pk, &sig).unwrap();
-    let bare = pk.lines().nth(1).unwrap();
-    sign::verify(b"data", bare, &sig).unwrap();
-    assert!(sign::verify(b"other", &pk, &sig).is_err());
-    assert!(sign::verify(b"data", "garbage", &sig).unwrap_err().starts_with("bad public key"));
-    assert!(sign::verify(b"data", &pk, "garbage").unwrap_err().starts_with("bad signature"));
-    assert!(sign::sign(b"data", "garbage", None, "c").unwrap_err().starts_with("bad secret key"));
-
-    let kp = minisign::KeyPair::generate_encrypted_keypair(Some("pw".into())).unwrap();
-    let enc = kp.sk.to_box(None).unwrap().to_string();
-    let epk = kp.pk.to_box().unwrap().to_string();
-    let sig = sign::sign(b"data", &enc, Some("pw".into()), "c").unwrap();
-    sign::verify(b"data", &epk, &sig).unwrap();
-    assert!(sign::sign(b"data", &enc, None, "c").is_err());
 }
