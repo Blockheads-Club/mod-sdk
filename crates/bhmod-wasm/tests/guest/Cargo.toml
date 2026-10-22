@@ -1,0 +1,19 @@
+# Test guest of bhmod-wasm: one component whose behaviour depends on the mod id it is loaded as.
+# Built by scripts/build-wasm.sh into tests/guest/out/guest.wasm.
+[package]
+name = "bhmod-wasm-test-guest"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+blockheads-mod = { path = "../../../../sdk/rust/blockheads-mod" }
+
+[profile.release]
+opt-level = "s"
+strip = true
+
+[workspace]

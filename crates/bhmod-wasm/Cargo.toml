@@ -1,0 +1,30 @@
+[package]
+name = "bhmod-wasm"
+description = "WASM component runtime (wasmtime: Cranelift on 64-bit hosts, Pulley on 32-bit) for the Blockheads mod host"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license = "GPL-3.0-or-later"
+repository.workspace = true
+authors.workspace = true
+publish = false
+
+[features]
+default = ["compiler"]
+# Compile `.wasm` components on this host (Cranelift; it also emits Pulley bytecode on 32-bit hosts). Without it
+# the runtime only loads precompiled `.cwasm` artifacts, which saves ~25 MB RSS on small devices.
+compiler = ["wasmtime/cranelift", "dep:sha2"]
+
+[dependencies]
+bhmod-core = { path = "../bhmod-core", default-features = false }
+bhmod-manifest.workspace = true
+sha2 = { workspace = true, optional = true }
+wasmtime = { version = "50", default-features = false, features = ["runtime", "std", "component-model", "pulley"] }
+wasmtime-wasi = { version = "50", default-features = false, features = ["p2"] }
+bytes = "1"
+tokio = { version = "1", default-features = false }
+
+[dev-dependencies]
+bhmod-core = { path = "../bhmod-core" }
+tempfile.workspace = true
+wasmtime = { version = "50", default-features = false, features = ["wat"] }
