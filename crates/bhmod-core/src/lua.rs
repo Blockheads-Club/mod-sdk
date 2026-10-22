@@ -9,12 +9,16 @@ use std::cell::Cell;
 use std::rc::Rc;
 use std::time::Instant;
 
-use mlua::{AnyUserData, Function, Lua, MetaMethod, Table, UserData, UserDataMethods, Value, Variadic, VmState};
+use mlua::{
+    AnyUserData, Function, Lua, MetaMethod, MultiValue, Table, UserData, UserDataMethods, Value, Variadic, VmState,
+};
 
+use crate::channels::ChannelId;
 use crate::runtime::TaskId;
 use crate::runtime::{CallError, CommandId, HostApi, Instance, InstanceLimits, ModFiles, Runtime, SubscriptionId};
 use crate::types::{ApiError, CommandOutcome, CommandSender, CommandSpec, Event, EventKind, LogLevel, Mutation};
-use crate::types::{Outcome, Priority, Role};
+use crate::types::{ChannelSource, ChannelTarget, Outcome, Pos, Priority, RejectReason, Role};
+use crate::value::{self, Value as Cbor};
 
 /// The Luau runtime.
 #[derive(Debug, Clone, Copy, Default)]
@@ -73,6 +77,24 @@ impl Drop for Entered<'_> {
 
 /// Enters the VM for one guest call.
 fn enter<R>(sh: &Shared, host: &mut dyn HostApi, f: impl FnOnce() -> mlua::Result<R>) -> Result<R, CallError> {
+    enter_as(sh, host, false, f)
+}
+
+fn is_memory_error(e: &mlua::Error) -> bool {
+    match e {
+        mlua::Error::MemoryError(_) => true,
+        mlua::Error::CallbackError { cause, .. } => is_memory_error(cause),
+        _ => false,
+    }
+}
+
+/// Enters the VM; with `soft`, a Luau error (not a timeout or out of memory) is [`CallError::Failed`], not a fault.
+fn enter_as<R>(
+    sh: &Shared,
+    host: &mut dyn HostApi,
+    soft: bool,
+    f: impl FnOnce() -> mlua::Result<R>,
+) -> Result<R, CallError> {
     sh.deadline.set(Some(host.deadline()));
     sh.timed_out.set(false);
     let ptr: *mut (dyn HostApi + '_) = host;
@@ -86,6 +108,7 @@ fn enter<R>(sh: &Shared, host: &mut dyn HostApi, f: impl FnOnce() -> mlua::Resul
     }
     match r {
         Ok(v) => Ok(v),
+        Err(e) if soft && !is_memory_error(&e) => Err(CallError::Failed(error_text(&e))),
         Err(e) => Err(CallError::Trap(error_text(&e))),
     }
 }
@@ -93,6 +116,7 @@ fn enter<R>(sh: &Shared, host: &mut dyn HostApi, f: impl FnOnce() -> mlua::Resul
 fn error_text(e: &mlua::Error) -> String {
     match e {
         mlua::Error::MemoryError(_) => "out of memory".to_string(),
+        mlua::Error::RuntimeError(m) => m.clone(),
         mlua::Error::CallbackError { cause, .. } => error_text(cause),
         other => other.to_string(),
     }
@@ -118,6 +142,10 @@ impl UserData for LuaPlayer {
         m.add_method("kick", |_, this, reason: String| {
             with_host(&this.sh, |h| h.player_kick(&this.id, &reason))?.map_err(api_err)
         });
+        m.add_method("pos", |lua, this, ()| match with_host(&this.sh, |h| h.player_pos(&this.id))? {
+            Ok(Some(p)) => Ok(Value::Table(pos_table(lua, p)?)),
+            _ => Ok(Value::Nil),
+        });
         m.add_meta_method(MetaMethod::ToString, |_, this, ()| Ok(format!("player({})", this.id)));
         m.add_meta_method(MetaMethod::Eq, |_, this, other: AnyUserData| {
             Ok(other.borrow::<LuaPlayer>().is_ok_and(|o| o.id == this.id))
@@ -129,6 +157,8 @@ const HANDLERS: &str = "bh.handlers";
 const COMMANDS: &str = "bh.commands";
 const TASKS: &str = "bh.tasks";
 const LOADED: &str = "bh.loaded";
+const SERVICES: &str = "bh.services";
+const CHANNELS: &str = "bh.channels";
 
 /// One Luau mod.
 pub struct LuaInstance {
@@ -198,6 +228,151 @@ fn sender_table(lua: &Lua, sh: &Rc<Shared>, s: &CommandSender) -> mlua::Result<T
     Ok(t)
 }
 
+fn pos_table(lua: &Lua, p: Pos) -> mlua::Result<Table> {
+    let t = lua.create_table()?;
+    t.set("x", p.x)?;
+    t.set("y", p.y)?;
+    Ok(t)
+}
+
+fn opt_player(lua: &Lua, sh: &Rc<Shared>, p: &Option<String>) -> mlua::Result<Value> {
+    match p {
+        Some(id) => Ok(Value::UserData(player(lua, sh, id.clone())?)),
+        None => Ok(Value::Nil),
+    }
+}
+
+fn bad_value(msg: impl std::fmt::Display) -> mlua::Error {
+    rt_err(format!("bad value: {msg}"))
+}
+
+/// Integers up to 2^53 stay exact in a Luau number.
+const MAX_SAFE: f64 = 9_007_199_254_740_992.0;
+
+/// Converts a Luau value to a [`Cbor`] value (players become host handles).
+fn to_cbor(sh: &Shared, v: &Value, depth: usize) -> mlua::Result<Cbor> {
+    if depth > value::MAX_DEPTH {
+        return Err(bad_value("nested too deeply"));
+    }
+    Ok(match v {
+        Value::Nil => Cbor::Null,
+        Value::Boolean(b) => Cbor::Bool(*b),
+        Value::Integer(i) => Cbor::Int(*i),
+        Value::Number(n) if n.fract() == 0.0 && n.abs() <= MAX_SAFE => Cbor::Int(*n as i64),
+        Value::Number(n) => Cbor::Float(*n),
+        Value::String(s) => match std::str::from_utf8(&s.as_bytes()) {
+            Ok(t) => Cbor::Text(t.to_string()),
+            Err(_) => Cbor::Bytes(s.as_bytes().to_vec()),
+        },
+        Value::Table(t) => {
+            let n = t.raw_len();
+            let mut count = 0;
+            let mut all_str = true;
+            for pair in t.pairs::<Value, Value>() {
+                let (k, _) = pair?;
+                count += 1;
+                all_str &= matches!(k, Value::String(_));
+            }
+            if count == n {
+                let items: mlua::Result<Vec<Cbor>> =
+                    (1..=n).map(|i| to_cbor(sh, &t.raw_get::<Value>(i)?, depth + 1)).collect();
+                Cbor::List(items?)
+            } else if all_str {
+                let mut entries = Vec::with_capacity(count);
+                for pair in t.pairs::<mlua::LuaString, Value>() {
+                    let (k, v) = pair?;
+                    entries.push((k.to_str()?.to_string(), to_cbor(sh, &v, depth + 1)?));
+                }
+                Cbor::Map(entries)
+            } else {
+                return Err(bad_value("a table must be a list (keys 1..n) or have only string keys"));
+            }
+        }
+        Value::UserData(u) => {
+            // Players are the only userdata the API hands out.
+            let p = u.borrow::<LuaPlayer>().map_err(|_| bad_value("unsupported userdata"))?;
+            Cbor::handle(with_host(sh, |h| h.handle_of_player(&p.id))?)
+        }
+        other => return Err(bad_value(format!("cannot convert a {}", other.type_name()))),
+    })
+}
+
+/// Converts a [`Cbor`] value to Luau (host handles become players; a stale handle raises).
+fn from_cbor(lua: &Lua, sh: &Rc<Shared>, v: &Cbor) -> mlua::Result<Value> {
+    if let Some(h) = v.as_handle() {
+        let id = with_host(sh, |host| host.player_of_handle(h))?.map_err(api_err)?;
+        return Ok(Value::UserData(player(lua, sh, id)?));
+    }
+    Ok(match v {
+        Cbor::Null => Value::Nil,
+        Cbor::Bool(b) => Value::Boolean(*b),
+        Cbor::Int(i) => Value::Number(*i as f64),
+        Cbor::Float(f) => Value::Number(*f),
+        Cbor::Text(t) => Value::String(lua.create_string(t)?),
+        Cbor::Bytes(b) => Value::String(lua.create_string(b)?),
+        Cbor::List(items) => {
+            let t = lua.create_table_with_capacity(items.len(), 0)?;
+            for (i, item) in items.iter().enumerate() {
+                t.raw_set(i + 1, from_cbor(lua, sh, item)?)?;
+            }
+            Value::Table(t)
+        }
+        Cbor::Map(entries) => {
+            let t = lua.create_table_with_capacity(0, entries.len())?;
+            for (k, item) in entries {
+                t.raw_set(k.as_str(), from_cbor(lua, sh, item)?)?;
+            }
+            Value::Table(t)
+        }
+    })
+}
+
+fn decode_cbor(lua: &Lua, sh: &Rc<Shared>, bytes: &[u8]) -> mlua::Result<Value> {
+    from_cbor(lua, sh, &Cbor::decode(bytes).map_err(bad_value)?)
+}
+
+/// Calls a service and converts the result.
+fn call_service(
+    lua: &Lua,
+    sh: &Rc<Shared>,
+    name: &str,
+    req: &str,
+    method: &str,
+    args: MultiValue,
+) -> mlua::Result<Value> {
+    let args = args.iter().map(|a| to_cbor(sh, a, 1)).collect::<mlua::Result<Vec<_>>>()?;
+    let bytes = Cbor::List(args).encode();
+    let out = with_host(sh, |h| h.call_service(name, req, method, &bytes))?
+        .map_err(|e| rt_err(format!("service {name}.{method}: {e}")))?;
+    decode_cbor(lua, sh, &out)
+}
+
+fn channel_target(v: Value) -> mlua::Result<ChannelTarget> {
+    match &v {
+        Value::String(s) => match &*s.to_str()? {
+            "local" => Ok(ChannelTarget::Local),
+            "server" => Ok(ChannelTarget::Server),
+            "all-players" => Ok(ChannelTarget::AllPlayers),
+            other => Err(rt_err(format!("invalid argument: channel target {other:?}"))),
+        },
+        Value::UserData(u) => {
+            let p = u.borrow::<LuaPlayer>().map_err(|_| rt_err("invalid argument: channel target"))?;
+            Ok(ChannelTarget::Player(p.id.clone()))
+        }
+        _ => Err(rt_err("invalid argument: channel target")),
+    }
+}
+
+fn source_table(lua: &Lua, sh: &Rc<Shared>, src: &ChannelSource) -> mlua::Result<Table> {
+    let t = lua.create_table()?;
+    match src {
+        ChannelSource::Local(m) => t.set("mod", m.as_str())?,
+        ChannelSource::Server => t.set("server", true)?,
+        ChannelSource::Player(id) => t.set("player", player(lua, sh, id.clone())?)?,
+    }
+    Ok(t)
+}
+
 fn event_table(lua: &Lua, sh: &Rc<Shared>, ev: &Event) -> mlua::Result<Table> {
     let t = lua.create_table()?;
     t.set("kind", ev.kind().name())?;
@@ -228,8 +403,102 @@ fn event_table(lua: &Lua, sh: &Rc<Shared>, ev: &Event) -> mlua::Result<Table> {
             t.set("world_id", world_id.as_str())?;
         }
         Event::WorldSave { phase } => t.set("phase", phase.name())?,
+        Event::PlayerPreLogin { player: p, alias, cancelled, reason } => {
+            t.set("player_id", p.as_str())?;
+            t.set("alias", alias.as_str())?;
+            t.set("cancelled", *cancelled)?;
+            t.set("reason", reason.name())?;
+        }
+        Event::BlockPlace { player: p, pos, item, data_a, data_b, cancelled } => {
+            t.set("player", player(lua, sh, p.clone())?)?;
+            t.set("pos", pos_table(lua, *pos)?)?;
+            t.set("item", *item)?;
+            t.set("data_a", *data_a)?;
+            t.set("data_b", *data_b)?;
+            t.set("cancelled", *cancelled)?;
+        }
+        Event::BlockBreak { player: p, pos, layer, tile, cancelled } => {
+            t.set("player", player(lua, sh, p.clone())?)?;
+            t.set("pos", pos_table(lua, *pos)?)?;
+            t.set("layer", layer.name())?;
+            t.set("tile", *tile)?;
+            t.set("cancelled", *cancelled)?;
+        }
+        Event::BlockChanged { pos, tile, player: p } => {
+            t.set("pos", pos_table(lua, *pos)?)?;
+            t.set("tile", *tile)?;
+            t.set("player", opt_player(lua, sh, p)?)?;
+        }
+        Event::ObjectPlace { player: p, pos, object, item, cancelled } => {
+            t.set("player", player(lua, sh, p.clone())?)?;
+            t.set("pos", pos_table(lua, *pos)?)?;
+            t.set("object", object.name())?;
+            t.set("item", *item)?;
+            t.set("cancelled", *cancelled)?;
+        }
+        Event::Damage { player: p, blockhead, amount, attacker, cancelled } => {
+            t.set("player", opt_player(lua, sh, p)?)?;
+            t.set("blockhead", *blockhead)?;
+            t.set("amount", *amount)?;
+            t.set("attacker", opt_player(lua, sh, attacker)?)?;
+            t.set("cancelled", *cancelled)?;
+        }
+        Event::Death { player: p, blockhead } => {
+            t.set("player", opt_player(lua, sh, p)?)?;
+            t.set("blockhead", *blockhead)?;
+        }
+        Event::PlayerMove { player: p, from, to } => {
+            t.set("player", player(lua, sh, p.clone())?)?;
+            t.set("from", pos_table(lua, *from)?)?;
+            t.set("to", pos_table(lua, *to)?)?;
+        }
+        Event::Custom { name, source, payload, cancelled } => {
+            t.set("name", name.as_str())?;
+            t.set("source", source.as_str())?;
+            t.set("payload", decode_cbor(lua, sh, payload)?)?;
+            t.set("cancelled", *cancelled)?;
+        }
     }
     Ok(t)
+}
+
+/// The change a handler made to the event table.
+fn mutation_of(sh: &Shared, t: &Table, ev: &Event) -> mlua::Result<Option<Mutation>> {
+    Ok(match ev {
+        Event::Chat { text, .. } => match t.get::<Value>("text")? {
+            Value::String(s) if s.to_string_lossy() != *text => Some(Mutation::ChatText(s.to_string_lossy())),
+            _ => None,
+        },
+        Event::PlayerPreLogin { reason, .. } => {
+            let r: String = t.get("reason")?;
+            match RejectReason::parse(&r) {
+                Some(r) if r != *reason => Some(Mutation::RejectReason(r)),
+                Some(_) => None,
+                None => return Err(rt_err(format!("invalid argument: reject reason {r:?}"))),
+            }
+        }
+        Event::Damage { amount, .. } => {
+            let a: f64 = t.get("amount")?;
+            (a as f32 != *amount).then_some(Mutation::DamageAmount(a as f32))
+        }
+        Event::Custom { payload, .. } => {
+            let now = to_cbor(sh, &t.get::<Value>("payload")?, 1)?.encode();
+            (now != *payload).then_some(Mutation::CustomPayload(now))
+        }
+        _ => None,
+    })
+}
+
+fn sub_opts(opts: Option<Table>) -> mlua::Result<(Priority, bool)> {
+    let mut prio = Priority::Normal;
+    let mut ignore = false;
+    if let Some(o) = opts {
+        if let Some(p) = o.get::<Option<String>>("priority")? {
+            prio = Priority::parse(&p).ok_or_else(|| rt_err(format!("invalid argument: priority {p:?}")))?;
+        }
+        ignore = o.get::<Option<bool>>("ignore_cancelled")?.unwrap_or(false);
+    }
+    Ok((prio, ignore))
 }
 
 fn truthy(v: &Value) -> bool {
@@ -293,7 +562,7 @@ impl LuaInstance {
         for name in ["debug", "loadstring", "getfenv", "setfenv"] {
             g.set(name, Value::Nil)?;
         }
-        for reg in [HANDLERS, COMMANDS, TASKS, LOADED] {
+        for reg in [HANDLERS, COMMANDS, TASKS, LOADED, SERVICES, CHANNELS] {
             lua.set_named_registry_value(reg, lua.create_table()?)?;
         }
         let bh = Self::build_bh(&lua, &sh)?;
@@ -391,14 +660,7 @@ impl LuaInstance {
         b.func(&events, "on", move |lua, (kind, f, opts): (String, Function, Option<Table>)| {
             let kind =
                 EventKind::parse(&kind).ok_or_else(|| rt_err(format!("invalid argument: unknown event {kind:?}")))?;
-            let mut prio = Priority::Normal;
-            let mut ignore = false;
-            if let Some(o) = opts {
-                if let Some(p) = o.get::<Option<String>>("priority")? {
-                    prio = Priority::parse(&p).ok_or_else(|| rt_err(format!("invalid argument: priority {p:?}")))?;
-                }
-                ignore = o.get::<Option<bool>>("ignore_cancelled")?.unwrap_or(false);
-            }
+            let (prio, ignore) = sub_opts(opts)?;
             let id = with_host(&s, |h| h.subscribe(kind, prio, ignore))?.map_err(api_err)?;
             lua.named_registry_value::<Table>(HANDLERS)?.set(id, f)?;
             Ok(id)
@@ -408,10 +670,18 @@ impl LuaInstance {
             lua.named_registry_value::<Table>(HANDLERS)?.set(id, Value::Nil)?;
             with_host(&s, |h| h.unsubscribe(id))
         });
-        let unsupported =
-            lua.create_function(|_, _: Variadic<Value>| -> mlua::Result<()> { Err(api_err(ApiError::Unsupported)) })?;
-        events.set("on_custom", unsupported.clone())?;
-        events.set("fire_custom", unsupported.clone())?;
+        let s = sh.clone();
+        b.func(&events, "on_custom", move |lua, (name, f, opts): (String, Function, Option<Table>)| {
+            let (prio, ignore) = sub_opts(opts)?;
+            let id = with_host(&s, |h| h.subscribe_custom(&name, prio, ignore))?.map_err(api_err)?;
+            lua.named_registry_value::<Table>(HANDLERS)?.set(id, f)?;
+            Ok(id)
+        });
+        let s = sh.clone();
+        b.func(&events, "fire_custom", move |_, (name, payload): (String, Value)| {
+            let bytes = to_cbor(&s, &payload, 1)?.encode();
+            with_host(&s, |h| h.fire_custom(&name, &bytes))?.map_err(api_err)
+        });
         bh.set("events", events)?;
 
         let commands = lua.create_table()?;
@@ -477,13 +747,58 @@ impl LuaInstance {
         });
         bh.set("storage", storage)?;
 
-        for name in ["services", "channels"] {
-            let t = lua.create_table()?;
-            for f in ["provide", "call", "open", "send"] {
-                t.set(f, unsupported.clone())?;
+        let services = lua.create_table()?;
+        let s = sh.clone();
+        b.func(&services, "provide", move |lua, (name, version, imp): (String, String, Table)| {
+            with_host(&s, |h| h.provide_service(&name, &version))?.map_err(api_err)?;
+            lua.named_registry_value::<Table>(SERVICES)?.set(name, imp)
+        });
+        let s = sh.clone();
+        b.func(&services, "call", move |lua, (name, req, method, args): (String, String, String, MultiValue)| {
+            call_service(lua, &s, &name, &req, &method, args)
+        });
+        let s = sh.clone();
+        b.func(&services, "get", move |lua, (name, req): (String, String)| {
+            let proxy = lua.create_table()?;
+            let meta = lua.create_table()?;
+            let s = s.clone();
+            let index = move |lua: &Lua, (_, method): (Table, String)| {
+                let (s, name, req) = (s.clone(), name.clone(), req.clone());
+                lua.create_function(move |lua, args: MultiValue| call_service(lua, &s, &name, &req, &method, args))
+            };
+            meta.set("__index", lua.create_function(index)?)?;
+            proxy.set_metatable(Some(meta))?;
+            Ok(proxy)
+        });
+        bh.set("services", services)?;
+
+        let channels = lua.create_table()?;
+        let s = sh.clone();
+        b.func(&channels, "open", move |lua, (name, f): (String, Option<Function>)| {
+            let id = with_host(&s, |h| h.channel_open(&name))?.map_err(api_err)?;
+            if let Some(f) = f {
+                lua.named_registry_value::<Table>(CHANNELS)?.set(id, f)?;
             }
-            bh.set(name, t)?;
-        }
+            Ok(id)
+        });
+        let s = sh.clone();
+        b.func(&channels, "send", move |_, (id, to, data): (ChannelId, Value, mlua::LuaString)| {
+            let to = channel_target(to)?;
+            with_host(&s, |h| h.channel_send(id, to, &data.as_bytes()))?.map_err(api_err)
+        });
+        let s = sh.clone();
+        b.func(&channels, "close", move |lua, id: ChannelId| {
+            lua.named_registry_value::<Table>(CHANNELS)?.set(id, Value::Nil)?;
+            with_host(&s, |h| h.channel_close(id))
+        });
+        bh.set("channels", channels)?;
+
+        let val = lua.create_table()?;
+        let s = sh.clone();
+        b.func(&val, "encode", move |lua, v: Value| lua.create_string(to_cbor(&s, &v, 1)?.encode()));
+        let s = sh.clone();
+        b.func(&val, "decode", move |lua, bytes: mlua::LuaString| decode_cbor(lua, &s, &bytes.as_bytes()));
+        bh.set("value", val)?;
         for (_, v) in bh.pairs::<String, Table>().collect::<mlua::Result<Vec<_>>>()? {
             v.set_readonly(true);
         }
@@ -537,13 +852,7 @@ impl Instance for LuaInstance {
             let t = event_table(lua, sh, ev)?;
             f.call::<()>(t.clone())?;
             let cancelled = truthy(&t.get::<Value>("cancelled")?);
-            let mutation = match ev {
-                Event::Chat { text, .. } => match t.get::<Value>("text")? {
-                    Value::String(s) if s.to_string_lossy() != *text => Some(Mutation::ChatText(s.to_string_lossy())),
-                    _ => None,
-                },
-                _ => None,
-            };
+            let mutation = mutation_of(sh, &t, ev)?;
             Ok(Outcome { cancelled: ev.kind().cancellable() && cancelled, mutation })
         })
     }
@@ -574,6 +883,44 @@ impl Instance for LuaInstance {
                 tasks.set(id, Value::Nil)?;
             }
             entry.get::<Function>("f")?.call::<()>(())
+        })
+    }
+
+    fn call_service(
+        &mut self,
+        host: &mut dyn HostApi,
+        name: &str,
+        method: &str,
+        args: &[u8],
+    ) -> Result<Vec<u8>, CallError> {
+        let lua = &self.lua;
+        let sh = &self.sh;
+        enter_as(sh, host, true, || {
+            let imp: Option<Table> = lua.named_registry_value::<Table>(SERVICES)?.get(name)?;
+            let f: Option<Function> = imp.map(|t| t.get(method)).transpose()?.flatten();
+            let Some(f) = f else { return Err(rt_err(format!("{name} has no method {method:?}"))) };
+            // The host passes a list (checked); anything else counts as one argument.
+            let v = Cbor::decode(args).map_err(bad_value)?;
+            let items = if let Cbor::List(i) = v { i } else { Vec::from([v]) };
+            let args = items.iter().map(|a| from_cbor(lua, sh, a)).collect::<mlua::Result<Vec<_>>>()?;
+            let out: MultiValue = f.call(MultiValue::from_vec(args))?;
+            Ok(to_cbor(sh, out.front().unwrap_or(&Value::Nil), 1)?.encode())
+        })
+    }
+
+    fn on_channel_message(
+        &mut self,
+        host: &mut dyn HostApi,
+        channel: ChannelId,
+        source: &ChannelSource,
+        data: &[u8],
+    ) -> Result<(), CallError> {
+        let lua = &self.lua;
+        let sh = &self.sh;
+        enter(sh, host, || {
+            let f: Option<Function> = lua.named_registry_value::<Table>(CHANNELS)?.get(channel)?;
+            let Some(f) = f else { return Ok(()) };
+            f.call::<()>((source_table(lua, sh, source)?, lua.create_string(data)?))
         })
     }
 }

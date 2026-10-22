@@ -1,8 +1,8 @@
-package blockheads:api@0.1.0;
+package blockheads:api@0.2.0;
 
 /// Connected players.
 interface players {
-    use types.{api-error};
+    use types.{api-error, pos};
 
     /// What a player may do on this server.
     enum role {
@@ -29,6 +29,8 @@ interface players {
         role: func() -> role;
         /// Sends a chat line only this player sees. Needs no permission.
         send-chat: func(text: string) -> result<_, api-error>;
+        /// (0.2) The tile of the player's blockhead; `none` when it is not in the world or the player left.
+        pos: func() -> option<pos>;
         /// Disconnects the player with a reason text (shown to modded clients; vanilla clients see the generic
         /// kick message). Needs the `players:kick` permission.
         kick: func(reason: string) -> result<_, api-error>;

@@ -1,4 +1,4 @@
-package blockheads:api@0.1.0;
+package blockheads:api@0.2.0;
 
 /// Logging to the server console or the client log. Lines are prefixed with the mod id by the host.
 interface log {

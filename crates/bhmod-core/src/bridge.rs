@@ -3,7 +3,7 @@
 //! The bridge is the only way mod code reaches the game. Every method is called on the game's main thread while a
 //! mod call is running, so implementations must not call back into the [`crate::ModHost`].
 
-use crate::types::{LogLevel, Role, Side};
+use crate::types::{ApiError, ChannelTarget, LogLevel, Pos, Role, Side};
 
 /// The game side of the mod host. Players are identified by their player id string (the vanilla `playerID`).
 pub trait GameBridge {
@@ -36,4 +36,17 @@ pub trait GameBridge {
 
     /// True when `name` is a built-in command that mods may not register.
     fn is_builtin_command(&self, name: &str) -> bool;
+
+    /// The tile of a connected player's blockhead (API 0.2). `None` when the player has no blockhead in the world.
+    fn player_pos(&self, id: &str) -> Option<Pos> {
+        let _ = id;
+        None
+    }
+
+    /// Sends a channel message over the network (`target` is never [`ChannelTarget::Local`]). The 0xBC `CHANNEL`
+    /// packets arrive with milestone M5; until then the default reports [`ApiError::Unsupported`].
+    fn channel_send(&self, mod_id: &str, name: &str, target: &ChannelTarget, data: &[u8]) -> Result<(), ApiError> {
+        let _ = (mod_id, name, target, data);
+        Err(ApiError::Unsupported)
+    }
 }

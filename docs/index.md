@@ -21,8 +21,9 @@ run them yourself before you open a pull request.
 5. For every new version: `size` is set, the package's SHA-256 and size match, the package rules pass with the index
    rules on (`bhmod check --index`), and the package's `mod.toml` agrees with the entry (id, version, sides,
    client-required, api, loader, dependencies, permissions).
-6. `api` matches a supported `blockheads:api` version (`--api`, default the SDK's); every dependency exists in the
-   index with a non-yanked matching version (soft dependencies only warn; only drafts may depend on drafts).
+6. `api` matches a supported `blockheads:api` version (`--api`, repeatable; default: every version the SDK serves,
+   see [`luau-api.md`](luau-api.md#api-versions)); every dependency exists in the index with a non-yanked matching
+   version (soft dependencies only warn; only drafts may depend on drafts).
 7. Every `.wasm` validates and imports only `blockheads:api/*` and sandboxed WASI (`wasi:cli`, `wasi:io`,
    `wasi:clocks`, `wasi:random`, `wasi:filesystem`); core modules may import from `bh`, `env` and
    `wasi_snapshot_preview1`. Every `.luau` is non-empty UTF-8 and, with `--luau-compile`, compiles.

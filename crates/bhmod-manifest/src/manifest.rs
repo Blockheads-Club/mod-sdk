@@ -6,7 +6,7 @@ use semver::{Version, VersionReq};
 use serde::Deserialize;
 
 use crate::rules::{check_path, is_host, is_lang, is_mod_id, is_slug};
-use crate::{Issue, API_VERSION, SCHEMA_VERSION};
+use crate::{Issue, SCHEMA_VERSION, SUPPORTED_API_VERSIONS};
 
 /// A localized text: language code -> text. `en` is required.
 pub type Localized = BTreeMap<String, String>;
@@ -347,9 +347,10 @@ impl Manifest {
         }
         match VersionReq::parse(&self.api) {
             Err(_) => v.push(Issue::new("api", "not a semver requirement (e.g. ^0.1)")),
-            Ok(req) if !req.matches(&Version::parse(API_VERSION).expect("constant")) => {
-                v.push(Issue::new("api", format!("does not match the API version {API_VERSION} this SDK supports")))
-            }
+            Ok(req) if !crate::api_supported(&req) => v.push(Issue::new(
+                "api",
+                format!("matches none of the API versions this SDK supports ({})", SUPPORTED_API_VERSIONS.join(", ")),
+            )),
             Ok(_) => {}
         }
         if self.loader.as_deref().is_some_and(|l| VersionReq::parse(l).is_err()) {

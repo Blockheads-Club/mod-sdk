@@ -1,4 +1,5 @@
-//! Host-side data types mirroring `blockheads:api@0.1.0` (`types`, `players`, `events`, `commands`, `log`).
+//! Host-side data types mirroring `blockheads:api@0.2.0` (`types`, `players`, `events`, `commands`, `services`,
+//! `channels`, `log`).
 //!
 //! They are plain Rust data so every runtime (Luau now, WASM in M2, JVM in M9) converts from and to the same shapes.
 
@@ -132,7 +133,7 @@ impl LogLevel {
     }
 }
 
-/// The built-in events of API 0.1 (`events.event-kind`).
+/// The event kinds (`events.event-kind`, plus [`EventKind::Custom`] for `subscribe-custom`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum EventKind {
     /// A player finished joining.
@@ -149,11 +150,29 @@ pub enum EventKind {
     WorldLoaded,
     /// The world is being saved.
     WorldSave,
+    /// A player passed every vanilla join check and is about to be approved (cancellable with a reason). API 0.2.
+    PlayerPreLogin,
+    /// A player places a block or item into a tile (cancellable). API 0.2.
+    BlockPlace,
+    /// A player removes a block or back wall (cancellable). API 0.2.
+    BlockBreak,
+    /// A tile changed, by a player or by the simulation (monitor only). API 0.2.
+    BlockChanged,
+    /// A player places a workbench or an interaction object such as a chest (cancellable). API 0.2.
+    ObjectPlace,
+    /// A blockhead is about to take damage (cancellable, amount replaceable). API 0.2.
+    Damage,
+    /// A blockhead died. API 0.2.
+    Death,
+    /// A player's blockhead moved to another tile. API 0.2.
+    PlayerMove,
+    /// A custom event fired by a mod (subscribed by name with `subscribe-custom`).
+    Custom,
 }
 
 impl EventKind {
-    /// All kinds.
-    pub const ALL: [EventKind; 7] = [
+    /// All kinds that `subscribe` accepts, in WIT order (everything but [`EventKind::Custom`]).
+    pub const ALL: [EventKind; 15] = [
         EventKind::PlayerJoin,
         EventKind::PlayerQuit,
         EventKind::Chat,
@@ -161,6 +180,14 @@ impl EventKind {
         EventKind::Tick,
         EventKind::WorldLoaded,
         EventKind::WorldSave,
+        EventKind::PlayerPreLogin,
+        EventKind::BlockPlace,
+        EventKind::BlockBreak,
+        EventKind::BlockChanged,
+        EventKind::ObjectPlace,
+        EventKind::Damage,
+        EventKind::Death,
+        EventKind::PlayerMove,
     ];
 
     /// The WIT name (`"player-join"`).
@@ -173,17 +200,172 @@ impl EventKind {
             EventKind::Tick => "tick",
             EventKind::WorldLoaded => "world-loaded",
             EventKind::WorldSave => "world-save",
+            EventKind::PlayerPreLogin => "player-pre-login",
+            EventKind::BlockPlace => "block-place",
+            EventKind::BlockBreak => "block-break",
+            EventKind::BlockChanged => "block-changed",
+            EventKind::ObjectPlace => "object-place",
+            EventKind::Damage => "damage",
+            EventKind::Death => "death",
+            EventKind::PlayerMove => "player-move",
+            EventKind::Custom => "custom",
         }
     }
 
-    /// Parses a WIT name.
+    /// Parses a WIT name of a subscribable kind (`"custom"` is not one).
     pub fn parse(s: &str) -> Option<EventKind> {
         EventKind::ALL.into_iter().find(|k| k.name() == s)
     }
 
     /// Whether handlers may cancel events of this kind.
     pub fn cancellable(self) -> bool {
-        matches!(self, EventKind::Chat | EventKind::Command)
+        matches!(
+            self,
+            EventKind::Chat
+                | EventKind::Command
+                | EventKind::PlayerPreLogin
+                | EventKind::BlockPlace
+                | EventKind::BlockBreak
+                | EventKind::ObjectPlace
+                | EventKind::Damage
+                | EventKind::Custom
+        )
+    }
+
+    /// The first API minor version that has this kind (`(0, 1)` or `(0, 2)`).
+    pub fn since(self) -> (u64, u64) {
+        match self {
+            EventKind::PlayerJoin
+            | EventKind::PlayerQuit
+            | EventKind::Chat
+            | EventKind::Command
+            | EventKind::Tick
+            | EventKind::WorldLoaded
+            | EventKind::WorldSave
+            | EventKind::Custom => (0, 1),
+            _ => (0, 2),
+        }
+    }
+}
+
+/// A tile position (`types.pos`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub struct Pos {
+    /// Column; wraps around the world width.
+    pub x: i32,
+    /// Row from bedrock upwards.
+    pub y: i32,
+}
+
+/// A vanilla rejection reason a `player-pre-login` handler may use (`events.reject-reason`). Vanilla clients show
+/// their own localized text for each code.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum RejectReason {
+    /// 3: the client is too old.
+    ClientTooOld,
+    /// 5: the server is full.
+    ServerFull,
+    /// 6: blacklisted.
+    Blacklisted,
+    /// 7: not on the whitelist.
+    NotWhitelisted,
+    /// 10: wrong password.
+    IncorrectPassword,
+    /// 11: kicked (the default).
+    Kicked,
+    /// 12: banned.
+    Banned,
+    /// 14: invalid user name.
+    InvalidUsername,
+    /// 15: the server is still loading.
+    StillLoading,
+}
+
+impl RejectReason {
+    /// All reasons.
+    pub const ALL: [RejectReason; 9] = [
+        RejectReason::ClientTooOld,
+        RejectReason::ServerFull,
+        RejectReason::Blacklisted,
+        RejectReason::NotWhitelisted,
+        RejectReason::IncorrectPassword,
+        RejectReason::Kicked,
+        RejectReason::Banned,
+        RejectReason::InvalidUsername,
+        RejectReason::StillLoading,
+    ];
+
+    /// The WIT name.
+    pub fn name(self) -> &'static str {
+        match self {
+            RejectReason::ClientTooOld => "client-too-old",
+            RejectReason::ServerFull => "server-full",
+            RejectReason::Blacklisted => "blacklisted",
+            RejectReason::NotWhitelisted => "not-whitelisted",
+            RejectReason::IncorrectPassword => "incorrect-password",
+            RejectReason::Kicked => "kicked",
+            RejectReason::Banned => "banned",
+            RejectReason::InvalidUsername => "invalid-username",
+            RejectReason::StillLoading => "still-loading",
+        }
+    }
+
+    /// Parses a WIT name.
+    pub fn parse(s: &str) -> Option<RejectReason> {
+        RejectReason::ALL.into_iter().find(|r| r.name() == s)
+    }
+
+    /// The vanilla 0x26 reason byte.
+    pub fn code(self) -> u8 {
+        match self {
+            RejectReason::ClientTooOld => 3,
+            RejectReason::ServerFull => 5,
+            RejectReason::Blacklisted => 6,
+            RejectReason::NotWhitelisted => 7,
+            RejectReason::IncorrectPassword => 10,
+            RejectReason::Kicked => 11,
+            RejectReason::Banned => 12,
+            RejectReason::InvalidUsername => 14,
+            RejectReason::StillLoading => 15,
+        }
+    }
+}
+
+/// Which layer a `block-break` removes (`events.break-layer`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum BreakLayer {
+    /// The tile itself, its contents or water.
+    Block,
+    /// The back wall.
+    BackWall,
+}
+
+impl BreakLayer {
+    /// The WIT name.
+    pub fn name(self) -> &'static str {
+        match self {
+            BreakLayer::Block => "block",
+            BreakLayer::BackWall => "back-wall",
+        }
+    }
+}
+
+/// What an `object-place` places (`events.object-kind`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ObjectKind {
+    /// A workbench (crafting station); `item` is the workbench type.
+    Workbench,
+    /// An interaction object (chest, sign, door, bed, ...); `item` is its item type.
+    InteractionObject,
+}
+
+impl ObjectKind {
+    /// The WIT name.
+    pub fn name(self) -> &'static str {
+        match self {
+            ObjectKind::Workbench => "workbench",
+            ObjectKind::InteractionObject => "interaction-object",
+        }
     }
 }
 
@@ -215,7 +397,7 @@ pub enum CommandSender {
     Player(String),
 }
 
-/// One event (`events.event`, without `custom`, which arrives with M3).
+/// One event (`events.event`).
 #[derive(Debug, Clone, PartialEq)]
 pub enum Event {
     /// `player-join`.
@@ -271,6 +453,107 @@ pub enum Event {
         /// Before or after.
         phase: SavePhase,
     },
+    /// `player-pre-login`. The player is not online yet: use `player` as an id, not as a handle.
+    PlayerPreLogin {
+        /// Player id.
+        player: String,
+        /// Alias the player joins with.
+        alias: String,
+        /// Cancelled (= rejected) by an earlier handler.
+        cancelled: bool,
+        /// The reason sent when the event ends up cancelled.
+        reason: RejectReason,
+    },
+    /// `block-place`.
+    BlockPlace {
+        /// Player id.
+        player: String,
+        /// Target tile.
+        pos: Pos,
+        /// Item type being placed.
+        item: u32,
+        /// Item data A (for example the paint or the rotation).
+        data_a: u16,
+        /// Item data B.
+        data_b: u16,
+        /// Cancelled by an earlier handler.
+        cancelled: bool,
+    },
+    /// `block-break`.
+    BlockBreak {
+        /// Player id.
+        player: String,
+        /// Target tile.
+        pos: Pos,
+        /// Tile or back wall.
+        layer: BreakLayer,
+        /// The tile type before the removal.
+        tile: u32,
+        /// Cancelled by an earlier handler.
+        cancelled: bool,
+    },
+    /// `block-changed` (monitor only).
+    BlockChanged {
+        /// The tile.
+        pos: Pos,
+        /// The new tile type.
+        tile: u32,
+        /// The player who caused it, when known.
+        player: Option<String>,
+    },
+    /// `object-place`.
+    ObjectPlace {
+        /// Player id.
+        player: String,
+        /// Target tile.
+        pos: Pos,
+        /// What is placed.
+        object: ObjectKind,
+        /// Workbench type or item type.
+        item: u32,
+        /// Cancelled by an earlier handler.
+        cancelled: bool,
+    },
+    /// `damage`.
+    Damage {
+        /// The owning player of the damaged blockhead.
+        player: Option<String>,
+        /// The blockhead's unique id.
+        blockhead: u64,
+        /// Damage (1.0 = full health), after earlier handlers' changes.
+        amount: f32,
+        /// The attacking player for PvP damage.
+        attacker: Option<String>,
+        /// Cancelled by an earlier handler.
+        cancelled: bool,
+    },
+    /// `death`.
+    Death {
+        /// The owning player of the blockhead.
+        player: Option<String>,
+        /// The blockhead's unique id.
+        blockhead: u64,
+    },
+    /// `player-move`: the player's blockhead entered another tile.
+    PlayerMove {
+        /// Player id.
+        player: String,
+        /// Previous tile.
+        from: Pos,
+        /// New tile.
+        to: Pos,
+    },
+    /// `custom`.
+    Custom {
+        /// `<mod-id>:<name>`.
+        name: String,
+        /// The firing mod.
+        source: String,
+        /// Canonical CBOR payload.
+        payload: Vec<u8>,
+        /// Cancelled by an earlier handler.
+        cancelled: bool,
+    },
 }
 
 impl Event {
@@ -284,18 +567,35 @@ impl Event {
             Event::Tick { .. } => EventKind::Tick,
             Event::WorldLoaded { .. } => EventKind::WorldLoaded,
             Event::WorldSave { .. } => EventKind::WorldSave,
+            Event::PlayerPreLogin { .. } => EventKind::PlayerPreLogin,
+            Event::BlockPlace { .. } => EventKind::BlockPlace,
+            Event::BlockBreak { .. } => EventKind::BlockBreak,
+            Event::BlockChanged { .. } => EventKind::BlockChanged,
+            Event::ObjectPlace { .. } => EventKind::ObjectPlace,
+            Event::Damage { .. } => EventKind::Damage,
+            Event::Death { .. } => EventKind::Death,
+            Event::PlayerMove { .. } => EventKind::PlayerMove,
+            Event::Custom { .. } => EventKind::Custom,
         }
     }
 
     /// The cancelled flag (always false for events that cannot be cancelled).
     pub fn cancelled(&self) -> bool {
         match self {
-            Event::Chat { cancelled, .. } | Event::Command { cancelled, .. } => *cancelled,
+            Event::Chat { cancelled, .. }
+            | Event::Command { cancelled, .. }
+            | Event::PlayerPreLogin { cancelled, .. }
+            | Event::BlockPlace { cancelled, .. }
+            | Event::BlockBreak { cancelled, .. }
+            | Event::ObjectPlace { cancelled, .. }
+            | Event::Damage { cancelled, .. }
+            | Event::Custom { cancelled, .. } => *cancelled,
             _ => false,
         }
     }
 
-    /// Applies a handler outcome. Returns false when the mutation did not fit the event (it is then ignored).
+    /// Applies a handler outcome. Returns false when the mutation did not fit the event (it is then ignored; the
+    /// cancelled flag still applies).
     pub fn apply(&mut self, outcome: Outcome) -> bool {
         match self {
             Event::Chat { cancelled, text, .. } => {
@@ -306,10 +606,46 @@ impl Event {
                         *text = t;
                         true
                     }
-                    Some(Mutation::CustomPayload(_)) => false,
+                    Some(_) => false,
                 }
             }
-            Event::Command { cancelled, .. } => {
+            Event::PlayerPreLogin { cancelled, reason, .. } => {
+                *cancelled = outcome.cancelled;
+                match outcome.mutation {
+                    None => true,
+                    Some(Mutation::RejectReason(r)) => {
+                        *reason = r;
+                        true
+                    }
+                    Some(_) => false,
+                }
+            }
+            Event::Damage { cancelled, amount, .. } => {
+                *cancelled = outcome.cancelled;
+                match outcome.mutation {
+                    None => true,
+                    Some(Mutation::DamageAmount(a)) if a.is_finite() && a >= 0.0 => {
+                        *amount = a;
+                        true
+                    }
+                    Some(_) => false,
+                }
+            }
+            Event::Custom { cancelled, payload, .. } => {
+                *cancelled = outcome.cancelled;
+                match outcome.mutation {
+                    None => true,
+                    Some(Mutation::CustomPayload(p)) if crate::value::Value::decode(&p).is_ok() => {
+                        *payload = p;
+                        true
+                    }
+                    Some(_) => false,
+                }
+            }
+            Event::Command { cancelled, .. }
+            | Event::BlockPlace { cancelled, .. }
+            | Event::BlockBreak { cancelled, .. }
+            | Event::ObjectPlace { cancelled, .. } => {
                 *cancelled = outcome.cancelled;
                 outcome.mutation.is_none()
             }
@@ -319,16 +655,20 @@ impl Event {
 }
 
 /// A change a handler wants to make (`events.mutation`).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Mutation {
     /// Replace the chat text.
     ChatText(String),
-    /// Replace a custom event payload (M3).
+    /// Replace a custom event payload (canonical CBOR).
     CustomPayload(Vec<u8>),
+    /// The rejection reason of a `player-pre-login` (API 0.2).
+    RejectReason(RejectReason),
+    /// The damage amount (finite, >= 0; API 0.2).
+    DamageAmount(f32),
 }
 
 /// What a handler returns (`events.outcome`).
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct Outcome {
     /// The new cancelled state.
     pub cancelled: bool,
@@ -408,6 +748,65 @@ impl fmt::Display for ApiError {
 
 impl std::error::Error for ApiError {}
 
+/// `services.call-error`: why a service call failed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ServiceError {
+    /// No provider with that name is loaded.
+    NotFound,
+    /// Providers exist but none matches the version requirement.
+    VersionMismatch,
+    /// The caller does not depend (or soft-depend) on the provider.
+    NotPermitted,
+    /// The call would re-enter a mod that is already on the call stack.
+    Reentrant,
+    /// The provider returned an error.
+    ProviderError(String),
+    /// The provider trapped or ran over its time budget.
+    Trap,
+    /// Arguments or result were not valid canonical CBOR (or the arguments not a list).
+    BadValue(String),
+}
+
+impl fmt::Display for ServiceError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ServiceError::NotFound => f.write_str("not-found"),
+            ServiceError::VersionMismatch => f.write_str("version-mismatch"),
+            ServiceError::NotPermitted => f.write_str("not-permitted"),
+            ServiceError::Reentrant => f.write_str("reentrant"),
+            ServiceError::ProviderError(m) => write!(f, "provider-error: {m}"),
+            ServiceError::Trap => f.write_str("trap"),
+            ServiceError::BadValue(m) => write!(f, "bad-value: {m}"),
+        }
+    }
+}
+
+impl std::error::Error for ServiceError {}
+
+/// `channels.target`: where a channel message goes.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum ChannelTarget {
+    /// Every other mod on this side that opened the same channel name.
+    Local,
+    /// The server (from a client mod).
+    Server,
+    /// One player's client (from a server mod), by player id.
+    Player(String),
+    /// Every connected client running the mod (from a server mod).
+    AllPlayers,
+}
+
+/// `channels.source`: where a received channel message came from.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum ChannelSource {
+    /// Another mod on the same side (its id).
+    Local(String),
+    /// The server.
+    Server,
+    /// A player's client, by player id.
+    Player(String),
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -429,22 +828,40 @@ mod tests {
         for k in EventKind::ALL {
             assert_eq!(EventKind::parse(k.name()), Some(k));
         }
-        assert_eq!(EventKind::parse("block-place"), None);
+        assert_eq!(EventKind::parse("custom"), None);
+        assert_eq!(EventKind::Custom.name(), "custom");
+        assert_eq!(EventKind::parse("explode"), None);
+        for r in RejectReason::ALL {
+            assert_eq!(RejectReason::parse(r.name()), Some(r));
+        }
+        assert_eq!(RejectReason::parse("nope"), None);
+        let codes: Vec<u8> = RejectReason::ALL.iter().map(|r| r.code()).collect();
+        assert_eq!(codes, vec![3, 5, 6, 7, 10, 11, 12, 14, 15]);
         assert_eq!(Side::Server.name(), "server");
         assert_eq!(Side::Client.name(), "client");
         assert_eq!(SavePhase::Pre.name(), "pre");
         assert_eq!(SavePhase::Post.name(), "post");
+        assert_eq!(BreakLayer::Block.name(), "block");
+        assert_eq!(BreakLayer::BackWall.name(), "back-wall");
+        assert_eq!(ObjectKind::Workbench.name(), "workbench");
+        assert_eq!(ObjectKind::InteractionObject.name(), "interaction-object");
         assert!(Priority::Lowest < Priority::Monitor);
         assert!(Role::Player < Role::Owner);
     }
 
     #[test]
-    fn cancellable_kinds() {
+    fn cancellable_kinds_and_versions() {
         let c: Vec<_> = EventKind::ALL.into_iter().filter(|k| k.cancellable()).collect();
-        assert_eq!(c, vec![EventKind::Chat, EventKind::Command]);
+        use EventKind::*;
+        assert_eq!(c, vec![Chat, Command, PlayerPreLogin, BlockPlace, BlockBreak, ObjectPlace, Damage]);
+        assert!(Custom.cancellable());
+        assert_eq!(Tick.since(), (0, 1));
+        assert_eq!(Custom.since(), (0, 1));
+        assert_eq!(Damage.since(), (0, 2));
     }
 
     fn all_events() -> Vec<Event> {
+        let pos = Pos { x: 1, y: 2 };
         vec![
             Event::PlayerJoin { player: "p".into() },
             Event::PlayerQuit { player: "p".into(), was_kick: true },
@@ -459,7 +876,24 @@ mod tests {
             Event::Tick { tick: 1, dt: 0.2 },
             Event::WorldLoaded { world_name: "W".into(), world_id: "id".into() },
             Event::WorldSave { phase: SavePhase::Pre },
+            Event::PlayerPreLogin {
+                player: "p".into(),
+                alias: "A".into(),
+                cancelled: false,
+                reason: RejectReason::Kicked,
+            },
+            Event::BlockPlace { player: "p".into(), pos, item: 1, data_a: 0, data_b: 0, cancelled: false },
+            Event::BlockBreak { player: "p".into(), pos, layer: BreakLayer::Block, tile: 1, cancelled: false },
+            Event::BlockChanged { pos, tile: 2, player: None },
+            Event::ObjectPlace { player: "p".into(), pos, object: ObjectKind::Workbench, item: 1, cancelled: false },
+            Event::Damage { player: None, blockhead: 1, amount: 0.5, attacker: None, cancelled: false },
+            Event::Death { player: None, blockhead: 1 },
+            Event::PlayerMove { player: "p".into(), from: pos, to: pos },
         ]
+    }
+
+    fn custom() -> Event {
+        Event::Custom { name: "m:x".into(), source: "m".into(), payload: vec![0xf6], cancelled: false }
     }
 
     #[test]
@@ -468,6 +902,7 @@ mod tests {
             assert_eq!(ev.kind(), kind);
             assert!(!ev.cancelled());
         }
+        assert_eq!(custom().kind(), EventKind::Custom);
         let mut chat = all_events().remove(2);
         assert!(chat.apply(Outcome { cancelled: true, mutation: Some(Mutation::ChatText("x".into())) }));
         assert!(chat.cancelled());
@@ -476,10 +911,33 @@ mod tests {
         assert!(!chat.cancelled());
         assert!(!chat.apply(Outcome { cancelled: false, mutation: Some(Mutation::CustomPayload(vec![])) }));
 
-        let mut cmd = all_events().remove(3);
-        assert!(cmd.apply(Outcome { cancelled: true, mutation: None }));
-        assert!(cmd.cancelled());
-        assert!(!cmd.apply(Outcome { cancelled: true, mutation: Some(Mutation::ChatText("x".into())) }));
+        for i in [3, 8, 9, 11] {
+            let mut ev = all_events().remove(i);
+            assert!(ev.apply(Outcome { cancelled: true, mutation: None }));
+            assert!(ev.cancelled());
+            assert!(!ev.apply(Outcome { cancelled: true, mutation: Some(Mutation::ChatText("x".into())) }));
+        }
+
+        let mut pre = all_events().remove(7);
+        assert!(pre.apply(Outcome { cancelled: true, mutation: Some(Mutation::RejectReason(RejectReason::Banned)) }));
+        assert!(matches!(pre, Event::PlayerPreLogin { cancelled: true, reason: RejectReason::Banned, .. }));
+        assert!(pre.apply(Outcome { cancelled: true, mutation: None }));
+        assert!(!pre.apply(Outcome { cancelled: true, mutation: Some(Mutation::DamageAmount(1.0)) }));
+
+        let mut dmg = all_events().remove(12);
+        assert!(dmg.apply(Outcome { cancelled: false, mutation: Some(Mutation::DamageAmount(0.25)) }));
+        assert!(matches!(dmg, Event::Damage { amount, .. } if amount == 0.25));
+        assert!(!dmg.apply(Outcome { cancelled: false, mutation: Some(Mutation::DamageAmount(-1.0)) }));
+        assert!(!dmg.apply(Outcome { cancelled: false, mutation: Some(Mutation::DamageAmount(f32::NAN)) }));
+        assert!(dmg.apply(Outcome { cancelled: true, mutation: None }));
+        assert!(dmg.cancelled());
+
+        let mut c = custom();
+        assert!(c.apply(Outcome { cancelled: true, mutation: Some(Mutation::CustomPayload(vec![0x01])) }));
+        assert!(matches!(&c, Event::Custom { payload, cancelled: true, .. } if payload == &[0x01]));
+        assert!(!c.apply(Outcome { cancelled: true, mutation: Some(Mutation::CustomPayload(vec![0xff])) }));
+        assert!(c.apply(Outcome { cancelled: false, mutation: None }));
+        assert!(!c.cancelled());
 
         let mut tick = all_events().remove(4);
         assert!(tick.apply(Outcome::default()));
@@ -497,7 +955,7 @@ mod tests {
     }
 
     #[test]
-    fn api_error_display() {
+    fn error_display() {
         let cases = [
             (ApiError::NotPermitted("players:kick".into()), "not permitted: players:kick"),
             (ApiError::InvalidArgument("key".into()), "invalid argument: key"),
@@ -505,6 +963,18 @@ mod tests {
             (ApiError::StaleHandle, "stale handle"),
             (ApiError::Unsupported, "unsupported"),
             (ApiError::Internal("x".into()), "internal error: x"),
+        ];
+        for (e, s) in cases {
+            assert_eq!(e.to_string(), s);
+        }
+        let cases = [
+            (ServiceError::NotFound, "not-found"),
+            (ServiceError::VersionMismatch, "version-mismatch"),
+            (ServiceError::NotPermitted, "not-permitted"),
+            (ServiceError::Reentrant, "reentrant"),
+            (ServiceError::ProviderError("x".into()), "provider-error: x"),
+            (ServiceError::Trap, "trap"),
+            (ServiceError::BadValue("y".into()), "bad-value: y"),
         ];
         for (e, s) in cases {
             assert_eq!(e.to_string(), s);

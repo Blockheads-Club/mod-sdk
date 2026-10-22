@@ -9,8 +9,10 @@
 use std::collections::BTreeMap;
 use std::time::Instant;
 
+use crate::channels::ChannelId;
 use crate::types::{
-    ApiError, CommandOutcome, CommandSender, CommandSpec, Event, EventKind, LogLevel, Outcome, Priority,
+    ApiError, ChannelSource, ChannelTarget, CommandOutcome, CommandSender, CommandSpec, Event, EventKind, LogLevel,
+    Outcome, Pos, Priority, ServiceError,
 };
 use crate::types::{Role, Side};
 
@@ -87,9 +89,36 @@ pub trait Instance {
     ) -> Result<CommandOutcome, CallError>;
     /// `run-task`.
     fn run_task(&mut self, host: &mut dyn HostApi, id: TaskId) -> Result<(), CallError>;
+
+    /// `call-service` (API 0.2): `args` and the result are canonical CBOR. A deliberate error from the provider is
+    /// [`CallError::Failed`] (reported as `provider-error`, not a strike). The default reports that the runtime does
+    /// not implement services.
+    fn call_service(
+        &mut self,
+        host: &mut dyn HostApi,
+        name: &str,
+        method: &str,
+        args: &[u8],
+    ) -> Result<Vec<u8>, CallError> {
+        let _ = (host, name, method, args);
+        Err(CallError::Failed("this runtime does not implement services".into()))
+    }
+
+    /// `on-channel-message` (API 0.2). The default ignores the message.
+    fn on_channel_message(
+        &mut self,
+        host: &mut dyn HostApi,
+        channel: ChannelId,
+        source: &ChannelSource,
+        data: &[u8],
+    ) -> Result<(), CallError> {
+        let _ = (host, channel, source, data);
+        Ok(())
+    }
 }
 
-/// The WIT imports, bound to the calling mod. Services and channels (M3) report [`ApiError::Unsupported`].
+/// The WIT imports, bound to the calling mod. The API 0.2 additions have defaults that report
+/// [`ApiError::Unsupported`], so a host API written for 0.1 keeps compiling; [`crate::ModHost`] implements them all.
 pub trait HostApi {
     /// When the current call must end (hard budget).
     fn deadline(&self) -> Instant;
@@ -159,6 +188,71 @@ pub trait HostApi {
     fn storage_delete(&mut self, key: &str) -> bool;
     /// `storage.keys`.
     fn storage_keys(&mut self, prefix: &str) -> Vec<String>;
+
+    /// `player.pos` (API 0.2): the tile of the player's blockhead, `None` when it is not in the world.
+    fn player_pos(&mut self, id: &str) -> Result<Option<Pos>, ApiError> {
+        let _ = id;
+        Err(ApiError::Unsupported)
+    }
+    /// The host handle of a player, for `{"$h": n}` values.
+    fn handle_of_player(&mut self, id: &str) -> u64 {
+        let _ = id;
+        0
+    }
+    /// The player behind a host handle.
+    fn player_of_handle(&mut self, handle: u64) -> Result<String, ApiError> {
+        let _ = handle;
+        Err(ApiError::StaleHandle)
+    }
+
+    /// `events.subscribe-custom`.
+    fn subscribe_custom(
+        &mut self,
+        name: &str,
+        priority: Priority,
+        ignore_cancelled: bool,
+    ) -> Result<SubscriptionId, ApiError> {
+        let _ = (name, priority, ignore_cancelled);
+        Err(ApiError::Unsupported)
+    }
+    /// `events.fire-custom`: true when the event ended up cancelled.
+    fn fire_custom(&mut self, name: &str, payload: &[u8]) -> Result<bool, ApiError> {
+        let _ = (name, payload);
+        Err(ApiError::Unsupported)
+    }
+
+    /// `services.provide`.
+    fn provide_service(&mut self, name: &str, version: &str) -> Result<(), ApiError> {
+        let _ = (name, version);
+        Err(ApiError::Unsupported)
+    }
+    /// `services.call`.
+    fn call_service(
+        &mut self,
+        name: &str,
+        version_req: &str,
+        method: &str,
+        args: &[u8],
+    ) -> Result<Vec<u8>, ServiceError> {
+        let _ = (name, version_req, method, args);
+        Err(ServiceError::NotFound)
+    }
+
+    /// `channels.open`.
+    fn channel_open(&mut self, name: &str) -> Result<ChannelId, ApiError> {
+        let _ = name;
+        Err(ApiError::Unsupported)
+    }
+    /// `channels.send`.
+    fn channel_send(&mut self, channel: ChannelId, to: ChannelTarget, data: &[u8]) -> Result<(), ApiError> {
+        let _ = (channel, to, data);
+        Err(ApiError::Unsupported)
+    }
+    /// `channels.close`.
+    fn channel_close(&mut self, channel: ChannelId) -> bool {
+        let _ = channel;
+        false
+    }
 }
 
 #[cfg(test)]

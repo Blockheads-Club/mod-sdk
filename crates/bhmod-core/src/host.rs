@@ -1,8 +1,15 @@
 //! [`ModHost`]: loads mods and runs them against a [`GameBridge`].
 //!
 //! The host program calls the `ModHost` from its main thread at its hook points (world loaded, join, quit, chat,
-//! command, tick, poll, save, stop). Every guest call runs under the time budget, inside `catch_unwind`; traps,
-//! timeouts and panics are strikes, and too many strikes disable the mod, never the game.
+//! command, tick, poll, save, stop, and the API 0.2 gameplay events through [`ModHost::fire`]). Every guest call
+//! runs under the time budget, inside `catch_unwind`; traps, timeouts and panics are strikes, and too many strikes
+//! disable the mod, never the game.
+//!
+//! Mods call each other through the host (services, custom events, channels). A mod whose code is running is on
+//! the call stack; calling into it again (A -> B -> A) gives `reentrant` for services. Events fired meanwhile
+//! (including a mod's own custom events) reach that mod's handlers later: they are queued and delivered once the
+//! outermost call has returned, and their outcome is ignored (the event is already decided). A nested call ends at
+//! the earlier of its own hard deadline and the caller's.
 
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::{Path, PathBuf};
@@ -11,21 +18,28 @@ use std::time::Instant;
 
 use crate::bridge::GameBridge;
 use crate::budget::{Budgets, Clock, Strikes, SystemClock};
-use crate::bus::EventBus;
+use crate::bus::{EventBus, Subscription};
+use crate::channels::{self, ChannelId, Channels, Message};
 use crate::commands::CommandRegistry;
 use crate::config::{required_permissions, ModsConfig, FILE_NAME};
 use crate::discover::discover;
+use crate::handles::Handles;
 use crate::resolve::resolve;
 use crate::runtime::{CallError, CommandId, HostApi, Instance, InstanceLimits, Runtime, SubscriptionId, TaskId};
 use crate::scheduler::Scheduler;
+use crate::services::ServiceRegistry;
 use crate::storage::{MemoryStorage, StorageProvider, Store};
 use crate::types::{
-    ApiError, CommandOutcome, CommandSender, CommandSpec, Event, EventKind, LogLevel, Priority, Role, SavePhase, Side,
+    ApiError, ChannelSource, ChannelTarget, CommandOutcome, CommandSender, CommandSpec, Event, EventKind, LogLevel,
+    Pos, Priority, Role, SavePhase, ServiceError, Side,
 };
+use crate::value::Value;
 use crate::API_VERSION;
 
 /// Longest log message in bytes.
 pub const MAX_LOG: usize = 4096;
+/// Most deferred event deliveries run after one outermost call.
+pub const MAX_DEFERRED: usize = 1024;
 
 /// How to build a [`ModHost`].
 pub struct HostOptions {
@@ -86,6 +100,10 @@ pub struct ModInfo {
 struct Slot {
     info: ModInfo,
     permissions: Vec<String>,
+    /// Ids of the mods this one depends or soft-depends on (it may call their services and open their channels).
+    deps: Vec<String>,
+    /// `[provides]` as `(name, version)`.
+    provides: Vec<(String, String)>,
     instance: Option<Box<dyn Instance>>,
     store: Option<Store>,
     strikes: Strikes,
@@ -97,6 +115,14 @@ pub struct ModHost {
     bus: EventBus,
     commands: CommandRegistry,
     scheduler: Scheduler,
+    services: ServiceRegistry,
+    channels: Channels,
+    handles: Handles,
+    /// Mods whose code is running, outermost first, with the deadline of each call.
+    stack: Vec<(usize, Instant)>,
+    /// Event deliveries to mods that were on the stack when the event fired.
+    deferred: Vec<(Subscription, Event)>,
+    draining: bool,
     bridge: Rc<dyn GameBridge>,
     side: Side,
     budgets: Budgets,
@@ -131,6 +157,12 @@ impl ModHost {
             bus: EventBus::default(),
             commands: CommandRegistry::default(),
             scheduler: Scheduler::default(),
+            services: ServiceRegistry::default(),
+            channels: Channels::default(),
+            handles: Handles::default(),
+            stack: Vec::new(),
+            deferred: Vec::new(),
+            draining: false,
             bridge,
             side,
             budgets,
@@ -172,6 +204,20 @@ impl ModHost {
                         state: ModState::Loaded,
                     },
                     permissions: required_permissions(&pkg.manifest.permissions),
+                    deps: pkg
+                        .manifest
+                        .dependencies
+                        .keys()
+                        .chain(pkg.manifest.soft_dependencies.keys())
+                        .cloned()
+                        .collect(),
+                    provides: pkg
+                        .manifest
+                        .provides
+                        .services
+                        .iter()
+                        .map(|s| (s.name.clone(), s.version.clone()))
+                        .collect(),
                     instance: Some(instance),
                     store: None,
                     strikes: Strikes::default(),
@@ -209,31 +255,31 @@ impl ModHost {
         self.slots.iter().map(|s| s.info.clone()).collect()
     }
 
-    /// Runs one guest call for `owner` under the budget. `None` when the mod has no instance (disabled).
+    /// True while `owner`'s code is running (it is on the call stack).
+    fn on_stack(&self, owner: usize) -> bool {
+        self.stack.iter().any(|(o, _)| *o == owner)
+    }
+
+    /// Runs one guest call for `owner` under the budget. `None` when the mod has no instance (disabled) or is
+    /// already on the call stack.
     fn call<R>(
         &mut self,
         owner: usize,
         what: &str,
         f: impl FnOnce(&mut dyn Instance, &mut dyn HostApi) -> Result<R, CallError>,
     ) -> Option<Result<R, CallError>> {
+        // A mod on the call stack has its instance taken out, so it cannot be entered twice.
         let mut instance = self.slots[owner].instance.take()?;
         let start = self.clock.now();
-        let deadline = start + self.budgets.hard;
+        let own = start + self.budgets.hard;
+        let deadline = self.stack.last().map_or(own, |&(_, outer)| own.min(outer));
+        self.stack.push((owner, deadline));
         let result = {
-            let ModHost { slots, bus, commands, scheduler, bridge, side, .. } = self;
-            let mut ctx = Ctx {
-                owner,
-                slot: &mut slots[owner],
-                bus,
-                commands,
-                scheduler,
-                bridge: bridge.as_ref(),
-                side: *side,
-                deadline,
-            };
+            let mut ctx = Ctx { host: self, owner, deadline };
             catch_unwind(AssertUnwindSafe(|| f(instance.as_mut(), &mut ctx)))
                 .unwrap_or_else(|p| Err(CallError::Trap(format!("panic: {}", panic_text(p)))))
         };
+        self.stack.pop();
         let elapsed = self.clock.now().saturating_duration_since(start);
         let slot = &mut self.slots[owner];
         let id = slot.info.id.clone();
@@ -259,7 +305,30 @@ impl ModHost {
                 self.disable_slot(owner, format!("{n} faults within {secs} s"));
             }
         }
+        if self.stack.is_empty() && !self.deferred.is_empty() && !self.draining {
+            self.drain_deferred();
+        }
         Some(result)
+    }
+
+    /// Delivers the queued deliveries (outcomes ignored). Deliveries queued meanwhile run too, up to a limit.
+    fn drain_deferred(&mut self) {
+        self.draining = true;
+        let mut budget = MAX_DEFERRED;
+        while !self.deferred.is_empty() && budget > 0 {
+            let batch = std::mem::take(&mut self.deferred);
+            for (sub, ev) in batch {
+                budget = budget.saturating_sub(1);
+                // A mod disabled meanwhile has no instance, so `call` skips it.
+                let what = format!("{} handler", ev.kind().name());
+                self.call(sub.owner, &what, |i, h| i.handle_event(h, sub.id, &ev));
+            }
+        }
+        if !self.deferred.is_empty() {
+            self.log(LogLevel::Warn, &format!("dropped {} deferred event deliveries (loop?)", self.deferred.len()));
+            self.deferred.clear();
+        }
+        self.draining = false;
     }
 
     /// Disables one mod: `on-disable`, then everything it registered is removed and its storage flushed.
@@ -278,6 +347,8 @@ impl ModHost {
         self.bus.remove_owner(owner);
         self.commands.remove_owner(owner);
         self.scheduler.remove_owner(owner);
+        self.services.remove_owner(owner);
+        self.channels.remove_owner(owner);
         let slot = &mut self.slots[owner];
         slot.instance = None;
         let id = slot.info.id.clone();
@@ -324,15 +395,31 @@ impl ModHost {
         self.enabled = false;
     }
 
-    /// Delivers an event to every subscriber and returns it with the handlers' changes applied.
+    /// True when the host is enabled and some mod listens to `kind` (lets the host program skip building events
+    /// nobody wants, such as `block-changed` or `player-move`).
+    pub fn wants(&self, kind: EventKind) -> bool {
+        self.enabled && self.bus.has_listeners(kind)
+    }
+
+    /// Delivers an event to every subscriber and returns it with the handlers' changes applied. Handlers of mods
+    /// that are on the call stack get the event later (see the module docs). After a `player-quit`, the player's
+    /// handle becomes stale.
     pub fn fire(&mut self, mut ev: Event) -> Event {
         let kind = ev.kind();
-        for sub in self.bus.plan(kind) {
+        let custom = match &ev {
+            Event::Custom { name, .. } => Some(name.clone()),
+            _ => None,
+        };
+        for sub in self.bus.plan(kind, custom.as_deref()) {
             if self.slots[sub.owner].info.state != ModState::Enabled || (sub.ignore_cancelled && ev.cancelled()) {
                 continue;
             }
+            if self.on_stack(sub.owner) {
+                self.deferred.push((sub, ev.clone()));
+                continue;
+            }
             let snapshot = ev.clone();
-            let what = format!("{} handler", kind.name());
+            let what = format!("{} handler", custom.as_deref().unwrap_or(kind.name()));
             let result = self.call(sub.owner, &what, |i, h| i.handle_event(h, sub.id, &snapshot));
             if let Some(Ok(outcome)) = result {
                 if sub.priority != Priority::Monitor && !ev.apply(outcome) {
@@ -345,7 +432,26 @@ impl ModHost {
                 }
             }
         }
+        if let Event::PlayerQuit { player, .. } = &ev {
+            self.handles.invalidate(player);
+        }
         ev
+    }
+
+    /// A channel message arrived from the network (milestone M5: 0xBC `CHANNEL`). It is delivered with the next
+    /// poll to every mod that opened `name`. False when the queue is full.
+    pub fn channel_receive(&mut self, name: &str, source: ChannelSource, data: Vec<u8>) -> bool {
+        self.channels.enqueue(Message { name: name.to_string(), from_owner: None, source, data })
+    }
+
+    /// Delivers queued channel messages.
+    fn deliver_channels(&mut self) {
+        for (msg, to) in self.channels.drain() {
+            for (owner, ch) in to {
+                // A mod disabled meanwhile has no instance, so `call` skips it.
+                self.call(owner, "channel message", |i, h| i.on_channel_message(h, ch, &msg.source, &msg.data));
+            }
+        }
     }
 
     /// True when `line` is `/name ...` and `name` is a mod command (so the host routes it to [`ModHost::command`]
@@ -423,13 +529,22 @@ impl ModHost {
         }
         let due = self.scheduler.advance();
         self.run_tasks(due, Some(start));
+        if self.channels.has_queued() {
+            self.deliver_channels();
+        }
     }
 
-    /// One network poll: runs next-poll tasks.
+    /// One network poll: runs next-poll tasks and delivers channel messages.
     pub fn poll(&mut self) {
-        if self.enabled && self.scheduler.has_poll() {
+        if !self.enabled {
+            return;
+        }
+        if self.scheduler.has_poll() {
             let tasks = self.scheduler.take_poll();
             self.run_tasks(tasks, None);
+        }
+        if self.channels.has_queued() {
+            self.deliver_channels();
         }
     }
 
@@ -453,19 +568,18 @@ impl ModHost {
 
 /// The host API of one mod during one call.
 struct Ctx<'a> {
+    host: &'a mut ModHost,
     owner: usize,
-    slot: &'a mut Slot,
-    bus: &'a mut EventBus,
-    commands: &'a mut CommandRegistry,
-    scheduler: &'a mut Scheduler,
-    bridge: &'a dyn GameBridge,
-    side: Side,
     deadline: Instant,
 }
 
 impl Ctx<'_> {
+    fn slot(&self) -> &Slot {
+        &self.host.slots[self.owner]
+    }
+
     fn require(&self, perm: &str) -> Result<(), ApiError> {
-        if self.slot.permissions.iter().any(|p| p == perm) {
+        if self.slot().permissions.iter().any(|p| p == perm) {
             Ok(())
         } else {
             Err(ApiError::NotPermitted(perm.to_string()))
@@ -473,7 +587,16 @@ impl Ctx<'_> {
     }
 
     fn store(&mut self) -> Result<&mut Store, ApiError> {
-        self.slot.store.as_mut().ok_or_else(|| ApiError::Internal("storage unavailable".into()))
+        self.host.slots[self.owner].store.as_mut().ok_or_else(|| ApiError::Internal("storage unavailable".into()))
+    }
+
+    fn log_as_mod(&self, level: LogLevel, msg: &str) {
+        self.host.bridge.log(Some(&self.slot().info.id), level, msg);
+    }
+
+    /// True when the calling mod is `id` or depends (softly) on it.
+    fn may_use(&self, id: &str) -> bool {
+        self.slot().info.id == id || self.slot().deps.iter().any(|d| d == id)
     }
 }
 
@@ -501,82 +624,83 @@ impl HostApi for Ctx<'_> {
         API_VERSION.to_string()
     }
     fn mod_id(&self) -> String {
-        self.slot.info.id.clone()
+        self.slot().info.id.clone()
     }
     fn mod_version(&self) -> String {
-        self.slot.info.version.clone()
+        self.slot().info.version.clone()
     }
     fn current_side(&self) -> Side {
-        self.side
+        self.host.side
     }
     fn host_name(&self) -> String {
-        self.bridge.host_name()
+        self.host.bridge.host_name()
     }
     fn log(&mut self, level: LogLevel, message: &str) {
-        self.bridge.log(Some(&self.slot.info.id), level, truncate(message, MAX_LOG));
+        self.log_as_mod(level, truncate(message, MAX_LOG));
     }
     fn player_alias(&mut self, id: &str) -> Result<String, ApiError> {
-        self.bridge.player_alias(id).ok_or(ApiError::StaleHandle)
+        self.host.bridge.player_alias(id).ok_or(ApiError::StaleHandle)
     }
     fn player_is_online(&mut self, id: &str) -> bool {
-        self.bridge.player_alias(id).is_some()
+        self.host.bridge.player_alias(id).is_some()
     }
     fn player_role(&mut self, id: &str) -> Result<Role, ApiError> {
-        self.bridge.player_alias(id).ok_or(ApiError::StaleHandle)?;
-        Ok(self.bridge.player_role(id))
+        self.host.bridge.player_alias(id).ok_or(ApiError::StaleHandle)?;
+        Ok(self.host.bridge.player_role(id))
     }
     fn player_send_chat(&mut self, id: &str, text: &str) -> Result<(), ApiError> {
-        self.bridge.send_chat(id, text).then_some(()).ok_or(ApiError::StaleHandle)
+        self.host.bridge.send_chat(id, text).then_some(()).ok_or(ApiError::StaleHandle)
     }
     fn player_kick(&mut self, id: &str, reason: &str) -> Result<(), ApiError> {
         self.require("players:kick")?;
-        self.bridge.kick(id, reason).then_some(()).ok_or(ApiError::StaleHandle)
+        self.host.bridge.kick(id, reason).then_some(()).ok_or(ApiError::StaleHandle)
     }
     fn players_get(&mut self, id: &str) -> Option<String> {
-        self.bridge.player_alias(id).map(|_| id.to_string())
+        self.host.bridge.player_alias(id).map(|_| id.to_string())
     }
     fn players_find_by_alias(&mut self, alias: &str) -> Option<String> {
         let want = alias.to_lowercase();
-        self.bridge
-            .online_players()
-            .into_iter()
-            .find(|id| self.bridge.player_alias(id).is_some_and(|a| a.to_lowercase() == want))
+        let bridge = &self.host.bridge;
+        bridge.online_players().into_iter().find(|id| bridge.player_alias(id).is_some_and(|a| a.to_lowercase() == want))
     }
     fn players_online(&mut self) -> Vec<String> {
-        self.bridge.online_players()
+        self.host.bridge.online_players()
     }
     fn players_broadcast(&mut self, text: &str) -> Result<(), ApiError> {
         self.require("players:chat")?;
-        self.bridge.broadcast(text);
+        self.host.bridge.broadcast(text);
         Ok(())
     }
     fn subscribe(&mut self, kind: EventKind, priority: Priority, ignore: bool) -> Result<SubscriptionId, ApiError> {
-        self.bus.subscribe(self.owner, kind, priority, ignore).ok_or_else(|| limit("subscriptions per mod"))
+        if kind == EventKind::Custom {
+            return Err(ApiError::InvalidArgument("subscribe to custom events by name".into()));
+        }
+        self.host.bus.subscribe(self.owner, kind, priority, ignore).ok_or_else(|| limit("subscriptions per mod"))
     }
     fn unsubscribe(&mut self, sub: SubscriptionId) -> bool {
-        self.bus.unsubscribe(self.owner, sub)
+        self.host.bus.unsubscribe(self.owner, sub)
     }
     fn register_command(&mut self, spec: CommandSpec) -> Result<CommandId, ApiError> {
-        let bridge = self.bridge;
-        self.commands.register(self.owner, spec, &|n| bridge.is_builtin_command(n))
+        let ModHost { commands, bridge, .. } = &mut *self.host;
+        commands.register(self.owner, spec, &|n| bridge.is_builtin_command(n))
     }
     fn unregister_command(&mut self, id: CommandId) -> bool {
-        self.commands.unregister(self.owner, id)
+        self.host.commands.unregister(self.owner, id)
     }
     fn run_later(&mut self, delay: u32) -> Result<TaskId, ApiError> {
-        self.scheduler.run_later(self.owner, delay).ok_or_else(|| limit("tasks per mod"))
+        self.host.scheduler.run_later(self.owner, delay).ok_or_else(|| limit("tasks per mod"))
     }
     fn run_every(&mut self, delay: u32, period: u32) -> Result<TaskId, ApiError> {
         if period == 0 {
             return Err(ApiError::InvalidArgument("period must be at least 1".into()));
         }
-        self.scheduler.run_every(self.owner, delay, period).ok_or_else(|| limit("tasks per mod"))
+        self.host.scheduler.run_every(self.owner, delay, period).ok_or_else(|| limit("tasks per mod"))
     }
     fn run_next_poll(&mut self) -> Result<TaskId, ApiError> {
-        self.scheduler.run_next_poll(self.owner).ok_or_else(|| limit("tasks per mod"))
+        self.host.scheduler.run_next_poll(self.owner).ok_or_else(|| limit("tasks per mod"))
     }
     fn cancel_task(&mut self, id: TaskId) -> bool {
-        self.scheduler.cancel(self.owner, id)
+        self.host.scheduler.cancel(self.owner, id)
     }
     fn storage_get(&mut self, key: &str) -> Option<Vec<u8>> {
         self.store().ok()?.get(key)
@@ -589,12 +713,107 @@ impl HostApi for Ctx<'_> {
         match store.delete(key) {
             Ok(found) => found,
             Err(e) => {
-                self.bridge.log(Some(&self.slot.info.id), LogLevel::Error, &format!("storage delete failed: {e}"));
+                self.log_as_mod(LogLevel::Error, &format!("storage delete failed: {e}"));
                 false
             }
         }
     }
     fn storage_keys(&mut self, prefix: &str) -> Vec<String> {
         self.store().map(|s| s.keys(prefix)).unwrap_or_default()
+    }
+
+    fn player_pos(&mut self, id: &str) -> Result<Option<Pos>, ApiError> {
+        self.host.bridge.player_alias(id).ok_or(ApiError::StaleHandle)?;
+        Ok(self.host.bridge.player_pos(id))
+    }
+    fn handle_of_player(&mut self, id: &str) -> u64 {
+        self.host.handles.of_player(id)
+    }
+    fn player_of_handle(&mut self, handle: u64) -> Result<String, ApiError> {
+        self.host.handles.player(handle).map(str::to_string)
+    }
+
+    fn subscribe_custom(&mut self, name: &str, priority: Priority, ignore: bool) -> Result<SubscriptionId, ApiError> {
+        if channels::split_name(name).is_none() {
+            return Err(ApiError::InvalidArgument(format!("custom event name {name:?} is not <mod-id>:<name>")));
+        }
+        self.host.bus.subscribe_custom(self.owner, name, priority, ignore).ok_or_else(|| limit("subscriptions per mod"))
+    }
+    fn fire_custom(&mut self, name: &str, payload: &[u8]) -> Result<bool, ApiError> {
+        let source = self.slot().info.id.clone();
+        if channels::split_name(name) != Some(source.as_str()) {
+            return Err(ApiError::InvalidArgument(format!("custom event names must be {source}:<name>")));
+        }
+        Value::decode(payload).map_err(|e| ApiError::InvalidArgument(format!("payload: {e}")))?;
+        let ev = Event::Custom { name: name.to_string(), source, payload: payload.to_vec(), cancelled: false };
+        Ok(self.host.fire(ev).cancelled())
+    }
+
+    fn provide_service(&mut self, name: &str, version: &str) -> Result<(), ApiError> {
+        let declared = self.slot().provides.clone();
+        self.host.services.provide(self.owner, name, version, &declared)
+    }
+    fn call_service(&mut self, name: &str, req: &str, method: &str, args: &[u8]) -> Result<Vec<u8>, ServiceError> {
+        let provider = self.host.services.lookup(name, req)?.owner;
+        let pid = self.host.slots[provider].info.id.clone();
+        if self.host.on_stack(provider) {
+            return Err(ServiceError::Reentrant);
+        }
+        if !self.may_use(&pid) {
+            return Err(ServiceError::NotPermitted);
+        }
+        match Value::decode(args) {
+            Ok(Value::List(_)) => {}
+            Ok(_) => return Err(ServiceError::BadValue("arguments must be a list".into())),
+            Err(e) => return Err(ServiceError::BadValue(format!("arguments: {e}"))),
+        }
+        let what = format!("service {name}.{method}");
+        match self.host.call(provider, &what, |i, h| i.call_service(h, name, method, args)) {
+            Some(Ok(out)) => match Value::decode(&out) {
+                Ok(_) => Ok(out),
+                Err(e) => Err(ServiceError::BadValue(format!("result: {e}"))),
+            },
+            Some(Err(CallError::Failed(m))) => Err(ServiceError::ProviderError(m)),
+            // `None` cannot happen: the provider is enabled (it is registered) and not on the stack.
+            _ => Err(ServiceError::Trap),
+        }
+    }
+
+    fn channel_open(&mut self, name: &str) -> Result<ChannelId, ApiError> {
+        self.require("channels")?;
+        let Some(m) = channels::split_name(name) else {
+            return Err(ApiError::InvalidArgument(format!("channel name {name:?} is not <mod-id>:<name>")));
+        };
+        if !self.may_use(m) {
+            return Err(ApiError::NotPermitted(format!("channel of {m} (not a dependency)")));
+        }
+        self.host.channels.open(self.owner, name).ok_or_else(|| limit("channels per mod"))
+    }
+    fn channel_send(&mut self, channel: ChannelId, to: ChannelTarget, data: &[u8]) -> Result<(), ApiError> {
+        let name = self
+            .host
+            .channels
+            .name_of(self.owner, channel)
+            .ok_or_else(|| ApiError::InvalidArgument(format!("channel {channel} is not open")))?
+            .to_string();
+        if data.len() > channels::MAX_MESSAGE {
+            return Err(limit("channel message size"));
+        }
+        let id = self.slot().info.id.clone();
+        match to {
+            ChannelTarget::Local => {
+                let msg = Message {
+                    name,
+                    from_owner: Some(self.owner),
+                    source: ChannelSource::Local(id),
+                    data: data.to_vec(),
+                };
+                self.host.channels.enqueue(msg).then_some(()).ok_or_else(|| limit("queued channel messages"))
+            }
+            other => self.host.bridge.channel_send(&id, &name, &other, data),
+        }
+    }
+    fn channel_close(&mut self, channel: ChannelId) -> bool {
+        self.host.channels.close(self.owner, channel)
     }
 }

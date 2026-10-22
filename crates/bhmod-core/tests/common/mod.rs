@@ -8,8 +8,11 @@ use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 use bhmod_core::budget::Clock;
-use bhmod_core::types::{LogLevel, Role, Side};
+use bhmod_core::types::{ApiError, ChannelTarget, LogLevel, Pos, Role, Side};
 use bhmod_core::GameBridge;
+
+/// A channel message the bridge was asked to send: (mod, channel, target, data).
+pub type Sent = (String, String, ChannelTarget, Vec<u8>);
 
 #[derive(Default)]
 pub struct FakeBridge {
@@ -18,6 +21,8 @@ pub struct FakeBridge {
     pub chats: RefCell<Vec<(String, String)>>,
     pub broadcasts: RefCell<Vec<String>>,
     pub kicks: RefCell<Vec<(String, String)>>,
+    pub positions: RefCell<Vec<(String, Pos)>>,
+    pub sent: RefCell<Vec<Sent>>,
 }
 
 impl FakeBridge {
@@ -86,6 +91,16 @@ impl GameBridge for FakeBridge {
     }
     fn is_builtin_command(&self, name: &str) -> bool {
         name == "help" || name == "kick"
+    }
+    fn player_pos(&self, id: &str) -> Option<Pos> {
+        self.positions.borrow().iter().find(|p| p.0 == id).map(|p| p.1)
+    }
+    fn channel_send(&self, mod_id: &str, name: &str, target: &ChannelTarget, data: &[u8]) -> Result<(), ApiError> {
+        if *target == ChannelTarget::Server {
+            return Err(ApiError::Unsupported);
+        }
+        self.sent.borrow_mut().push((mod_id.into(), name.into(), target.clone(), data.to_vec()));
+        Ok(())
     }
 }
 

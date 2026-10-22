@@ -7,7 +7,7 @@ use std::path::PathBuf;
 use bhmod_index::build::{build, utc_now, BuildOptions};
 use bhmod_index::repo::Repo;
 use bhmod_index::validate::{downloads, validate, Options};
-use bhmod_manifest::API_VERSION;
+use bhmod_manifest::SUPPORTED_API_VERSIONS;
 use clap::{Args, Subcommand};
 use semver::Version;
 
@@ -53,7 +53,7 @@ pub(crate) struct ValidateArgs {
     #[arg(long)]
     luau_compile: Option<PathBuf>,
     /// Supported blockheads:api versions (repeatable).
-    #[arg(long = "api", default_value = API_VERSION)]
+    #[arg(long = "api", default_values = SUPPORTED_API_VERSIONS)]
     api: Vec<Version>,
     /// Allow changes to more than one mod.
     #[arg(long)]
@@ -84,7 +84,7 @@ pub(crate) struct BuildArgs {
     #[arg(long)]
     generated: Option<String>,
     /// blockheads:api versions to record (repeatable).
-    #[arg(long = "api", default_value = API_VERSION)]
+    #[arg(long = "api", default_values = SUPPORTED_API_VERSIONS)]
     api: Vec<String>,
 }
 

@@ -72,7 +72,7 @@ rewrite chat), [`examples/scheduler-lua`](examples/scheduler-lua) (`/countdown`,
 ## 📚 What's inside
 | Path | What |
 | --- | --- |
-| [`wit/blockheads-api/`](wit/blockheads-api/) | The mod API (`blockheads:api@0.1.0`, WIT): events, commands, scheduler, storage, players, services, channels |
+| [`wit/blockheads-api/`](wit/blockheads-api/) | The mod API (`blockheads:api@0.2.0`, WIT): events (incl. gameplay), commands, scheduler, storage, players, services, channels; the frozen 0.1 copy is in [`wit/compat/`](wit/compat/) |
 | [`docs/luau-api.md`](docs/luau-api.md) | How the API looks from Lua |
 | [`docs/package.md`](docs/package.md) | The `.bhmod` package and its rules |
 | [`schema/`](schema/) | JSON Schemas for `mod.toml`, index entries and the published `index.json` |

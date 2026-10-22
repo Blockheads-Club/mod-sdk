@@ -142,7 +142,7 @@ fn top_level_fields() {
     has(&errors_with("\"MIT\"", &format!("\"{}\"", "x".repeat(129)), ""), "license");
     has(&errors_with("license", "homepage = \"ftp://x\"\nlicense", ""), "homepage");
     has(&errors_with("\"^0.1\"", "\"nope\"", ""), "api: not a semver");
-    has(&errors_with("\"^0.1\"", "\"^1.0\"", ""), "does not match the API version");
+    has(&errors_with("\"^0.1\"", "\"^1.0\"", ""), "matches none of the API versions");
     has(&errors_with("license", "loader = \"what\"\nlicense", ""), "loader");
     has(&errors_with("license", "description = { tr = \"x\" }\nlicense", ""), "description: needs an `en`");
 }

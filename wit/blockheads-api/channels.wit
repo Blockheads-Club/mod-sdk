@@ -1,7 +1,8 @@
-package blockheads:api@0.1.0;
+package blockheads:api@0.2.0;
 
-/// Named byte channels between mods, and between a server mod and its client half (shape only in 0.1;
-/// implemented in milestones M3 / M5). Over the network they travel as 0xBC `CHANNEL` packets.
+/// Named byte channels between mods, and between a server mod and its client half. Local delivery works since 0.2
+/// (messages are queued and delivered on the next poll or tick, never during `send`); the network targets travel
+/// as 0xBC `CHANNEL` packets from milestone M5 and report `unsupported` until then.
 interface channels {
     use types.{mod-id, api-error};
     use players.{player};

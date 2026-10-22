@@ -20,7 +20,8 @@
 //! - [`ModHost`] discovers packages in a mods directory ([`discover`]), applies `mods.toml` ([`config`]), orders
 //!   them by dependencies ([`resolve`]) and runs them: event bus with Spigot priorities and cancellation ([`bus`]),
 //!   commands ([`commands`]), scheduler ([`scheduler`]), per-world storage ([`storage`]) and time budgets
-//!   ([`budget`]).
+//!   ([`budget`]); cross-mod interop through services ([`services`]), custom events, channels ([`channels`]) and
+//!   host handles ([`handles`]), with values as canonical CBOR ([`value`]).
 //! - A host program implements [`GameBridge`] and calls the `ModHost` at its hook points.
 //! - Languages plug in through [`Runtime`] / [`Instance`] / [`HostApi`] ([`runtime`]); Luau ships in `lua`.
 #![warn(missing_docs)]
@@ -29,24 +30,28 @@
 pub mod bridge;
 pub mod budget;
 pub mod bus;
+pub mod channels;
 pub mod commands;
 pub mod config;
 pub mod discover;
+pub mod handles;
 pub mod host;
 #[cfg(feature = "luau")]
 pub mod lua;
 pub mod resolve;
 pub mod runtime;
 pub mod scheduler;
+pub mod services;
 pub mod storage;
 pub mod types;
+pub mod value;
 
 pub use bridge::GameBridge;
 pub use host::{HostOptions, ModHost, ModInfo, ModState};
 pub use runtime::{CallError, HostApi, Instance, Runtime};
 
 /// The `blockheads:api` version this host implements.
-pub const API_VERSION: &str = "0.1.0";
+pub const API_VERSION: &str = "0.2.0";
 
 /// The runtimes compiled into this build.
 pub fn default_runtimes() -> Vec<Box<dyn Runtime>> {

@@ -9,12 +9,12 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use bhmod_manifest::manifest::{DepSide, Runtime};
-use semver::{Version, VersionReq};
+use semver::VersionReq;
 
 use crate::config::{missing_permissions, required_permissions, ModsConfig};
 use crate::discover::{Package, Problem};
 use crate::types::Side;
-use crate::API_VERSION;
+use bhmod_manifest::SUPPORTED_API_VERSIONS;
 
 fn dep_on_side(side: DepSide, host: Side) -> bool {
     match side {
@@ -41,7 +41,6 @@ pub fn resolve(
 ) -> (Vec<Package>, Vec<Problem>, Vec<String>) {
     let mut problems = Vec::new();
     let mut skipped = Vec::new();
-    let api = Version::parse(API_VERSION).expect("API_VERSION is semver");
     let mut by_id: BTreeMap<String, Package> = BTreeMap::new();
     for p in packages {
         let id = p.manifest.id.clone();
@@ -64,8 +63,8 @@ pub fn resolve(
             continue;
         };
         // The manifest crate validated `api` as a requirement already.
-        if !VersionReq::parse(&p.manifest.api).is_ok_and(|r| r.matches(&api)) {
-            fail(format!("{id}: needs API {}, this host implements {API_VERSION}", p.manifest.api));
+        if !VersionReq::parse(&p.manifest.api).is_ok_and(|r| bhmod_manifest::api_supported(&r)) {
+            fail(format!("{id}: needs API {}, this host serves {}", p.manifest.api, SUPPORTED_API_VERSIONS.join(", ")));
             continue;
         }
         if !runtimes.contains(&entry.runtime) {
@@ -203,10 +202,10 @@ mod tests {
         let mut p = pkgs(&[("aa", ""), ("bb", "")]);
         let dup = p[0].clone();
         p.push(dup);
-        p[1].manifest.api = "^0.2".into();
+        p[1].manifest.api = "^0.3".into();
         let (order, problems, _) = resolve(p.clone(), &ModsConfig::default(), Side::Server, &[Runtime::Lua]);
         assert_eq!(ids(&order), vec!["aa"]);
-        assert!(problems[0].message.contains("needs API ^0.2"));
+        assert!(problems[0].message.contains("needs API ^0.3"));
         assert!(problems[1].message.contains("same id"));
         let (order, problems, skipped) = resolve(p.clone(), &ModsConfig::default(), Side::Server, &[Runtime::Wasm]);
         assert!(order.is_empty());
