@@ -150,7 +150,8 @@ impl WasmRuntime {
         let engine = engine_for(target)?;
         let mut linker = Linker::new(&engine);
         wasmtime_wasi::p2::add_to_linker_sync(&mut linker).map_err(text)?;
-        bindings::ServerMod::add_to_linker::<_, wasmtime::component::HasSelf<_>>(&mut linker, |s| s).map_err(text)?;
+        bindings::v02::add_to_linker(&mut linker).map_err(text)?;
+        bindings::v01::add_to_linker(&mut linker).map_err(text)?;
         let ticker = Ticker::start(engine.clone());
         let target = target.map_or_else(|| std::env::consts::ARCH.to_string(), str::to_string);
         Ok(WasmRuntime { engine, linker, ticker, target, config })

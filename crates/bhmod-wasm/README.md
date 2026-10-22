@@ -20,4 +20,5 @@ opts.runtimes.push(Box::new(bhmod_wasm::WasmRuntime::new(bhmod_wasm::WasmConfig 
 | `compiler` (default) | Compile `.wasm` on this host (Cranelift). Without it only trusted precompiled artifacts load. |
 
 Tests need the guest components: run `scripts/build-wasm.sh` first, then `cargo test -p bhmod-wasm` (runtime tests
-with `tests/guest`, and the Luau ⇄ WASM conformance suite). `cargo llvm-cov -p bhmod-wasm` is at 100 % lines.
+with `tests/guest`, and the Luau ⇄ WASM conformance suite). `cargo llvm-cov -p bhmod-wasm --ignore-filename-regex 'bhmod-wasm/src/wit'` is at 100 % lines (the
+excluded files are wasmtime's generated bindings). Components of API 0.2 and 0.1 (`tests/guest01`) are tested.

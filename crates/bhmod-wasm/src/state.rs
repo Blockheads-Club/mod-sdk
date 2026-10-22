@@ -86,6 +86,8 @@ pub struct State {
     pub limits: StoreLimits,
     /// Host resources handed to the guest (players).
     pub table: ResourceTable,
+    /// Player handles lent to the guest for the call in progress (returned after it).
+    pub lent: Vec<u32>,
     wasi: WasiCtx,
     /// Guest stdout (logged as info).
     pub stdout: LogPipe,
@@ -106,6 +108,7 @@ impl State {
             timed_out: false,
             limits,
             table: ResourceTable::new(),
+            lent: Vec::new(),
             wasi,
             stdout,
             stderr,

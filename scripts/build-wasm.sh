@@ -10,14 +10,16 @@ export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$root/target/wasm-guests}"
 unset RUSTFLAGS CARGO_ENCODED_RUSTFLAGS RUSTDOCFLAGS CARGO_BUILD_RUSTFLAGS LLVM_PROFILE_FILE CARGO_LLVM_COV \
   CARGO_LLVM_COV_TARGET_DIR __CARGO_LLVM_COV_RUSTC_WRAPPER_RUSTFLAGS RUSTC_WRAPPER RUSTC_WORKSPACE_WRAPPER 2>/dev/null || true
 locked="${LOCKED:-}"
-for e in hello-rust chat-filter-rust scheduler-rust; do
+for e in hello-rust chat-filter-rust scheduler-rust shop-rust; do
   (cd "$root/examples/$e" && cargo build $locked --release --target wasm32-wasip2 -q)
   mkdir -p "$root/examples/$e/server"
   cp "$CARGO_TARGET_DIR/wasm32-wasip2/release/$(echo "$e" | tr - _).wasm" "$root/examples/$e/server/mod.wasm"
   echo "built examples/$e/server/mod.wasm"
 done
-g="$root/crates/bhmod-wasm/tests/guest"
-(cd "$g" && cargo build $locked --release --target wasm32-wasip2 -q)
-mkdir -p "$g/out"
-cp "$CARGO_TARGET_DIR/wasm32-wasip2/release/bhmod_wasm_test_guest.wasm" "$g/out/guest.wasm"
-echo "built crates/bhmod-wasm/tests/guest/out/guest.wasm"
+for g in guest guest01; do
+  d="$root/crates/bhmod-wasm/tests/$g"
+  (cd "$d" && cargo build $locked --release --target wasm32-wasip2 -q)
+  mkdir -p "$d/out"
+  cp "$CARGO_TARGET_DIR/wasm32-wasip2/release/bhmod_wasm_test_$g.wasm" "$d/out/$g.wasm"
+  echo "built crates/bhmod-wasm/tests/$g/out/$g.wasm"
+done

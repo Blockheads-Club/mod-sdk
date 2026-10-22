@@ -5,7 +5,7 @@
 //! - `spin`: the tick handler never returns (host deadline).
 //! - `oom`: the tick handler allocates past the memory limit.
 
-use blockheads_mod::bindings::blockheads::api::{channels, events as wev, services};
+use blockheads_mod::bindings::blockheads::api::events as wev;
 use blockheads_mod::events::On;
 use blockheads_mod::prelude::*;
 
@@ -42,6 +42,10 @@ fn tour() -> Result<(), String> {
     let k = players::get("p2").ok_or("p2 missing")?;
     show("kick", k.kick("bye"));
 
+    show("p.pos", p.pos());
+    let h = p.value_handle();
+    show("from-handle", players::from_value_handle(h).map(|p| p.id()));
+    show("from-stale-handle", players::from_value_handle(999_999).is_none());
     for kind in [
         EventKind::PlayerJoin,
         EventKind::PlayerQuit,
@@ -50,6 +54,14 @@ fn tour() -> Result<(), String> {
         EventKind::Tick,
         EventKind::WorldLoaded,
         EventKind::WorldSave,
+        EventKind::PlayerPreLogin,
+        EventKind::BlockPlace,
+        EventKind::BlockBreak,
+        EventKind::BlockChanged,
+        EventKind::ObjectPlace,
+        EventKind::Damage,
+        EventKind::Death,
+        EventKind::PlayerMove,
     ] {
         events::on_with(kind, On::priority(Priority::High).ignore_cancelled(), move |ev| {
             let who = ev.player().map(|p| (p.id(), p.alias(), p.role()));
@@ -60,7 +72,11 @@ fn tour() -> Result<(), String> {
                 cancel = c.name == "x";
             }
             ev.set_text("changed");
-            ev.set_cancelled(cancel);
+            ev.set_reject_reason(blockheads_mod::events::RejectReason::Banned);
+            ev.set_damage(0.25);
+            show("ev", ev.event());
+            let k = ev.kind();
+            ev.set_cancelled(cancel || k == Some(EventKind::PlayerPreLogin) || k == Some(EventKind::BlockBreak));
         })?;
     }
     for prio in [Priority::Lowest, Priority::Low, Priority::Normal, Priority::Highest, Priority::Monitor] {
@@ -68,8 +84,13 @@ fn tour() -> Result<(), String> {
         show("off", events::off(id));
     }
     show("off-missing", events::off(999));
-    show("custom", wev::subscribe_custom("tour:x", Priority::Normal, false));
-    show("fire", wev::fire_custom("tour:x", &[]));
+    events::on_custom("tour:ping", On::default(), |ev| {
+        show("custom-event", (ev.kind(), ev.cancelled()));
+        ev.cancel();
+    })?;
+    show("custom-bad", wev::subscribe_custom("nocolon", Priority::Normal, false));
+    show("fire", events::fire_custom("tour:ping", &[0xf6]));
+    show("fire-bad", events::fire_custom("other:ping", &[0xf6]));
 
     let cmd = Command::new("tour").alias("t").description("d").usage("/tour x").min_role(Role::Admin).console(false);
     show("spec", cmd.spec());
@@ -89,7 +110,10 @@ fn tour() -> Result<(), String> {
     show("bad-command", commands::register(Command::new("help"), |_, _, _| Reply::ok()).map_err(String::from));
 
     let later = scheduler::run_later(1, || log::info("later ran"))?;
-    let every = scheduler::run_every(1, 1, || log::info("every ran"))?;
+    let every = scheduler::run_every(1, 1, || {
+        log::info("every ran");
+        let _ = events::fire_custom("tour:ping", &[0xf6]);
+    })?;
     let poll = scheduler::run_next_poll(|| log::info("poll ran"))?;
     show("tasks", (later, every, poll));
     show("cancel-poll", scheduler::cancel(poll));
@@ -104,10 +128,16 @@ fn tour() -> Result<(), String> {
     show("bad-key", storage::set("", b"x").map_err(String::from));
 
     show("provide", services::provide("tour", "1.0.0"));
-    show("call", services::call("x", "^1", "m", &[]));
-    show("open", channels::open("tour:c"));
-    show("send", channels::send(1, &channels::Target::Local, &[1]));
-    show("close", channels::close(1));
+    show("call-missing", services::call("x", "^1", "m", &[0x80]));
+    show("call-version", services::call("tour", "^2", "m", &[0x80]));
+    show("call-self", services::call("tour", "^1", "echo", &[0x80]));
+    let c = channels::open("tour:c").map_err(String::from)?;
+    show("send-local", channels::send(c, &channels::Target::Local, &[1]));
+    show("send-server", channels::send(c, &channels::Target::Server, &[2]).map_err(String::from));
+    show("send-player", channels::send(c, &channels::Target::Player(&p), &[3]));
+    show("send-all", channels::send(c, &channels::Target::AllPlayers, &[4]));
+    show("close", channels::close(c));
+    show("reopen", channels::open("tour:c"));
     show(
         "errors",
         [
@@ -127,6 +157,11 @@ impl Mod for Guest {
         match host::mod_id().as_str() {
             "tour" => tour(),
             "fail" => Err("nope".into()),
+            "caller" => {
+                show("echo", services::call("old", "^1", "echo", &[0x81, 0x02]));
+                show("nope", services::call("old", "^1", "nope", &[0x80]));
+                Ok(())
+            }
             "trap" => {
                 commands::register(Command::new("boom"), |_, _, _| panic!("boom"))?;
                 events::on(EventKind::Tick, |_| log::info("tick"))?;
@@ -151,6 +186,22 @@ impl Mod for Guest {
 
     fn on_disable() {
         log::info("disabled");
+    }
+
+    fn call_service(name: String, method: String, args: Vec<u8>) -> Result<Vec<u8>, String> {
+        match method.as_str() {
+            "echo" => Ok(args),
+            _ => Err(format!("{name}: no method {method}")),
+        }
+    }
+
+    fn on_channel_message(channel: u32, origin: channels::Source<'_>, data: Vec<u8>) {
+        let from = match origin {
+            channels::Source::Local(m) => m,
+            channels::Source::Server => "server".into(),
+            channels::Source::Player(p) => p.id(),
+        };
+        show("message", (channel, from, data));
     }
 }
 
