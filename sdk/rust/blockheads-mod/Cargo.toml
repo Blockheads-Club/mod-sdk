@@ -1,0 +1,16 @@
+[package]
+name = "blockheads-mod"
+description = "Rust SDK for Blockheads mods: blockheads:api bindings (wit-bindgen) with closure-based events, commands and tasks"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.85"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/Blockheads-Club/mod-sdk"
+authors = ["Blockheads Club contributors"]
+include = ["src/**", "wit/**", "README.md", "Cargo.toml"]
+
+[dependencies]
+wit-bindgen = "0.57"
+
+# Guest code only builds for wasm32-wasip2; keep it out of the host workspace.
+[workspace]

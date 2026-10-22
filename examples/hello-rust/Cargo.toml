@@ -9,7 +9,7 @@ publish = false
 crate-type = ["cdylib"]
 
 [dependencies]
-wit-bindgen = "0.57"
+blockheads-mod = { path = "../../sdk/rust/blockheads-mod" }
 
 [profile.release]
 opt-level = "s"

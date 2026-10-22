@@ -1,6 +1,6 @@
 /target
 target/
 *.bhmod
-examples/hello-rust/server/mod.wasm
 /lcov.info
-examples/shop-rust/server/mod.wasm
+examples/*/server/mod.wasm
+crates/bhmod-wasm/tests/guest/out/

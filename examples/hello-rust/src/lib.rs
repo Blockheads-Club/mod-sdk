@@ -1,63 +1,48 @@
-//! hello-rust: a minimal Blockheads server mod written in Rust and compiled to a WASM component.
-//!
-//! It adds a `/hello` command and greets players who join.
+//! hello-rust: the Rust twin of `hello-lua`. It adds a /hello command, greets players who join and counts
+//! greetings in mod storage. The SDK's conformance suite checks that both behave the same.
 
-wit_bindgen::generate!({
-    path: "../../wit/blockheads-api",
-    world: "server-mod",
-});
+use blockheads_mod::events::On;
+use blockheads_mod::prelude::*;
 
-use blockheads::api::commands::{self, CommandOutcome, CommandSpec};
-use blockheads::api::events::{self, CommandSender, Event, EventKind, Outcome};
-use blockheads::api::log::{self, Level};
-use blockheads::api::players::Role;
-use blockheads::api::types::Priority;
-use exports::blockheads::api::guest::Guest;
+struct Hello;
 
-struct HelloMod;
+fn greetings() -> u64 {
+    storage::get_string("greetings").and_then(|s| s.parse().ok()).unwrap_or(0)
+}
 
-impl Guest for HelloMod {
+impl Mod for Hello {
     fn on_enable() -> Result<(), String> {
-        events::subscribe(EventKind::PlayerJoin, Priority::Normal, false).map_err(|e| format!("{e:?}"))?;
-        commands::register(&CommandSpec {
-            name: "hello".into(),
-            aliases: vec!["hi".into()],
-            description: "Says hello.".into(),
-            usage: "/hello".into(),
-            min_role: Role::Player,
-            console: true,
-        })
-        .map_err(|e| format!("{e:?}"))?;
-        log::log(Level::Info, "hello-rust enabled");
+        events::on(EventKind::PlayerJoin, |ev| {
+            let count = greetings() + 1;
+            let _ = storage::set_string("greetings", &count.to_string());
+            if let Some(p) = ev.player() {
+                let _ = p.send_chat(&format!("Hello, {}! You are greeting number {count}.", p.alias()));
+            }
+        })?;
+
+        // Lowest priority runs first: later handlers may still change their mind.
+        events::on_with(EventKind::Chat, On::priority(Priority::Lowest), |ev| {
+            if ev.text().is_some_and(|t| t.to_ascii_lowercase().contains("lua is bad")) {
+                ev.cancel();
+            }
+        })?;
+
+        commands::register(
+            Command::new("hello").alias("hi").description("Says hello.").usage("/hello"),
+            |sender, _, _| {
+                let who = sender.name();
+                let _ = players::broadcast(&format!("{who} says hello to everyone!"));
+                Reply::lines([format!("Hello, {who}!")])
+            },
+        )?;
+
+        log::info(&format!("{} enabled", host::mod_id()));
         Ok(())
     }
 
     fn on_disable() {
-        log::log(Level::Info, "hello-rust disabled");
+        log::info(&format!("{} disabled", host::mod_id()));
     }
-
-    fn handle_event(_sub: u32, ev: Event) -> Outcome {
-        if let Event::PlayerJoin(join) = ev {
-            let _ = join.player.send_chat(&format!("Hello, {}! This server runs Rust mods.", join.player.alias()));
-        }
-        Outcome { cancelled: false, mutation: None }
-    }
-
-    fn run_command(_id: u32, sender: CommandSender, _label: String, _args: Vec<String>) -> CommandOutcome {
-        let who = match sender {
-            CommandSender::Console => "console".to_string(),
-            CommandSender::Player(p) => p.alias(),
-        };
-        CommandOutcome { handled: true, reply: vec![format!("Hello, {who}!")] }
-    }
-
-    fn run_task(_id: u64) {}
-
-    fn call_service(_name: String, _method: String, _args: Vec<u8>) -> Result<Vec<u8>, String> {
-        Err("hello-rust provides no services".into())
-    }
-
-    fn on_channel_message(_channel: u32, _origin: blockheads::api::channels::Source, _data: Vec<u8>) {}
 }
 
-export!(HelloMod);
+blockheads_mod::export_mod!(Hello);
