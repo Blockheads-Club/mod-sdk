@@ -73,6 +73,7 @@ jobs:
           workspaces: |
             .
             examples/hello-rust
+            examples/shop-rust
       - name: Build bhmod
         run: cargo build -p bhmod --locked
       - name: Install Luau
@@ -88,12 +89,18 @@ jobs:
           cargo fmt --check
           cargo clippy --target wasm32-wasip2 -- -D warnings
           ./build.sh
+      - name: shop-rust (fmt, clippy, build the WASM component)
+        working-directory: examples/shop-rust
+        run: |
+          cargo fmt --check
+          cargo clippy --target wasm32-wasip2 -- -D warnings
+          ./build.sh
       - name: bhmod check on the examples
         run: |
-          for e in hello-lua chat-filter scheduler-lua economy perms landclaim hello-rust; do ./target/debug/bhmod check --index "examples/$e"; done
+          for e in hello-lua chat-filter scheduler-lua economy perms landclaim hello-rust shop-rust; do ./target/debug/bhmod check --index "examples/$e"; done
       - name: bhmod pack on the examples
         run: |
-          for e in hello-lua chat-filter scheduler-lua economy perms landclaim hello-rust; do
+          for e in hello-lua chat-filter scheduler-lua economy perms landclaim hello-rust shop-rust; do
             ./target/debug/bhmod pack "examples/$e" -o "$RUNNER_TEMP/$e.bhmod"
             ./target/debug/bhmod check --index "$RUNNER_TEMP/$e.bhmod"
           done

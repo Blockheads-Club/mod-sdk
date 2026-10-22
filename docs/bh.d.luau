@@ -41,6 +41,7 @@ declare class Player
 	function send_chat(self, text: string): ()
 	function kick(self, reason: string): ()
 	function pos(self): Pos?
+	function value_handle(self): number
 end
 
 export type CommandSender = { player: Player?, console: boolean? }
@@ -113,6 +114,7 @@ declare bh: {
 	players: {
 		get: (id: string) -> Player?,
 		find_by_alias: (alias: string) -> Player?,
+		from_value_handle: (handle: number) -> Player?,
 		online: () -> { Player },
 		broadcast: (text: string) -> (),
 	},

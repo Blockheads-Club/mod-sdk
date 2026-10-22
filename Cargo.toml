@@ -8,7 +8,7 @@ members = [
     "crates/bhmod-index",
 ]
 # The Rust example builds for wasm32-wasip2 on its own.
-exclude = ["examples/hello-rust"]
+exclude = ["examples/hello-rust", "examples/shop-rust"]
 
 [workspace.package]
 version = "0.1.0"

@@ -142,6 +142,7 @@ impl UserData for LuaPlayer {
         m.add_method("kick", |_, this, reason: String| {
             with_host(&this.sh, |h| h.player_kick(&this.id, &reason))?.map_err(api_err)
         });
+        m.add_method("value_handle", |_, this, ()| with_host(&this.sh, |h| h.handle_of_player(&this.id)));
         m.add_method("pos", |lua, this, ()| match with_host(&this.sh, |h| h.player_pos(&this.id))? {
             Ok(Some(p)) => Ok(Value::Table(pos_table(lua, p)?)),
             _ => Ok(Value::Nil),
@@ -642,6 +643,13 @@ impl LuaInstance {
             match with_host(&s, |h| h.players_find_by_alias(&alias))? {
                 Some(id) => Ok(Some(player(lua, &s, id)?)),
                 None => Ok(None),
+            }
+        });
+        let s = sh.clone();
+        b.func(&players, "from_value_handle", move |lua, handle: u64| {
+            match with_host(&s, |h| h.player_of_handle(handle))? {
+                Ok(id) => Ok(Some(player(lua, &s, id)?)),
+                Err(_) => Ok(None),
             }
         });
         let s = sh.clone();

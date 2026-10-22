@@ -24,3 +24,7 @@ mlua = { version = "0.12", features = ["luau"], optional = true }
 
 [dev-dependencies]
 tempfile.workspace = true
+
+[lints.rust]
+# `tests/cross_language.rs` needs the WASM runtime (feature `wasm`, milestone M2).
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(feature, values("wasm"))'] }

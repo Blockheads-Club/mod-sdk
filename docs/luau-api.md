@@ -72,7 +72,10 @@ list ends the list; use a map when values can be missing.
 | `death` | `player` (owner, or nil), `blockhead` | nothing |
 | `player-move` | `player`, `from`, `to` (tiles) | nothing |
 
-`player:pos()` returns the tile of the player's blockhead or `nil`.
+`player:pos()` returns the tile of the player's blockhead or `nil`. `player:value_handle()` is the number in the
+player's `{"$h": n}` value and `bh.players.from_value_handle(n)` turns it back into a player (`nil` once they left);
+Luau converts players automatically, these are for hand-made values. WASM mods use `player.value-handle()` and
+`players.from-value-handle()` the same way (see `examples/shop-rust`, a Rust mod paying through the Luau economy).
 
 ### Services
 

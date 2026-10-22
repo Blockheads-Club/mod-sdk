@@ -31,6 +31,9 @@ interface players {
         send-chat: func(text: string) -> result<_, api-error>;
         /// (0.2) The tile of the player's blockhead; `none` when it is not in the world or the player left.
         pos: func() -> option<pos>;
+        /// (0.2) The host handle that stands for this player inside values (`{"$h": handle}`, see `types.value`),
+        /// for example in service arguments.
+        value-handle: func() -> u64;
         /// Disconnects the player with a reason text (shown to modded clients; vanilla clients see the generic
         /// kick message). Needs the `players:kick` permission.
         kick: func(reason: string) -> result<_, api-error>;
@@ -38,6 +41,9 @@ interface players {
 
     /// Looks up a connected player by id.
     get: func(id: string) -> option<player>;
+
+    /// (0.2) The player behind a host handle from a value; `none` when the handle is stale (the player left).
+    from-value-handle: func(handle: u64) -> option<player>;
 
     /// Looks up a connected player by alias (case-insensitive).
     find-by-alias: func(alias: string) -> option<player>;
