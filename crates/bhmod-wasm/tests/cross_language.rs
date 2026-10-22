@@ -21,6 +21,7 @@ fn rust_shop_pays_through_the_luau_economy() {
     let b = FakeBridge::new();
     b.join("p1", "ALICE", Role::Player);
     let mut opts = HostOptions::new(tmp.path(), Side::Server);
+    opts.budgets.hard = std::time::Duration::from_secs(5); // emulated armv7 runs are slow
     opts.runtimes.push(Box::new(bhmod_wasm::WasmRuntime::new(bhmod_wasm::WasmConfig::default()).unwrap()));
     let mut h = ModHost::load(opts, b.clone());
     h.enable("World", "wid");

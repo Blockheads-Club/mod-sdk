@@ -66,7 +66,8 @@ pub enum Backend {
     /// Native code where Cranelift supports the host, Pulley elsewhere.
     #[default]
     Auto,
-    /// Native code through Cranelift (fails on hosts it does not support).
+    /// Native code through Cranelift, even in builds without the `compiler` feature (precompiled code only); Pulley
+    /// on hosts Cranelift has no backend for.
     Native,
     /// The Pulley interpreter (`pulley32` / `pulley64` matching the host).
     Pulley,
@@ -143,7 +144,7 @@ impl WasmRuntime {
     pub fn new(config: WasmConfig) -> Result<WasmRuntime, String> {
         let native = match config.backend {
             Backend::Auto => NATIVE_HOST && cfg!(feature = "compiler"),
-            Backend::Native => true,
+            Backend::Native => NATIVE_HOST,
             Backend::Pulley => false,
         };
         let target = if native { None } else { Some(HOST_PULLEY) };

@@ -42,6 +42,7 @@ impl Run {
         // Behaviour, not speed: emulated 32-bit runs (qemu) and coverage builds are slow.
         opts.budgets.hard = std::time::Duration::from_secs(5);
         opts.budgets.soft = opts.budgets.hard;
+    opts.budgets.step = opts.budgets.hard;
         let h = ModHost::load(opts, b.clone());
         Run { _tmp: tmp, b, h, id: example.to_string(), out: Vec::new() }
     }

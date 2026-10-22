@@ -34,9 +34,10 @@ fn host(dir: &Path, config: WasmConfig) -> (Rc<FakeBridge>, ModHost) {
     let bridge = FakeBridge::new();
     let mut opts = HostOptions::new(dir, Side::Server);
     opts.runtimes = vec![Box::new(WasmRuntime::new(config).unwrap())];
-    // Room for emulated (qemu) and coverage builds; the deadline test still ends well before a second.
-    opts.budgets.hard = std::time::Duration::from_millis(500);
+    // Room for emulated (qemu armv7) and coverage builds.
+    opts.budgets.hard = std::time::Duration::from_secs(3);
     opts.budgets.soft = opts.budgets.hard;
+    opts.budgets.step = opts.budgets.hard;
     let h = ModHost::load(opts, bridge.clone());
     (bridge, h)
 }
@@ -267,7 +268,7 @@ fn deadline_stops_a_spinning_guest() {
     h.enable("World", "wid");
     let start = std::time::Instant::now();
     h.tick(0.2);
-    assert!(start.elapsed() < std::time::Duration::from_secs(3));
+    assert!(start.elapsed() < std::time::Duration::from_secs(10));
     assert!(b.has_log("hard time budget exceeded"), "{}", b.log_text());
 }
 
@@ -344,7 +345,9 @@ fn compile_cache() {
 #[test]
 fn backends_and_precompiled_artifacts() {
     let native = WasmRuntime::new(WasmConfig { backend: Backend::Native, ..Default::default() }).unwrap();
-    assert_eq!(native.target(), std::env::consts::ARCH);
+    // Without a Cranelift backend for the host (armv7) the runtime uses Pulley.
+    let expected = if bhmod_wasm::NATIVE_HOST { std::env::consts::ARCH } else { HOST_PULLEY };
+    assert_eq!(native.target(), expected);
     let auto = WasmRuntime::new(WasmConfig::default()).unwrap();
     assert_eq!(auto.target(), native.target());
     assert_eq!(auto.engine_hash(), native.engine_hash());
@@ -352,7 +355,9 @@ fn backends_and_precompiled_artifacts() {
     let cfg = WasmConfig { backend: Backend::Pulley, trust_precompiled: true, ..Default::default() };
     let pulley = WasmRuntime::new(cfg).unwrap();
     assert_eq!(pulley.target(), HOST_PULLEY);
-    assert_ne!(pulley.engine_hash(), native.engine_hash());
+    if bhmod_wasm::NATIVE_HOST {
+        assert_ne!(pulley.engine_hash(), native.engine_hash());
+    }
     let wasm = guest_wasm();
     let art = precompile_for(HOST_PULLEY, &wasm).unwrap();
     assert_eq!(pulley.precompile(&wasm).unwrap().len(), art.len());
