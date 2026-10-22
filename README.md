@@ -13,9 +13,10 @@
 ---
 
 ## 🚀 Project Status
-**Current Status:** Spec v0 (milestone M0). This repo holds the mod API, the file formats, the network protocol and
-the `bhmod` tool. Servers can't load mods yet: the [Blockheads Server](https://github.com/Blockheads-Club/blockheads-server)
-gets Lua mods next (M1), then WASM mods (M2). Things may still change before 1.0.
+**Current Status:** Server mods in Lua and WASM (milestones M1 and M2). This repo holds the mod API, the file formats,
+the network protocol, the `bhmod` tool, the shared mod host and the Rust SDK; the
+[Blockheads Server](https://github.com/Blockheads-Club/blockheads-server) runs Lua and WASM mods with it. Things may
+still change before 1.0.
 
 Mods can run on the server, on the client, or both. Players who join a modded server see the list of mods, accept,
 and the client part downloads straight from the server.
@@ -62,10 +63,11 @@ Copy the `.bhmod` (or the unpacked mod folder) into the server's mods folder (`<
 grant = ["players:chat"]
 ```
 
-Lua mods run on the server since milestone M1 (WASM follows in M2). Full examples:
-[`examples/hello-lua`](examples/hello-lua) (`/hello`), [`examples/chat-filter`](examples/chat-filter) (cancel and
-rewrite chat), [`examples/scheduler-lua`](examples/scheduler-lua) (`/countdown`, `/remind`) and
-[`examples/hello-rust`](examples/hello-rust).
+Lua mods run on the server since milestone M1, WASM mods since M2. Every example comes as a Lua and a Rust twin
+that behave exactly the same (a test checks it): [`hello-lua`](examples/hello-lua) /
+[`hello-rust`](examples/hello-rust) (`/hello`), [`chat-filter`](examples/chat-filter) /
+[`chat-filter-rust`](examples/chat-filter-rust) (cancel and rewrite chat), [`scheduler-lua`](examples/scheduler-lua) /
+[`scheduler-rust`](examples/scheduler-rust) (`/countdown`, `/remind`). Rust, C, Zig and Go: [`docs/wasm.md`](docs/wasm.md).
 
 ---
 
@@ -74,6 +76,8 @@ rewrite chat), [`examples/scheduler-lua`](examples/scheduler-lua) (`/countdown`,
 | --- | --- |
 | [`wit/blockheads-api/`](wit/blockheads-api/) | The mod API (`blockheads:api@0.2.0`, WIT): events (incl. gameplay), commands, scheduler, storage, players, services, channels; the frozen 0.1 copy is in [`wit/compat/`](wit/compat/) |
 | [`docs/luau-api.md`](docs/luau-api.md) | How the API looks from Lua |
+| [`docs/wasm.md`](docs/wasm.md) | WASM mods: Rust SDK, C/Zig/TinyGo, how the host runs them, the conformance suite |
+| [`sdk/rust/blockheads-mod`](sdk/rust/blockheads-mod) | The Rust SDK (bindings + closures for events, commands, tasks) |
 | [`docs/package.md`](docs/package.md) | The `.bhmod` package and its rules |
 | [`schema/`](schema/) | JSON Schemas for `mod.toml`, index entries and the published `index.json` |
 | [`docs/protocol-0xbc.md`](docs/protocol-0xbc.md), [`vectors/`](vectors/) | Client ⇄ server mod protocol and its byte-exact test vectors |
@@ -82,14 +86,16 @@ rewrite chat), [`examples/scheduler-lua`](examples/scheduler-lua) (`/countdown`,
 | `crates/bhmod-cli` | The `bhmod` tool (`check`, `pack`, `new`, `index`) |
 | `crates/bhmod-index` | Checks, builds and signs the public mod index ([`docs/index.md`](docs/index.md)) |
 | `crates/bhmod-core` | The shared mod host (GPL, built from M1 on) |
+| `crates/bhmod-wasm` | The WASM runtime of the host: wasmtime, Cranelift / Pulley, deadlines, memory limits, compile cache (GPL) |
 
-**Developing:** `cargo test --workspace`. CI also runs clippy, rustfmt, the WIT check, the examples and a 100 % line
-coverage gate (`cargo llvm-cov --workspace --fail-under-lines 100`).
+**Developing:** `scripts/build-wasm.sh` (needs `rustup target add wasm32-wasip2`), then `cargo test --workspace`. CI
+also runs clippy, rustfmt, the WIT check, the examples, the Luau ⇄ WASM conformance suite and a 100 % line coverage
+gate (`cargo llvm-cov --workspace --fail-under-lines 100`).
 
 ---
 
 ## ⚖️ License
 Your mod is yours: pick any licence you like. The API, schemas, tools and examples here are `MIT OR Apache-2.0`;
-`bhmod-core` is GPL-3.0-or-later with an exception for mods. Details: [LICENSING.md](LICENSING.md).
+`bhmod-core` and `bhmod-wasm` are GPL-3.0-or-later with an exception for mods. Details: [LICENSING.md](LICENSING.md).
 
 Not affiliated with Majic Jungle or Noodlecake. Mods must not include original game files.

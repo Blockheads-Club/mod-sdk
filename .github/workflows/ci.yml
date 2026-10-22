@@ -38,9 +38,18 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
+          targets: wasm32-wasip2
           components: llvm-tools-preview
       - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            .
+            target/wasm-guests
       - uses: taiki-e/install-action@cargo-llvm-cov
+      - name: Build the WASM guests (Rust examples and the bhmod-wasm test guest)
+        run: LOCKED=--locked scripts/build-wasm.sh
+      - name: Conformance suite (Luau and WASM twins of every example behave the same)
+        run: cargo test -p bhmod-wasm --test conformance --locked
       - name: Schema tests (JSON Schemas vs fixtures and the Rust validator)
         run: cargo test -p bhmod-manifest --test schema --locked
       - name: Protocol vectors (byte-exact)
@@ -72,8 +81,7 @@ jobs:
         with:
           workspaces: |
             .
-            examples/hello-rust
-            examples/shop-rust
+            target/wasm-guests
       - name: Build bhmod
         run: cargo build -p bhmod --locked
       - name: Install Luau
@@ -83,24 +91,26 @@ jobs:
           echo "$RUNNER_TEMP/luau" >> "$GITHUB_PATH"
       - name: Luau syntax check (examples and templates)
         run: luau-compile --null examples/*/server/*.luau crates/bhmod-cli/templates/lua/main.luau
-      - name: hello-rust (fmt, clippy, build the WASM component)
-        working-directory: examples/hello-rust
+      - name: Rust SDK and WASM examples (fmt, clippy, build the components)
+        env:
+          CARGO_TARGET_DIR: ${{ github.workspace }}/target/wasm-guests
         run: |
-          cargo fmt --check
-          cargo clippy --target wasm32-wasip2 -- -D warnings
-          ./build.sh
-      - name: shop-rust (fmt, clippy, build the WASM component)
-        working-directory: examples/shop-rust
+          for d in sdk/rust/blockheads-mod examples/hello-rust examples/chat-filter-rust examples/scheduler-rust examples/shop-rust crates/bhmod-wasm/tests/guest; do
+            (cd "$d" && cargo fmt --check && cargo clippy --locked --target wasm32-wasip2 -- -D warnings)
+          done
+          LOCKED=--locked scripts/build-wasm.sh
+      - name: C bindings generate (wit-bindgen c)
         run: |
-          cargo fmt --check
-          cargo clippy --target wasm32-wasip2 -- -D warnings
-          ./build.sh
+          cargo install --locked wit-bindgen-cli --version 0.63.0
+          wit-bindgen c wit/blockheads-api --world server-mod --out-dir "$RUNNER_TEMP/c-bindings"
+          test -s "$RUNNER_TEMP/c-bindings/server_mod.h"
+      # TinyGo / Zig / C example builds are documented in docs/wasm.md but not run here yet (no toolchain in CI).
       - name: bhmod check on the examples
         run: |
-          for e in hello-lua chat-filter scheduler-lua economy perms landclaim hello-rust shop-rust; do ./target/debug/bhmod check --index "examples/$e"; done
+          for e in hello-lua chat-filter scheduler-lua economy perms landclaim hello-rust chat-filter-rust scheduler-rust shop-rust; do ./target/debug/bhmod check --index "examples/$e"; done
       - name: bhmod pack on the examples
         run: |
-          for e in hello-lua chat-filter scheduler-lua economy perms landclaim hello-rust shop-rust; do
+          for e in hello-lua chat-filter scheduler-lua economy perms landclaim hello-rust chat-filter-rust scheduler-rust shop-rust; do
             ./target/debug/bhmod pack "examples/$e" -o "$RUNNER_TEMP/$e.bhmod"
             ./target/debug/bhmod check --index "$RUNNER_TEMP/$e.bhmod"
           done
@@ -111,3 +121,22 @@ jobs:
           ./target/debug/bhmod new tpl-rust --lang rust --dir "$RUNNER_TEMP"
           (cd "$RUNNER_TEMP/tpl-rust" && ./build.sh)
           ./target/debug/bhmod check "$RUNNER_TEMP/tpl-rust"
+
+  # The WASM runtime on a 32-bit host: Pulley on armv7 under qemu (cross). Experimental until the first green run.
+  wasm-armv7:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-wasip2,armv7-unknown-linux-gnueabihf
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cross
+      - name: Build the WASM guests
+        run: LOCKED=--locked scripts/build-wasm.sh
+      - name: bhmod-wasm tests on armv7 (Pulley, tail-call dispatch)
+        env:
+          RUSTFLAGS: --cfg pulley_assume_llvm_makes_tail_calls
+        run: cross test -p bhmod-wasm --locked --target armv7-unknown-linux-gnueabihf
