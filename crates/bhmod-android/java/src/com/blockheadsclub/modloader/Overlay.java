@@ -8,12 +8,14 @@ import android.content.Context;
 import android.content.SharedPreferences;
 import android.graphics.Canvas;
 import android.graphics.Paint;
+import android.graphics.PixelFormat;
 import android.os.Build;
 import android.view.Gravity;
 import android.view.KeyEvent;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.WindowInsets;
+import android.view.WindowManager;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
@@ -39,31 +41,98 @@ final class Overlay {
         return Bridge.activity.get();
     }
 
+    static Activity attachedTo;
+    /** Views currently added to the window manager (isAttachedToWindow lags behind addView). */
+    static final java.util.Set<View> added = new java.util.HashSet<>();
+    static FrameLayout markWin, hudWin;
+
+    /**
+     * The game draws in its own dialog window above the activity window, so the loader UI uses windows of its own
+     * (added with the activity token after the game's, so they stack above it): the title mark (touchable, not
+     * focusable), a HUD layer for toasts (not touchable) and, while one is open, a dialog window (focusable).
+     */
     static void attach(Activity a) {
-        if (root != null && root.getContext() == a && root.getParent() != null) return;
-        if (root != null && root.getParent() instanceof ViewGroup) ((ViewGroup) root.getParent()).removeView(root);
+        if (attachedTo == a && added.contains(markWin)) return;
+        detach();
+        attachedTo = a;
         root = new FrameLayout(a);
-        root.setClipChildren(false);
-        ViewGroup decor = (ViewGroup) a.getWindow().getDecorView();
-        decor.addView(root, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        markWin = new FrameLayout(a);
         mark = Kit.badge(a, Strings.t("mark", "v", version), Kit.TEXT, Kit.panel(a));
         mark.setTextSize(13);
         mark.setPadding(Kit.u(a, 5), Kit.u(a, 3), Kit.u(a, 5), Kit.u(a, 3));
         mark.setContentDescription(Strings.t("mods"));
         mark.setOnClickListener(new View.OnClickListener() { public void onClick(View v) { ModsScreen.open(); } });
-        FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT,
-            Gravity.BOTTOM | Gravity.START);
+        markWin.addView(mark);
         int m = Kit.u(a, 4);
-        lp.setMargins(m + inset(a, true), m, m, m + inset(a, false));
-        root.addView(mark, lp);
+        WindowManager.LayoutParams lp = params(WindowManager.LayoutParams.WRAP_CONTENT, WindowManager.LayoutParams.WRAP_CONTENT,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE | WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL);
+        lp.gravity = Gravity.BOTTOM | Gravity.START;
+        lp.x = m;
+        lp.y = m;
+        add(markWin, lp);
+        hudWin = root;
+        add(hudWin, params(-1, -1, WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE | WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE));
         updateMark();
         if (dialog != null) {
             View d = dialog;
             dialog = null;
-            if (d.getParent() instanceof ViewGroup) ((ViewGroup) d.getParent()).removeView(d);
             show(d);
         }
         maybeWelcome();
+    }
+
+    /** Re-adds the mark and HUD windows so they stack above game windows created after them. */
+    static void raise() {
+        Activity a = attachedTo;
+        if (a == null || markWin == null) return;
+        WindowManager.LayoutParams ml = (WindowManager.LayoutParams) markWin.getLayoutParams();
+        WindowManager.LayoutParams hl = (WindowManager.LayoutParams) hudWin.getLayoutParams();
+        if (ml == null || hl == null) return;
+        remove(markWin);
+        remove(hudWin);
+        add(markWin, ml);
+        add(hudWin, hl);
+        if (dialog != null) {
+            WindowManager.LayoutParams dl = (WindowManager.LayoutParams) dialog.getLayoutParams();
+            remove(dialog);
+            add(dialog, dl);
+            dialog.requestFocus();
+        }
+    }
+
+    static void detach() {
+        for (View v : new View[] {markWin, hudWin, dialog}) remove(v);
+        markWin = null;
+        hudWin = null;
+    }
+
+    static WindowManager.LayoutParams params(int w, int h, int flags) {
+        WindowManager.LayoutParams lp = new WindowManager.LayoutParams(w, h, WindowManager.LayoutParams.TYPE_APPLICATION,
+            flags | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN | WindowManager.LayoutParams.FLAG_FULLSCREEN, PixelFormat.TRANSLUCENT);
+        if (Build.VERSION.SDK_INT >= 28) lp.layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES;
+        return lp;
+    }
+
+    @SuppressWarnings("deprecation")
+    static void add(View v, WindowManager.LayoutParams lp) {
+        Activity a = attachedTo;
+        if (a == null) return;
+        v.setSystemUiVisibility(View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION | View.SYSTEM_UI_FLAG_FULLSCREEN
+            | View.SYSTEM_UI_FLAG_LAYOUT_STABLE | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN);
+        try {
+            a.getWindowManager().addView(v, lp);
+            added.add(v);
+        } catch (RuntimeException e) {
+            android.util.Log.w(Bridge.TAG, "overlay window not added", e);
+        }
+    }
+
+    static void remove(View v) {
+        if (v == null || !added.remove(v)) return;
+        try {
+            ((WindowManager) v.getContext().getSystemService(Context.WINDOW_SERVICE)).removeViewImmediate(v);
+        } catch (RuntimeException ignored) {
+        }
     }
 
     /** Cutout / gesture inset: the left (true) or bottom (false) side, plus nothing else; 0 before API 28. */
@@ -85,14 +154,17 @@ final class Overlay {
         String t = c.optString("t");
         switch (t) {
             case "ready":
+                if (!added.contains(markWin)) { Activity a = activity(); if (a != null) { attachedTo = null; attach(a); } }
                 ready = c.optBoolean("hooks", false);
                 version = c.optString("version", version);
                 updateMark();
                 maybeWelcome();
+                Bridge.ui.postDelayed(new Runnable() { public void run() { raise(); } }, 5000);
                 break;
             case "world":
                 inWorld = c.optBoolean("open");
                 updateMark();
+                raise();
                 break;
             default:
                 JoinFlow.command(t, c);
@@ -136,19 +208,21 @@ final class Overlay {
         return panel;
     }
 
-    /** Shows `panel` as the only dialog: a scrim blocks the game's touches; system back runs `onBack`. */
+    /** Shows `panel` as the only dialog, in a focusable window over the game: system back runs `onBack`. */
     static void show(final View panel) {
         Activity a = activity();
-        if (a == null || root == null) {
+        if (a == null || attachedTo == null) {
             dialog = panel;
             return;
         }
         dismiss();
         FrameLayout scrim = new FrameLayout(a) {
             @Override public boolean dispatchKeyEvent(KeyEvent e) {
-                if (e.getKeyCode() == KeyEvent.KEYCODE_BACK && e.getAction() == KeyEvent.ACTION_UP) {
-                    Object back = panel.getTag();
-                    if (back instanceof Runnable) ((Runnable) back).run();
+                if (e.getKeyCode() == KeyEvent.KEYCODE_BACK) {
+                    if (e.getAction() == KeyEvent.ACTION_UP) {
+                        Object back = panel.getTag();
+                        if (back instanceof Runnable) ((Runnable) back).run();
+                    }
                     return true;
                 }
                 return super.dispatchKeyEvent(e);
@@ -162,14 +236,16 @@ final class Overlay {
         lp.setMargins(0, Kit.u(a, 4), 0, Kit.u(a, 4));
         if (panel.getParent() instanceof ViewGroup) ((ViewGroup) panel.getParent()).removeView(panel);
         scrim.addView(panel, lp);
-        root.addView(scrim, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        WindowManager.LayoutParams wlp = params(-1, -1, 0);
+        wlp.softInputMode = WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE;
+        add(scrim, wlp);
         scrim.requestFocus();
         dialog = scrim;
         updateMark();
     }
 
     static void dismiss() {
-        if (dialog != null && dialog.getParent() instanceof ViewGroup) ((ViewGroup) dialog.getParent()).removeView(dialog);
+        remove(dialog);
         dialog = null;
         updateMark();
     }
@@ -182,7 +258,7 @@ final class Overlay {
 
     static void toast(String text) {
         Activity a = activity();
-        if (a == null || root == null) return;
+        if (a == null || hudWin == null) return;
         final TextView t = Kit.badge(a, text, Kit.TEXT, Kit.panel(a));
         t.setTextSize(13);
         t.setTypeface(Kit.body);
@@ -208,7 +284,7 @@ final class Overlay {
 
     static void maybeWelcome() {
         final Activity a = activity();
-        if (!ready || welcomeChecked || a == null || root == null) return;
+        if (!ready || welcomeChecked || a == null || attachedTo == null) return;
         welcomeChecked = true;
         final SharedPreferences prefs = a.getSharedPreferences("bhmods", Context.MODE_PRIVATE);
         if (prefs.getBoolean("welcomed", false)) return;

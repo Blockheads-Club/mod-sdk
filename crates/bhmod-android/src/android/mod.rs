@@ -158,13 +158,16 @@ fn with_loader<R>(f: impl FnOnce(&mut Loader<AndroidPlatform>) -> R) -> Option<R
         if l.is_none() {
             let dirs = Dirs::under(&data_dir());
             let wasm_cache = data_dir().join("wasm-cache");
-            *l = Some(Loader::new(
-                Rc::new(AndroidPlatform),
-                dirs,
-                crate::caps(),
-                crate::options(),
-                Box::new(move || crate::runtimes(&wasm_cache)),
-            ));
+            *l = Some(
+                Loader::new(
+                    Rc::new(AndroidPlatform),
+                    dirs,
+                    crate::caps(),
+                    crate::options(),
+                    Box::new(move || crate::runtimes(&wasm_cache)),
+                )
+                .with_budgets(crate::budgets()),
+            );
         }
         Some(f(l.as_mut().expect("just set")))
     });

@@ -36,6 +36,18 @@ pub fn kinds() -> Vec<Kind> {
     v
 }
 
+/// Mod budgets on 32-bit phones: interpreted Luau and Pulley run several times slower than on a server, and the first
+/// call of a mod also compiles it, so the hard limit is wider than the server's 25 ms (to be tuned on devices).
+pub fn budgets() -> bhmod_core::budget::Budgets {
+    use std::time::Duration;
+    bhmod_core::budget::Budgets {
+        soft: Duration::from_millis(10),
+        hard: Duration::from_millis(250),
+        step: Duration::from_millis(40),
+        ..Default::default()
+    }
+}
+
 /// What this build can run.
 pub fn caps() -> Caps {
     Caps { loader: semver::Version::parse(VERSION).expect("crate version"), runtimes: kinds() }
@@ -75,6 +87,7 @@ mod tests {
         assert_eq!(o.platform, "android-armv7");
         assert!(o.runtimes.contains(&"lua".to_string()));
         assert_eq!(super::caps().runtimes.len(), o.runtimes.len());
+        assert!(super::budgets().hard > bhmod_core::budget::Budgets::default().hard);
         let t = tempfile::tempdir().unwrap();
         assert_eq!(super::runtimes(t.path()).len(), o.runtimes.len());
     }

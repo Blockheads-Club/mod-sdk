@@ -59,6 +59,7 @@ final class Strings {
             "{mod} құмсалғыштан тыс жұмыс істейді. Ойындағы және осы құрылғыдағы кез келген нәрсені өзгерте алады.");
 
         // join
+        p("join_title_one", "{server} uses 1 mod", "{server} 1 mod kullanıyor", "{server} использует 1 мод", "{server} 1 мод пайдаланады");
         p("join_title", "{server} uses {n} mods", "{server} {n} mod kullanıyor", "{server} использует модов: {n}", "{server} {n} мод пайдаланады");
         p("join_body", "{server} needs these mods. They are downloaded from the server and used only on {server}.",
             "{server} bu modlara ihtiyaç duyuyor. Sunucudan indirilir ve yalnızca {server} üzerinde kullanılır.",

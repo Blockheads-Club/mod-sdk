@@ -147,7 +147,7 @@ final class JoinFlow {
         String go = download > 0 ? Strings.t("download_join", "size", Kit.size(download)) : Strings.t("join");
         View footer = Kit.footer(a, Kit.button(a, Strings.t(required ? "cancel" : "join_without"), Kit.Kind.SEC, no),
             Kit.button(a, go, Kit.Kind.PRI, yes));
-        View panel = Overlay.frame(Strings.t("join_title", "server", server, "n", clientMods), null, body, footer);
+        View panel = Overlay.frame(Strings.t(clientMods == 1 ? "join_title_one" : "join_title", "server", server, "n", clientMods), null, body, footer);
         Overlay.show(Overlay.onBack(panel, new Runnable() {
             public void run() {
                 Native.ok(new Runnable() { public void run() { Native.cancel(); } });

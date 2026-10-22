@@ -32,8 +32,16 @@ public final class Bridge {
         ui.post(new Runnable() { public void run() { Overlay.attach(a); } });
     }
 
-    static void activityGone(Activity a) {
+    static void activityGone(final Activity a) {
         if (activity.get() == a) activity = new WeakReference<>(null);
+        ui.post(new Runnable() {
+            public void run() {
+                if (Overlay.attachedTo == a) {
+                    Overlay.detach();
+                    Overlay.attachedTo = null;
+                }
+            }
+        });
     }
 
     /** Where the loader keeps its files (called from JNI_OnLoad). */

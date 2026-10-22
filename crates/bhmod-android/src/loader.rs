@@ -12,6 +12,7 @@ use std::rc::Rc;
 use bhmod_client::installed::Installed;
 use bhmod_client::session::{Accepted, Output};
 use bhmod_client::{Caps, Options, PackageCache, Session};
+use bhmod_core::budget::Budgets;
 use bhmod_core::host::{HostOptions, ModHost, ModState};
 use bhmod_core::runtime::Runtime;
 use bhmod_core::storage::FileStorage;
@@ -141,6 +142,7 @@ pub struct Loader<P: Platform + 'static> {
     world: Option<String>,
     last_tick: u64,
     last_progress: u64,
+    budgets: Budgets,
 }
 
 impl<P: Platform + 'static> Loader<P> {
@@ -159,7 +161,14 @@ impl<P: Platform + 'static> Loader<P> {
             world: None,
             last_tick: 0,
             last_progress: 0,
+            budgets: Budgets::default(),
         }
+    }
+
+    /// Time and memory budgets of the mods (the default is the server's).
+    pub fn with_budgets(mut self, budgets: Budgets) -> Loader<P> {
+        self.budgets = budgets;
+        self
     }
 
     /// The installed-mods store (also used from Java threads through its own instance).
@@ -388,6 +397,7 @@ impl<P: Platform + 'static> Loader<P> {
         fs::write(run.join(bhmod_core::config::FILE_NAME), toml).map_err(|e| e.to_string())?;
         let mut opts = HostOptions::new(run, Side::Client);
         opts.runtimes = (self.runtimes)();
+        opts.budgets = self.budgets;
         opts.storage = Box::new(FileStorage::new(&self.dirs.storage));
         let bridge: Rc<dyn GameBridge> = Rc::new(Bridge { p: self.p.clone(), outbox: self.outbox.clone() });
         let host = ModHost::load(opts, bridge);

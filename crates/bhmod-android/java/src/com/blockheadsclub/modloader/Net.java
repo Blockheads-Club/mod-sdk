@@ -30,10 +30,20 @@ final class Net {
         HttpError(int status, String msg) { super(msg); this.status = status; }
     }
 
-    /** The index URL: the public index, or `index=` from `bhmods-dev.properties` in the app's external files dir. */
+    /**
+     * The index URL: the public index, or `index=` from `dev.properties` in the loader's data directory or
+     * `bhmods-dev.properties` in the app's external files directory (for testing against a local index).
+     */
     static String indexUrl() {
+        for (File f : new File[] {new File(Bridge.dataDir(), "dev.properties"), new File(Bridge.app.getExternalFilesDir(null), "bhmods-dev.properties")}) {
+            String u = readIndex(f);
+            if (u != null) return u;
+        }
+        return INDEX;
+    }
+
+    private static String readIndex(File f) {
         try {
-            File f = new File(Bridge.app.getExternalFilesDir(null), "bhmods-dev.properties");
             if (f.isFile()) {
                 Properties p = new Properties();
                 InputStream in = new FileInputStream(f);
@@ -41,9 +51,10 @@ final class Net {
                 String u = p.getProperty("index", "").trim();
                 if (!u.isEmpty()) return u;
             }
-        } catch (Exception ignored) {
+        } catch (Exception e) {
+            android.util.Log.w(Bridge.TAG, f + " not read", e);
         }
-        return INDEX;
+        return null;
     }
 
     static HttpURLConnection open(String url) throws IOException {

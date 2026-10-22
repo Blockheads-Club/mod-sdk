@@ -63,7 +63,8 @@ fn rig() -> Rig {
     let dirs = Dirs::under(t.path());
     let p = Rc::new(Fake::default());
     let l =
-        Loader::new(p.clone(), dirs.clone(), crate::caps(), crate::options(), Box::new(bhmod_core::default_runtimes));
+        Loader::new(p.clone(), dirs.clone(), crate::caps(), crate::options(), Box::new(bhmod_core::default_runtimes))
+            .with_budgets(crate::budgets());
     Rig { l, p, _t: t, dirs }
 }
 
