@@ -444,6 +444,11 @@ impl ModHost {
         self.channels.enqueue(Message { name: name.to_string(), from_owner: None, source, data })
     }
 
+    /// Every channel name some mod has open, sorted (milestone M5: the server maps them to 0xBC wire ids).
+    pub fn channel_names(&self) -> Vec<String> {
+        self.channels.names()
+    }
+
     /// Delivers queued channel messages.
     fn deliver_channels(&mut self) {
         for (msg, to) in self.channels.drain() {

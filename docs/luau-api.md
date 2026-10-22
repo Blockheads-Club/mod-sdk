@@ -111,7 +111,9 @@ called a service of the firing mod) are run after the outermost call returns, an
 `bh.channels.open("<mod-id>:<name>", fn(origin, data))` (needs the `channels` permission; the mod id must be the
 caller's own or a dependency) returns a channel id; `bh.channels.send(id, target, data)` with target `"local"`
 (every other mod that opened the name, delivered on the next poll or tick), a player, `"all-players"` or `"server"`.
-The network targets arrive with milestone M5 and raise `unsupported` until then. `bh.channels.close(id)`.
+The network targets need the 0xBC protocol: the server sends to players running the mod loader (others are skipped
+silently; a server mod cannot target `"server"`); client hosts raise `unsupported` until their loader lands (M6/M7).
+`bh.channels.close(id)`.
 
 ### `bh.value`
 

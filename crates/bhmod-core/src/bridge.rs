@@ -44,7 +44,8 @@ pub trait GameBridge {
     }
 
     /// Sends a channel message over the network (`target` is never [`ChannelTarget::Local`]). The 0xBC `CHANNEL`
-    /// packets arrive with milestone M5; until then the default reports [`ApiError::Unsupported`].
+    /// packets are sent by hosts that implement the 0xBC protocol (the server since milestone M5); the default reports
+    /// [`ApiError::Unsupported`].
     fn channel_send(&self, mod_id: &str, name: &str, target: &ChannelTarget, data: &[u8]) -> Result<(), ApiError> {
         let _ = (mod_id, name, target, data);
         Err(ApiError::Unsupported)
