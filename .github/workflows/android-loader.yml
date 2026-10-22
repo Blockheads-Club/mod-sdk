@@ -1,0 +1,76 @@
+name: Android mod loader
+
+# Builds libbhmodloader.so (armeabi-v7a) and the Java UI (classes.dex) into bhmod-android-loader-<version>.zip.
+# Blockheads Patcher pins that zip by SHA-256 ("Add the mod loader"). Tags attach it to the GitHub release.
+on:
+  push:
+    branches: [main, dev, "feat/android-loader"]
+    tags: ["v*"]
+  pull_request:
+    paths: ["crates/**", "scripts/build-android-loader.sh", ".github/workflows/android-loader.yml", "Cargo.*"]
+  workflow_dispatch:
+
+concurrency:
+  group: android-loader-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  NDK_VERSION: "27.2.12479018"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: armv7-linux-androideabi
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: android-armv7
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - name: Android SDK parts (NDK, build tools, platform)
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "ndk;$NDK_VERSION" "build-tools;35.0.0" "platforms;android-35" > /dev/null
+      - name: Build the loader zip
+        env:
+          ANDROID_NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/${{ env.NDK_VERSION }}
+        run: scripts/build-android-loader.sh | tee "$RUNNER_TEMP/out.txt"
+      - name: Summary
+        run: |
+          cat target/android-loader/loader.json
+          echo '```' >> "$GITHUB_STEP_SUMMARY"; cat "$RUNNER_TEMP/out.txt" target/android-loader/loader.json >> "$GITHUB_STEP_SUMMARY"; echo '```' >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bhmod-android-loader
+          path: |
+            target/android-loader/bhmod-android-loader-*.zip
+            target/android-loader/loader.json
+          if-no-files-found: error
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: bhmod-android-loader
+          path: dist
+      - name: Attach to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view "$GITHUB_REF_NAME" -R "$GITHUB_REPOSITORY" > /dev/null 2>&1 || \
+            gh release create "$GITHUB_REF_NAME" -R "$GITHUB_REPOSITORY" --title "$GITHUB_REF_NAME" --notes "" \
+            $([[ "$GITHUB_REF_NAME" == *-* ]] && echo --prerelease)
+          gh release upload "$GITHUB_REF_NAME" -R "$GITHUB_REPOSITORY" --clobber dist/*.zip

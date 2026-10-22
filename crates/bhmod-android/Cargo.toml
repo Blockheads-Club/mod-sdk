@@ -1,0 +1,34 @@
+[package]
+name = "bhmod-android"
+description = "The Blockheads Club mod loader for the Android game (libbhmodloader.so, installed by Blockheads Patcher)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license = "GPL-3.0-or-later"
+repository.workspace = true
+authors.workspace = true
+publish = false
+
+[lib]
+name = "bhmodloader"
+crate-type = ["cdylib", "rlib"]
+
+[features]
+default = ["wasm"]
+# WASM mods (wasmtime: Pulley on armv7; components are compiled on the device once and cached).
+wasm = ["dep:bhmod-wasm"]
+
+[dependencies]
+bhmod-client.workspace = true
+bhmod-core = { path = "../bhmod-core" }
+bhmod-manifest.workspace = true
+bhmod-proto.workspace = true
+bhmod-wasm = { path = "../bhmod-wasm", optional = true }
+serde_json.workspace = true
+semver.workspace = true
+
+[target.'cfg(target_os = "android")'.dependencies]
+jni = { version = "0.21", default-features = false }
+
+[dev-dependencies]
+tempfile.workspace = true
