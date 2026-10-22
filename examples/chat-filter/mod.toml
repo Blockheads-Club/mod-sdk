@@ -1,0 +1,16 @@
+schema = 1
+id = "chat-filter"
+version = "0.1.0"
+name = { en = "Chat filter", tr = "Sohbet filtresi" }
+description = { en = "Blocks spam links and masks rude words in chat. Example Luau mod for event priorities and cancellation." }
+authors = ["Blockheads Club"]
+license = "MIT OR Apache-2.0"
+homepage = "https://github.com/Blockheads-Club/mod-sdk"
+api = "^0.1"
+
+[sides]
+server = true
+client = false
+
+[entry]
+server = { runtime = "lua", path = "server/main.luau" }

@@ -54,8 +54,18 @@ bhmod new my-mod --lang rust
 cd my-mod && ./build.sh && bhmod pack .
 ```
 
-Copy the `.bhmod` into the server's `mods/` folder (once the server supports mods). Full examples:
-[`examples/hello-lua`](examples/hello-lua) and [`examples/hello-rust`](examples/hello-rust).
+Copy the `.bhmod` (or the unpacked mod folder) into the server's mods folder (`<data dir>/mods/`, or
+`BLOCKHEADS_MODS_DIR`) and grant the permissions it asks for in `mods.toml` there:
+
+```toml
+[hello-lua]
+grant = ["players:chat"]
+```
+
+Lua mods run on the server since milestone M1 (WASM follows in M2). Full examples:
+[`examples/hello-lua`](examples/hello-lua) (`/hello`), [`examples/chat-filter`](examples/chat-filter) (cancel and
+rewrite chat), [`examples/scheduler-lua`](examples/scheduler-lua) (`/countdown`, `/remind`) and
+[`examples/hello-rust`](examples/hello-rust).
 
 ---
 

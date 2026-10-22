@@ -81,7 +81,7 @@ jobs:
           unzip -q "$RUNNER_TEMP/luau.zip" -d "$RUNNER_TEMP/luau"
           echo "$RUNNER_TEMP/luau" >> "$GITHUB_PATH"
       - name: Luau syntax check (examples and templates)
-        run: luau-compile --null examples/hello-lua/server/main.luau crates/bhmod-cli/templates/lua/main.luau
+        run: luau-compile --null examples/*/server/*.luau crates/bhmod-cli/templates/lua/main.luau
       - name: hello-rust (fmt, clippy, build the WASM component)
         working-directory: examples/hello-rust
         run: |
@@ -90,14 +90,13 @@ jobs:
           ./build.sh
       - name: bhmod check on the examples
         run: |
-          ./target/debug/bhmod check --index examples/hello-lua
-          ./target/debug/bhmod check --index examples/hello-rust
+          for e in hello-lua chat-filter scheduler-lua hello-rust; do ./target/debug/bhmod check --index "examples/$e"; done
       - name: bhmod pack on the examples
         run: |
-          ./target/debug/bhmod pack examples/hello-lua -o "$RUNNER_TEMP/hello-lua.bhmod"
-          ./target/debug/bhmod pack examples/hello-rust -o "$RUNNER_TEMP/hello-rust.bhmod"
-          ./target/debug/bhmod check --index "$RUNNER_TEMP/hello-lua.bhmod"
-          ./target/debug/bhmod check --index "$RUNNER_TEMP/hello-rust.bhmod"
+          for e in hello-lua chat-filter scheduler-lua hello-rust; do
+            ./target/debug/bhmod pack "examples/$e" -o "$RUNNER_TEMP/$e.bhmod"
+            ./target/debug/bhmod check --index "$RUNNER_TEMP/$e.bhmod"
+          done
       - name: Templates build and pass check
         run: |
           ./target/debug/bhmod new tpl-lua --lang lua --dir "$RUNNER_TEMP"

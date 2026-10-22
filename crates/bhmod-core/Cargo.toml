@@ -1,6 +1,6 @@
 [package]
 name = "bhmod-core"
-description = "Shared Blockheads mod host core (placeholder; implemented in milestone M1)"
+description = "Shared Blockheads mod host core: loading, permissions, events, commands, scheduler, storage, budgets, runtimes"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -9,4 +9,18 @@ repository.workspace = true
 authors.workspace = true
 publish = false
 
+[features]
+default = ["luau"]
+# The Luau runtime (mlua, vendored Luau, sandbox mode).
+luau = ["dep:mlua"]
+
 [dependencies]
+bhmod-manifest.workspace = true
+serde.workspace = true
+toml.workspace = true
+semver.workspace = true
+zip.workspace = true
+mlua = { version = "0.12", features = ["luau"], optional = true }
+
+[dev-dependencies]
+tempfile.workspace = true

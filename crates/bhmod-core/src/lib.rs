@@ -15,16 +15,52 @@
 // Additional permission under GNU GPL version 3 section 7: the "Blockheads Club Mod API Exception, version 1.0"
 // in LICENSING.md at the root of the mod-sdk repository applies to this program.
 
-//! Placeholder. In milestone M1 this crate becomes the shared mod host: package loading, permissions, event bus
-//! (priority, cancellation), commands, scheduler, storage, budgets and the runtimes (Luau first, WASM in M2).
+//! The shared mod host of the Blockheads Club server and clients.
+//!
+//! - [`ModHost`] discovers packages in a mods directory ([`discover`]), applies `mods.toml` ([`config`]), orders
+//!   them by dependencies ([`resolve`]) and runs them: event bus with Spigot priorities and cancellation ([`bus`]),
+//!   commands ([`commands`]), scheduler ([`scheduler`]), per-world storage ([`storage`]) and time budgets
+//!   ([`budget`]).
+//! - A host program implements [`GameBridge`] and calls the `ModHost` at its hook points.
+//! - Languages plug in through [`Runtime`] / [`Instance`] / [`HostApi`] ([`runtime`]); Luau ships in `lua`.
+#![warn(missing_docs)]
+#![deny(unsafe_code)]
 
-/// The `blockheads:api` version the host will implement.
+pub mod bridge;
+pub mod budget;
+pub mod bus;
+pub mod commands;
+pub mod config;
+pub mod discover;
+pub mod host;
+#[cfg(feature = "luau")]
+pub mod lua;
+pub mod resolve;
+pub mod runtime;
+pub mod scheduler;
+pub mod storage;
+pub mod types;
+
+pub use bridge::GameBridge;
+pub use host::{HostOptions, ModHost, ModInfo, ModState};
+pub use runtime::{CallError, HostApi, Instance, Runtime};
+
+/// The `blockheads:api` version this host implements.
 pub const API_VERSION: &str = "0.1.0";
+
+/// The runtimes compiled into this build.
+pub fn default_runtimes() -> Vec<Box<dyn Runtime>> {
+    vec![
+        #[cfg(feature = "luau")]
+        Box::new(lua::LuauRuntime),
+    ]
+}
 
 #[cfg(test)]
 mod tests {
     #[test]
-    fn api_version() {
-        assert_eq!(super::API_VERSION, "0.1.0");
+    fn api_version_matches_manifest_crate() {
+        assert_eq!(super::API_VERSION, bhmod_manifest::API_VERSION);
+        assert_eq!(super::default_runtimes().len(), 1);
     }
 }

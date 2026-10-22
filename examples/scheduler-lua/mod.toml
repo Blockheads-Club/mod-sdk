@@ -1,0 +1,19 @@
+schema = 1
+id = "scheduler-lua"
+version = "0.1.0"
+name = { en = "Countdown and reminders" }
+description = { en = "Adds /countdown and /remind and a periodic tip. Example Luau mod for the scheduler." }
+authors = ["Blockheads Club"]
+license = "MIT OR Apache-2.0"
+homepage = "https://github.com/Blockheads-Club/mod-sdk"
+api = "^0.1"
+
+[sides]
+server = true
+client = false
+
+[entry]
+server = { runtime = "lua", path = "server/main.luau" }
+
+[permissions]
+players = ["chat"]
