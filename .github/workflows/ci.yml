@@ -140,4 +140,6 @@ jobs:
       - name: bhmod-wasm tests on armv7 (Pulley, tail-call dispatch)
         env:
           RUSTFLAGS: --cfg pulley_assume_llvm_makes_tail_calls
+          # The default cross image's g++ 5 cannot build Luau (C++17); the main image can.
+          CROSS_TARGET_ARMV7_UNKNOWN_LINUX_GNUEABIHF_IMAGE: ghcr.io/cross-rs/armv7-unknown-linux-gnueabihf:main
         run: cross test -p bhmod-wasm --locked --target armv7-unknown-linux-gnueabihf
