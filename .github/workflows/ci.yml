@@ -55,7 +55,8 @@ jobs:
       - name: Protocol vectors (byte-exact)
         run: cargo test -p bhmod-proto --test vectors --locked
       - name: Tests with 100 % line coverage gate
-        run: cargo llvm-cov --workspace --locked --fail-under-lines 100 --lcov --output-path lcov.info
+        # The wasmtime bindgen! output (bhmod-wasm/src/wit*.rs) is generated code and not measured.
+        run: cargo llvm-cov --workspace --locked --ignore-filename-regex 'bhmod-wasm/src/wit' --fail-under-lines 100 --lcov --output-path lcov.info
       - name: Coverage summary
         run: cargo llvm-cov report --summary-only
 

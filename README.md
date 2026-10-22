@@ -90,7 +90,7 @@ that behave exactly the same (a test checks it): [`hello-lua`](examples/hello-lu
 
 **Developing:** `scripts/build-wasm.sh` (needs `rustup target add wasm32-wasip2`), then `cargo test --workspace`. CI
 also runs clippy, rustfmt, the WIT check, the examples, the Luau ⇄ WASM conformance suite and a 100 % line coverage
-gate (`cargo llvm-cov --workspace --fail-under-lines 100`).
+gate (`cargo llvm-cov --workspace --ignore-filename-regex 'bhmod-wasm/src/wit' --fail-under-lines 100`; the excluded files hold only wasmtime's generated bindings).
 
 ---
 

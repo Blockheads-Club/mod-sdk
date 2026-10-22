@@ -1,6 +1,7 @@
 # WASM mods
 
-A WASM mod is a WebAssembly **component** of the `blockheads:api` world `server-mod` (or `client-mod`), declared in
+A WASM mod is a WebAssembly **component** of the `blockheads:api` world `server-mod` (or `client-mod`), version 0.2
+(or the frozen 0.1 in `wit/compat/`, which the host still loads), declared in
 `mod.toml` as `server = { runtime = "wasm", path = "server/mod.wasm" }`. Any language that can produce a component
 works; this page covers Rust (with the SDK), C/C++/Zig and TinyGo, how the host runs components, and the
 conformance suite that keeps the Luau and WASM runtimes identical.
@@ -54,7 +55,10 @@ Build with `cargo build --release --target wasm32-wasip2` (after `rustup target 
   player up later with `players::get(&id)` (see `examples/scheduler-rust`).
 - `println!` / `eprintln!` go to the mod's log (info / warn). A panic traps the instance: it is logged, counts as a
   fault and the instance cannot run again (the host disables the mod after 3 faults in 60 s or on reload).
-- The raw generated bindings are in `blockheads_mod::bindings` (services and channels until the SDK wraps them).
+- API 0.2: `events::on_custom` / `events::fire_custom`, `services::{provide, call}` (implement
+  `Mod::call_service`), `channels::{open, send, close}` (implement `Mod::on_channel_message`), gameplay events with
+  `EventCtx::set_reject_reason` / `set_damage`, `Player::pos` and value handles. Values are canonical CBOR.
+- The raw generated bindings are in `blockheads_mod::bindings`.
 
 Examples (each the twin of a Luau example): [`hello-rust`](../examples/hello-rust),
 [`chat-filter-rust`](../examples/chat-filter-rust), [`scheduler-rust`](../examples/scheduler-rust).
@@ -104,6 +108,7 @@ The SDK has no TinyGo example yet because no TinyGo toolchain was available wher
 | Time | Epoch interruption: a helper thread advances the epoch every 1 ms while a guest call runs; the store traps at the host's hard deadline (25 ms) → `CallError::Timeout`. Fuel is off. |
 | Memory | `InstanceLimits.memory_bytes` (32 MiB by default) caps the instance's linear memories through `StoreLimits`; a failed `memory.grow` makes Rust's allocator abort, which is a trap. |
 | WASI | p2 with an empty context: no files, network, environment or arguments; clocks and random work; stdout/stderr go to the log. |
+| Versions | Components of `blockheads:api@0.2.0` and `@0.1.0` load side by side (two bindings, one implementation); a 0.1 mod never receives the 0.2-only events. |
 | Traps | A trap or panic poisons the instance (the component model forbids re-entering it); later calls fail fast and count as faults. `on-enable` returning `err` disables the mod without a fault. |
 | Cache | Compiled code is stored as `<cache_dir>/<sha256 of the .wasm>-<engine hash>.cwasm`; a later load only deserializes it (x86_64: 0.5 ms instead of ~230 ms for an 87 KB component). |
 | Precompiled | With `WasmConfig.trust_precompiled`, a package may ship `<entry stem>.<target>.cwasm` next to the `.wasm`, for example `server/mod.pulley32.cwasm`, made on a build machine with `bhmod_wasm::precompile_for("pulley32", wasm)`. 32-bit devices then skip the on-device compile (2 s under qemu for the same component). Precompiled code is trusted like native code, so only enable this for packages you trust. Builds without the `compiler` feature (the future Android client loader) can only load such artifacts. |
