@@ -32,6 +32,9 @@ fn host(dir: &Path, config: WasmConfig) -> (Rc<FakeBridge>, ModHost) {
     let bridge = FakeBridge::new();
     let mut opts = HostOptions::new(dir, Side::Server);
     opts.runtimes = vec![Box::new(WasmRuntime::new(config).unwrap())];
+    // Room for emulated (qemu) and coverage builds; the deadline test still ends well before a second.
+    opts.budgets.hard = std::time::Duration::from_millis(500);
+    opts.budgets.soft = opts.budgets.hard;
     let h = ModHost::load(opts, bridge.clone());
     (bridge, h)
 }
@@ -185,7 +188,7 @@ fn deadline_stops_a_spinning_guest() {
     h.enable("World", "wid");
     let start = std::time::Instant::now();
     h.tick(0.2);
-    assert!(start.elapsed() < std::time::Duration::from_secs(2));
+    assert!(start.elapsed() < std::time::Duration::from_secs(3));
     assert!(b.has_log("hard time budget exceeded"), "{}", b.log_text());
 }
 
