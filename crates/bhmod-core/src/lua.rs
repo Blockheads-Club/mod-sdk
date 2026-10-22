@@ -247,6 +247,12 @@ fn bad_value(msg: impl std::fmt::Display) -> mlua::Error {
     rt_err(format!("bad value: {msg}"))
 }
 
+/// A Luau integer as i64 (`mlua::Integer` is 32 bits wide on 32-bit targets).
+#[allow(clippy::useless_conversion)]
+fn widen(i: mlua::Integer) -> i64 {
+    i.into()
+}
+
 /// Integers up to 2^53 stay exact in a Luau number.
 const MAX_SAFE: f64 = 9_007_199_254_740_992.0;
 
@@ -258,7 +264,7 @@ fn to_cbor(sh: &Shared, v: &Value, depth: usize) -> mlua::Result<Cbor> {
     Ok(match v {
         Value::Nil => Cbor::Null,
         Value::Boolean(b) => Cbor::Bool(*b),
-        Value::Integer(i) => Cbor::Int(*i),
+        Value::Integer(i) => Cbor::Int(widen(*i)),
         Value::Number(n) if n.fract() == 0.0 && n.abs() <= MAX_SAFE => Cbor::Int(*n as i64),
         Value::Number(n) => Cbor::Float(*n),
         Value::String(s) => match std::str::from_utf8(&s.as_bytes()) {
