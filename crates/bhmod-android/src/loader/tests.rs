@@ -276,6 +276,19 @@ fn installed_mods_that_cannot_be_copied_are_skipped() {
 }
 
 #[test]
+fn a_server_mod_that_cannot_be_copied_fails_the_start() {
+    let mut r = rig();
+    let pkg = package("gone", "1.0.0", "", "client/main.luau", "return {}");
+    let manifest = r.l.installed().install(&pkg, None).unwrap().manifest;
+    // the cached package vanished between the check and the start
+    let missing = r.dirs.cache.join("missing.bhmod");
+    let accepted = Accepted { info: info("gone", &pkg), path: missing, manifest };
+    let err = r.l.start_host(&[accepted]).unwrap_err();
+    assert!(!err.is_empty());
+    assert!(!r.l.running());
+}
+
+#[test]
 fn bridge_answers() {
     let p = Rc::new(Fake::default());
     let b = Bridge { p: p.clone(), outbox: Rc::new(RefCell::new(Vec::new())) };
