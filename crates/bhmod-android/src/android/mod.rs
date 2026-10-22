@@ -2,8 +2,10 @@
 //! the Java UI, and the native methods of `com.blockheadsclub.modloader.Native`. Only built for Android; the logic
 //! it calls is in [`crate::loader`].
 //!
-//! Hooks (all on the game thread, installed in `JNI_OnLoad` before the game runs):
-//! - `-[EvolutionViewController drawFrame]`: frame tick, world open/close detection.
+//! Hooks (installed in `JNI_OnLoad` before the game runs). The loader lives on the thread that runs `drawFrame`;
+//! network callbacks that come on another thread (a phone receives packets on a second thread while a world loads)
+//! are queued in [`INBOX`] and handled at the next frame:
+//! - `-[EvolutionViewController drawFrame]`: frame tick, world open/close detection, queued network callbacks.
 //! - `-[BHClient match:didReceiveData:fromPlayer:]`: 0x23 starts a session (HELLO goes out first); 0xBC packets
 //!   go to the loader and never reach the game.
 //! - `-[BHNetClientMatch sendPlayerInformationToServer:password:]`: the 0x1f is held until the 0xBC flow decides,
@@ -26,6 +28,7 @@ use jni::objects::{GlobalRef, JClass, JString, JValue};
 use jni::sys::{jboolean, jint, jstring, JNI_FALSE, JNI_TRUE, JNI_VERSION_1_6};
 use jni::{JNIEnv, JavaVM};
 
+use crate::inbox::{Inbox, NetEvent};
 use crate::loader::{Dirs, Loader, Platform, UiEvent};
 use objc::{Id, Imp, Sel};
 
@@ -55,6 +58,10 @@ static VM: OnceLock<JavaVM> = OnceLock::new();
 static BRIDGE_CLASS: OnceLock<GlobalRef> = OnceLock::new();
 static DATA_DIR: OnceLock<PathBuf> = OnceLock::new();
 static START: OnceLock<Instant> = OnceLock::new();
+/// The loader thread and network callbacks from the game's other threads.
+static INBOX: Inbox = Inbox::new();
+/// The connection the game is joining, set by the receive hook on whatever thread the game receives on.
+static CONN: Mutex<Option<Conn>> = Mutex::new(None);
 /// Answers from the Java UI threads, drained every frame.
 static EVENTS: Mutex<Vec<UiEvent>> = Mutex::new(Vec::new());
 
@@ -76,6 +83,16 @@ struct Conn {
     matc: Id,
     peer: Id,
 }
+// SAFETY: plain pointers to game objects; only the loader thread sends messages to them.
+unsafe impl Send for Conn {}
+
+fn conn() -> Option<Conn> {
+    *CONN.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+fn set_conn(c: Option<Conn>) {
+    *CONN.lock().unwrap_or_else(|e| e.into_inner()) = c;
+}
 
 /// A held `sendPlayerInformationToServer:password:` call (arguments retained).
 #[derive(Clone, Copy)]
@@ -93,7 +110,6 @@ enum Deferred {
 
 thread_local! {
     static LOADER: RefCell<Option<Loader<AndroidPlatform>>> = const { RefCell::new(None) };
-    static CONN: RefCell<Option<Conn>> = const { RefCell::new(None) };
     static HELD: RefCell<Option<HeldJoin>> = const { RefCell::new(None) };
     static DEFERRED: RefCell<Vec<Deferred>> = const { RefCell::new(Vec::new()) };
     static WORLD: RefCell<usize> = const { RefCell::new(0) };
@@ -126,7 +142,7 @@ impl Platform for AndroidPlatform {
         log(level, msg);
     }
     fn send(&self, packet: &[u8]) {
-        let Some(c) = CONN.with(|c| *c.borrow()) else { return };
+        let Some(c) = conn() else { return };
         let data = objc::nsdata(packet);
         unsafe {
             // -[BHNetClientMatch sendData:toPlayers:withDataMode:error:], mode 0 = reliable
@@ -151,8 +167,11 @@ impl Platform for AndroidPlatform {
     }
 }
 
-/// Runs `f` on the loader (created on first use), then the deferred game calls.
+/// Runs `f` on the loader (created on first use), then the deferred game calls. `None` off the loader thread.
 fn with_loader<R>(f: impl FnOnce(&mut Loader<AndroidPlatform>) -> R) -> Option<R> {
+    if !INBOX.is_owner() {
+        return None;
+    }
     let r = LOADER.with(|l| {
         let mut l = l.try_borrow_mut().ok()?;
         if l.is_none() {
@@ -216,7 +235,7 @@ fn send_held_join(key: Option<Hash>) {
 /// Lets the game reject the connection as for a vanilla 0x26 (reason 3), so it leaves its join screen.
 fn abort() {
     HELD.with(|h| h.borrow_mut().take());
-    let Some(c) = CONN.with(|c| *c.borrow()) else { return };
+    let Some(c) = conn() else { return };
     let orig = ORIG.get().expect("hooks").receive;
     unsafe {
         let f: unsafe extern "C" fn(Id, Sel, Id, Id, Id) = std::mem::transmute(orig);
@@ -232,6 +251,13 @@ fn guard(what: &str, f: impl FnOnce()) {
 
 extern "C" fn hook_draw_frame(this: Id, cmd: Sel) {
     guard("drawFrame", || {
+        INBOX.claim();
+        for ev in INBOX.drain() {
+            if ev == NetEvent::Disconnect {
+                release_held();
+            }
+            with_loader(|l| l.on_net(ev));
+        }
         let events: Vec<UiEvent> = EVENTS.lock().map(|mut e| e.drain(..).collect()).unwrap_or_default();
         let gv = objc::ivar(this, "EvolutionViewController", "gameView");
         let world = objc::ivar(gv, "GameView", "world");
@@ -262,14 +288,24 @@ extern "C" fn hook_receive(this: Id, cmd: Sel, matc: Id, data: Id, peer: Id) {
     let mut consumed = false;
     guard("didReceiveData", || {
         let bytes = objc::data_bytes(data);
-        CONN.with(|c| *c.borrow_mut() = Some(Conn { client: this, matc, peer }));
+        set_conn(Some(Conn { client: this, matc, peer }));
+        let owner = INBOX.is_owner();
         match bytes.first() {
             Some(0x23) => {
                 let host = objc::string(objc::ivar(matc, "BHMatch", "host"));
                 let port = objc::string(objc::ivar(matc, "BHMatch", "port"));
-                with_loader(|l| l.on_contact(&format!("{host}:{port}")));
+                let server = format!("{host}:{port}");
+                if owner {
+                    with_loader(|l| l.on_contact(&server));
+                } else {
+                    INBOX.push(NetEvent::Contact(server));
+                }
             }
-            Some(0xBC) => consumed = with_loader(|l| l.on_packet(&bytes)).unwrap_or(true),
+            Some(0xBC) if owner => consumed = with_loader(|l| l.on_packet(&bytes)).unwrap_or(true),
+            Some(0xBC) => {
+                INBOX.push(NetEvent::Packet(bytes));
+                consumed = true;
+            }
             _ => {}
         }
     });
@@ -286,6 +322,10 @@ extern "C" fn hook_receive(this: Id, cmd: Sel, matc: Id, data: Id, peer: Id) {
 extern "C" fn hook_send_info(this: Id, cmd: Sel, server_id: Id, password: Id) {
     let mut held = false;
     guard("sendPlayerInformationToServer", || {
+        if !INBOX.is_owner() {
+            log(LogLevel::Warn, "the game joins from another thread; joining without mods");
+            return;
+        }
         for o in [this, server_id, password] {
             if !o.is_null() {
                 objc::send0(o, "retain");
@@ -297,14 +337,8 @@ extern "C" fn hook_send_info(this: Id, cmd: Sel, server_id: Id, password: Id) {
     if held {
         return;
     }
-    // The loader was busy or panicked: behave like vanilla.
-    if let Some(h) = HELD.with(|h| h.borrow_mut().take()) {
-        for o in [h.matc, h.server_id, h.password] {
-            if !o.is_null() {
-                objc::send0(o, "release");
-            }
-        }
-    }
+    // Another thread, or the loader was busy or panicked: behave like vanilla.
+    release_held();
     let orig = ORIG.get().expect("hooks").send_info;
     unsafe {
         let f: unsafe extern "C" fn(Id, Sel, Id, Id) = std::mem::transmute(orig);
@@ -312,17 +346,26 @@ extern "C" fn hook_send_info(this: Id, cmd: Sel, server_id: Id, password: Id) {
     }
 }
 
-extern "C" fn hook_disconnect(this: Id, cmd: Sel) {
-    guard("disconnect", || {
-        CONN.with(|c| *c.borrow_mut() = None);
-        if let Some(h) = HELD.with(|h| h.borrow_mut().take()) {
-            for o in [h.matc, h.server_id, h.password] {
-                if !o.is_null() {
-                    objc::send0(o, "release");
-                }
+/// Drops a held 0x1f (the connection closed before the 0xBC flow decided).
+fn release_held() {
+    if let Some(h) = HELD.with(|h| h.borrow_mut().take()) {
+        for o in [h.matc, h.server_id, h.password] {
+            if !o.is_null() {
+                objc::send0(o, "release");
             }
         }
-        with_loader(|l| l.on_disconnect());
+    }
+}
+
+extern "C" fn hook_disconnect(this: Id, cmd: Sel) {
+    guard("disconnect", || {
+        set_conn(None);
+        if INBOX.is_owner() {
+            release_held();
+            with_loader(|l| l.on_disconnect());
+        } else {
+            INBOX.push(NetEvent::Disconnect);
+        }
     });
     let orig = ORIG.get().expect("hooks").disconnect;
     unsafe {

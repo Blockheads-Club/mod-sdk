@@ -9,6 +9,7 @@
 #![warn(missing_docs)]
 
 pub mod api;
+pub mod inbox;
 pub mod loader;
 pub mod ui;
 

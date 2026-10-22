@@ -20,6 +20,7 @@ use bhmod_core::types::{ApiError, ChannelSource, ChannelTarget, LogLevel, Role, 
 use bhmod_core::GameBridge;
 use bhmod_proto::{Hash, PACKET_TYPE};
 
+use crate::inbox::NetEvent;
 use crate::ui;
 
 /// Mods tick at the server's world step rate.
@@ -218,6 +219,17 @@ impl<P: Platform + 'static> Loader<P> {
             self.handle(out);
         }
         true
+    }
+
+    /// A network callback queued by another game thread ([`crate::inbox`]).
+    pub fn on_net(&mut self, ev: NetEvent) {
+        match ev {
+            NetEvent::Contact(server) => self.on_contact(&server),
+            NetEvent::Packet(data) => {
+                self.on_packet(&data);
+            }
+            NetEvent::Disconnect => self.on_disconnect(),
+        }
     }
 
     /// The connection closed.

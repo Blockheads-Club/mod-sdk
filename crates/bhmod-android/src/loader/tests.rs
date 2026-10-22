@@ -109,7 +109,8 @@ fn vanilla_server() {
     // no 0x23 seen: the 0x1f goes at once
     r.l.on_join_request();
     assert_eq!(*r.p.joins.borrow(), [None]);
-    r.l.on_contact("10.0.2.2:15151");
+    // callbacks queued by another game thread arrive through on_net
+    r.l.on_net(NetEvent::Contact("10.0.2.2:15151".into()));
     assert!(matches!(r.p.msgs()[..], [Message::Hello(_)]));
     r.l.on_join_request();
     r.l.on_frame();
@@ -121,7 +122,7 @@ fn vanilla_server() {
     // non-0xBC packets go to the game
     assert!(!r.l.on_packet(&[0x23, 1]));
     assert!(!r.l.on_packet(&[]));
-    r.l.on_disconnect();
+    r.l.on_net(NetEvent::Disconnect);
     assert_eq!(r.p.ui_types(), ["joined", "closed"]);
     // a 0xBC packet with no session is swallowed
     assert!(r.l.on_packet(&[0xbc, 0x01]));
@@ -171,8 +172,9 @@ fn modded_join_runs_the_mod_and_its_channel() {
     let m = r.p.msgs();
     assert!(matches!(&m[..], [Message::Channel(Channel { channel_id: 7, payload })] if payload == b"ping"), "{m:?}");
     assert_eq!(r.p.ui.borrow().last().unwrap()["mods"], 2);
-    // the server echoes; the client mod gets it on the next frame
-    r.l.on_packet(&Message::Channel(Channel { channel_id: 7, payload: b"echo:ping".to_vec() }).encode());
+    // the server echoes (on a phone the game may receive it on another thread); the client mod gets it on the next
+    // frame
+    r.l.on_net(NetEvent::Packet(Message::Channel(Channel { channel_id: 7, payload: b"echo:ping".to_vec() }).encode()));
     r.p.now.set(400);
     r.l.on_frame();
     r.p.now.set(500);
