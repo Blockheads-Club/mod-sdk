@@ -35,8 +35,8 @@
 //! Handlers run one at a time on the host's main thread, so mod state can live in a `thread_local!` or in the
 //! closures themselves.
 
-use std::collections::BTreeMap;
 use core::cell::RefCell;
+use std::collections::BTreeMap;
 
 /// The bindings generated from `wit/blockheads-api` (world `server-mod`).
 #[allow(missing_docs, clippy::all)]
@@ -54,13 +54,13 @@ use bindings::blockheads::api as wit;
 use bindings::exports::blockheads::api::guest;
 
 pub use wit::players::{Player, Role};
-pub use wit::types::{ApiError, Priority, Side};
+pub use wit::types::{ApiError, Pos, Priority, Side};
 
 /// Everything a mod usually needs.
 pub mod prelude {
     pub use crate::commands::{self, Command, Reply, Sender};
     pub use crate::events::{self, EventCtx, EventKind};
-    pub use crate::{host, log, players, scheduler, storage};
+    pub use crate::{channels, host, log, players, scheduler, services, storage};
     pub use crate::{ApiError, Mod, Player, Priority, Role, Side};
 }
 
@@ -77,6 +77,11 @@ pub trait Mod {
         let _ = (name, method, args);
         Err(String::from("this mod provides no services"))
     }
+
+    /// Called when a message arrives on a channel this mod opened (see [`channels`]).
+    fn on_channel_message(channel: u32, origin: channels::Source<'_>, data: Vec<u8>) {
+        let _ = (channel, origin, data);
+    }
 }
 
 /// Exports a [`Mod`] implementation as the component's `guest` interface.
@@ -85,7 +90,7 @@ macro_rules! export_mod {
     ($t:ty) => {
         const _: () = {
             type BlockheadsModExport = $crate::Exported<$t>;
-            $crate::bindings::__export_server_mod!(BlockheadsModExport with_types_in $crate::bindings);
+    $crate::bindings::__export_server_mod!(BlockheadsModExport with_types_in $crate::bindings);
         };
     };
 }
@@ -182,7 +187,9 @@ impl<M: Mod> guest::Guest for Exported<M> {
         M::call_service(name, method, args)
     }
 
-    fn on_channel_message(_channel: u32, _origin: wit::channels::Source<'_>, _data: Vec<u8>) {}
+    fn on_channel_message(channel: u32, origin: wit::channels::Source<'_>, data: Vec<u8>) {
+        M::on_channel_message(channel, origin, data)
+    }
 }
 
 /// Facts about the host and this mod.
@@ -222,9 +229,19 @@ pub mod log {
     }
 }
 
+/// Cross-mod services: values are canonical CBOR (players as `{"$h": player.value_handle()}`).
+pub mod services {
+    pub use crate::wit::services::{call, provide, CallError};
+}
+
+/// Named byte channels between mods (local delivery since API 0.2).
+pub mod channels {
+    pub use crate::wit::channels::{close, open, send, Source, Target};
+}
+
 /// Connected players.
 pub mod players {
-    pub use crate::wit::players::{broadcast, find_by_alias, get, online, Player, Role};
+    pub use crate::wit::players::{broadcast, find_by_alias, from_value_handle, get, online, Player, Role};
 }
 
 /// The per-mod, per-world key-value store.
@@ -248,8 +265,9 @@ pub mod events {
 
     use crate::wit::events as w;
     pub use crate::wit::events::{
-        ChatEvent, CommandEvent, Event, EventKind, PlayerJoinEvent, PlayerQuitEvent, SavePhase, TickEvent,
-        WorldLoadedEvent, WorldSaveEvent,
+        BlockBreakEvent, BlockChangedEvent, BlockPlaceEvent, BreakLayer, ChatEvent, CommandEvent, CustomEvent,
+        DamageEvent, DeathEvent, Event, EventKind, ObjectKind, ObjectPlaceEvent, PlayerJoinEvent, PlayerMoveEvent,
+        PlayerPreLoginEvent, PlayerQuitEvent, RejectReason, SavePhase, TickEvent, WorldLoadedEvent, WorldSaveEvent,
     };
     use crate::{with_registry, ApiError, Player, Priority};
 
@@ -258,6 +276,7 @@ pub mod events {
         event: &'a Event<'p>,
         cancelled: bool,
         text: Option<String>,
+        other: Option<w::Mutation>,
     }
 
     impl<'a, 'p> EventCtx<'a, 'p> {
@@ -266,9 +285,14 @@ pub mod events {
                 Event::Chat(c) => c.cancelled,
                 Event::Command(c) => c.cancelled,
                 Event::Custom(c) => c.cancelled,
+                Event::PlayerPreLogin(e) => e.cancelled,
+                Event::BlockPlace(e) => e.cancelled,
+                Event::BlockBreak(e) => e.cancelled,
+                Event::ObjectPlace(e) => e.cancelled,
+                Event::Damage(e) => e.cancelled,
                 _ => false,
             };
-            EventCtx { event, cancelled, text: None }
+            EventCtx { event, cancelled, text: None, other: None }
         }
 
         /// The raw event.
@@ -286,18 +310,48 @@ pub mod events {
                 Event::Tick(_) => EventKind::Tick,
                 Event::WorldLoaded(_) => EventKind::WorldLoaded,
                 Event::WorldSave(_) => EventKind::WorldSave,
+                Event::PlayerPreLogin(_) => EventKind::PlayerPreLogin,
+                Event::BlockPlace(_) => EventKind::BlockPlace,
+                Event::BlockBreak(_) => EventKind::BlockBreak,
+                Event::BlockChanged(_) => EventKind::BlockChanged,
+                Event::ObjectPlace(_) => EventKind::ObjectPlace,
+                Event::Damage(_) => EventKind::Damage,
+                Event::Death(_) => EventKind::Death,
+                Event::PlayerMove(_) => EventKind::PlayerMove,
                 Event::Custom(_) => return None,
             })
         }
 
-        /// The player of a join, quit or chat event, or the player who typed a command.
+        /// The player of the event (the one who joined, chatted, placed, broke, moved, was damaged or died), or
+        /// the player who typed a command. `None` for pre-login (use the event's `player_id`) and world events.
         pub fn player(&self) -> Option<&'p Player> {
             match self.event {
                 Event::PlayerJoin(e) => Some(e.player),
                 Event::PlayerQuit(e) => Some(e.player),
                 Event::Chat(e) => Some(e.player),
                 Event::Command(CommandEvent { sender: w::CommandSender::Player(p), .. }) => Some(p),
+                Event::BlockPlace(e) => Some(e.player),
+                Event::BlockBreak(e) => Some(e.player),
+                Event::BlockChanged(e) => e.player,
+                Event::ObjectPlace(e) => Some(e.player),
+                Event::Damage(e) => e.player,
+                Event::Death(e) => e.player,
+                Event::PlayerMove(e) => Some(e.player),
                 _ => None,
+            }
+        }
+
+        /// Chooses the rejection reason of a cancelled `player-pre-login` (ignored for other events).
+        pub fn set_reject_reason(&mut self, reason: RejectReason) {
+            if matches!(self.event, Event::PlayerPreLogin(_)) {
+                self.other = Some(w::Mutation::RejectReason(reason));
+            }
+        }
+
+        /// Replaces the damage amount of a `damage` event (ignored for other events).
+        pub fn set_damage(&mut self, amount: f32) {
+            if matches!(self.event, Event::Damage(_)) {
+                self.other = Some(w::Mutation::DamageAmount(amount));
             }
         }
 
@@ -334,7 +388,7 @@ pub mod events {
         pub(crate) fn into_outcome(self) -> w::Outcome {
             let changed = match (self.event, self.text) {
                 (Event::Chat(c), Some(t)) if t != c.text => Some(w::Mutation::ChatText(t)),
-                _ => None,
+                _ => self.other,
             };
             w::Outcome { cancelled: self.cancelled, mutation: changed }
         }
@@ -374,14 +428,22 @@ pub mod events {
     }
 
     /// Subscribes `f` to `kind` with options.
-    pub fn on_with(
-        kind: EventKind,
-        opts: On,
-        f: impl FnMut(&mut EventCtx<'_, '_>) + 'static,
-    ) -> Result<u32, ApiError> {
+    pub fn on_with(kind: EventKind, opts: On, f: impl FnMut(&mut EventCtx<'_, '_>) + 'static) -> Result<u32, ApiError> {
         let id = w::subscribe(kind, opts.priority, opts.ignore_cancelled)?;
         with_registry(|r| r.events.insert(id, Some(Box::new(f))));
         Ok(id)
+    }
+
+    /// Subscribes `f` to the custom event `name` (`<mod-id>:<event>`); the payload is canonical CBOR.
+    pub fn on_custom(name: &str, opts: On, f: impl FnMut(&mut EventCtx<'_, '_>) + 'static) -> Result<u32, ApiError> {
+        let id = w::subscribe_custom(name, opts.priority, opts.ignore_cancelled)?;
+        with_registry(|r| r.events.insert(id, Some(Box::new(f))));
+        Ok(id)
+    }
+
+    /// Fires a custom event of this mod (`<own-mod-id>:<event>`); true when it ended up cancelled.
+    pub fn fire_custom(name: &str, payload: &[u8]) -> Result<bool, ApiError> {
+        w::fire_custom(name, payload)
     }
 
     /// Removes a subscription.

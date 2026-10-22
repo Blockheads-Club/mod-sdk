@@ -6,7 +6,7 @@ description = { en = "Blocks spam links and masks rude words in chat. Example WA
 authors = ["Blockheads Club"]
 license = "MIT OR Apache-2.0"
 homepage = "https://github.com/Blockheads-Club/mod-sdk"
-api = "^0.1"
+api = "^0.2"
 
 [sides]
 server = true
