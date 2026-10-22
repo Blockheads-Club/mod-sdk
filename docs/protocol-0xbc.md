@@ -1,7 +1,8 @@
 # 0xBC mod protocol, version 1
 
 Status: **spec v0 (milestone M0)**. Implemented by `crates/bhmod-proto`. Byte-exact vectors: [`../vectors/`](../vectors/).
-Server side lands in M5, the PC loader in M6, the Android loader in M7. Every implementation must pass the vectors.
+Server side: blockheads-server (M5); the PC loader lands in M6, the Android loader in M7. Every implementation must
+pass the vectors. Section 10 collects the points the server implementation settled.
 
 The protocol lets a modded Blockheads client and a modded server find each other, list the server's mods, move the
 mod packages from the server to the client and then exchange mod channel traffic. It is added on top of the vanilla
@@ -186,6 +187,10 @@ registered the channel, with that player as sender; channel ids come from `MOD_L
 
 `{name: text, id: uint ≤ 65535}`: a channel opened after `MOD_LIST` (hot reload, late registration).
 
+The server owns the id space: it assigns an id the first time a channel name is used, never reuses or renumbers it
+while it runs, and sends `CHANNEL_REGISTER` to a client in the game before the first `CHANNEL` on a new id (and for
+channels opened later, on its next network poll). A `CHANNEL_REGISTER` from a client is ignored in version 1.
+
 ## 6. Join after acceptance
 
 After `READY` the client sends its normal 0x1f player-information plist with **one extra key**:
@@ -255,3 +260,26 @@ Example, `02-list-request.hex`: `bc02a0`. `10-channel.hex` (channel 1, payload `
 
 `proto` is bumped only for incompatible changes. New keys and new ops are compatible additions (ignored by older
 peers). The API version (`HELLO.api`, `mod.toml` `api`) is independent of `proto`.
+
+## 10. Server behaviour (blockheads-server, M5)
+
+Clarifications that hold for the reference server; clients must not depend on more than the rules above.
+
+- Before `HELLO` every 0xBC op is ignored; a `HELLO` from a player already in the game is ignored. Only waiting peers
+  (between ENet connect and approval) may start the protocol; `CHANNEL` is accepted only from players in the game.
+- `MOD_LIST.mods` holds every enabled package with a client half whose server half (if any) loaded, plus the loaded
+  server-only mods for information (`sides = ["server"]`, never downloadable: `FILE_ERROR` NOT_FOUND). `sides` is
+  written in the order `server`, `client`. Unpacked mod folders are packed with the deterministic `.bhmod` writer of
+  `bhmod pack`, so their hash is stable.
+- A server never lists a client mod with `permissions.native = true` (it cannot push native code); such a mod is
+  only reachable through the index (M10). A server sets `indexListed` only when it checked the index itself (the M5
+  server does not and always sends `false`); a client must check its own copy of the index either way.
+- Downloads: the window is 8 chunks beyond the last acknowledged offset per client. A `FILE_REQUEST` below the last
+  acknowledged offset restarts the transfer there (resume on the same connection). A client that asks for another
+  file drops its current transfer. When too many clients download at once (8 on the reference server), new
+  transfers get `FILE_ERROR` BUSY; the final acknowledgement (`offset = total`) or `READY` frees the slot.
+- `REJECT_TEXT` precedes the 0x26 rejection of a modded client (one that sent `HELLO`) for a protocol mismatch, a
+  missing or stale `bhcModLoader`, and a refusal by a server mod (`player-pre-login`; the reason byte is the mod's).
+  Peers that never sent `HELLO` get only the vanilla 0x26.
+- A server mod sending on a channel to a player without the mod loader (or not in the game) is a silent no-op;
+  `all-players` reaches every modded player in the game.
