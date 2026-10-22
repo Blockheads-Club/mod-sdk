@@ -40,9 +40,11 @@ jobs:
         run: |
           yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "ndk;$NDK_VERSION" "build-tools;35.0.0" "platforms;android-35" > /dev/null
       - name: Build the loader zip
-        env:
-          ANDROID_NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/${{ env.NDK_VERSION }}
-        run: scripts/build-android-loader.sh | tee "$RUNNER_TEMP/out.txt"
+        # ANDROID_HOME is a runner variable, not part of the workflow `env` context, so the NDK path is set in the shell.
+        run: |
+          set -o pipefail
+          export ANDROID_NDK_HOME="$ANDROID_HOME/ndk/$NDK_VERSION"
+          scripts/build-android-loader.sh | tee "$RUNNER_TEMP/out.txt"
       - name: Summary
         run: |
           cat target/android-loader/loader.json
