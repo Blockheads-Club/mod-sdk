@@ -55,7 +55,9 @@ function mod.on_enable()
 			end
 		end)
 		bh.scheduler.run_next_poll(function()
-			who:send_chat(`OK, I will remind you in {seconds} s.`)
+			if who:is_online() then
+				who:send_chat(`OK, I will remind you in {seconds} s.`)
+			end
 		end)
 		return { handled = true, reply = {} }
 	end)
