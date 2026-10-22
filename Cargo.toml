@@ -5,6 +5,7 @@ members = [
     "crates/bhmod-proto",
     "crates/bhmod-cli",
     "crates/bhmod-core",
+    "crates/bhmod-index",
 ]
 # The Rust example builds for wasm32-wasip2 on its own.
 exclude = ["examples/hello-rust"]
@@ -20,6 +21,7 @@ authors = ["Blockheads Club contributors"]
 [workspace.dependencies]
 bhmod-manifest = { path = "crates/bhmod-manifest", version = "0.1.0" }
 bhmod-proto = { path = "crates/bhmod-proto", version = "0.1.0" }
+bhmod-index = { path = "crates/bhmod-index", version = "0.1.0" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 toml = "0.9"
