@@ -90,10 +90,10 @@ jobs:
           ./build.sh
       - name: bhmod check on the examples
         run: |
-          for e in hello-lua chat-filter scheduler-lua hello-rust; do ./target/debug/bhmod check --index "examples/$e"; done
+          for e in hello-lua chat-filter scheduler-lua economy perms landclaim hello-rust; do ./target/debug/bhmod check --index "examples/$e"; done
       - name: bhmod pack on the examples
         run: |
-          for e in hello-lua chat-filter scheduler-lua hello-rust; do
+          for e in hello-lua chat-filter scheduler-lua economy perms landclaim hello-rust; do
             ./target/debug/bhmod pack "examples/$e" -o "$RUNNER_TEMP/$e.bhmod"
             ./target/debug/bhmod check --index "$RUNNER_TEMP/$e.bhmod"
           done

@@ -1,0 +1,23 @@
+schema = 1
+id = "landclaim"
+version = "1.0.0"
+name = { en = "Land claim", tr = "Arazi sahiplenme" }
+description = { en = "Buy 16x16 plots with coins (/claim, /unclaim); only owners can build or dig there." }
+authors = ["Blockheads Club"]
+license = "MIT OR Apache-2.0"
+homepage = "https://github.com/Blockheads-Club/mod-sdk"
+api = "^0.2"
+
+[sides]
+server = true
+client = false
+
+[entry]
+server = { runtime = "lua", path = "server/main.luau" }
+
+[dependencies]
+economy = "^1"
+
+[soft-dependencies]
+perms = "^1"
+

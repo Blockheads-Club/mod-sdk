@@ -1,0 +1,10 @@
+package blockheads-club:permissions@1.0.0;
+
+/// The `permissions` service: named nodes such as `landclaim.bypass`. Admins and the owner have every node.
+interface permissions {
+    /// A connected player (host handle).
+    type player = u64;
+
+    /// True when the player has `node` (granted directly or by a `prefix.*` grant), or is an admin.
+    has: func(who: player, node: string) -> bool;
+}

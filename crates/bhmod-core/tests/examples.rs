@@ -144,3 +144,98 @@ fn missing_grant_keeps_mod_off() {
     assert!(h.is_empty());
     assert!(b.has_log("permissions not granted in mods.toml: players:chat"), "{}", b.log_text());
 }
+
+#[test]
+fn economy_landclaim_perms() {
+    use bhmod_core::types::{BreakLayer, ObjectKind, Pos};
+    let (_t, b, mut h) = host_with(&["economy", "landclaim", "perms"], "");
+    assert!(b.has_log("loaded 3 mod(s): economy 1.0.0, perms 1.0.0, landclaim 1.0.0"), "{}", b.log_text());
+    h.enable("World", "wid");
+    for m in h.mods() {
+        assert_eq!(m.state, ModState::Enabled, "{}", b.log_text());
+    }
+    b.join("a", "ALICE", Role::Player);
+    b.join("b", "BOB", Role::Player);
+    b.join("c", "CAROL", Role::Admin);
+    let at = |id: &str, x, y| {
+        b.positions.borrow_mut().retain(|p| p.0 != id);
+        b.positions.borrow_mut().push((id.into(), Pos { x, y }));
+    };
+    let cmd = |h: &mut ModHost, who: &str, line: &str| h.command(player(who), line).unwrap().join(" | ");
+
+    // Economy.
+    assert_eq!(cmd(&mut h, "a", "/balance"), "ALICE has 100 coins.");
+    assert_eq!(cmd(&mut h, "a", "/pay BOB 30"), "Paid 30 coins to BOB. You have 70 left.");
+    assert_eq!(b.take_chats(), vec![("b".to_string(), "ALICE paid you 30 coins.".to_string())]);
+    assert_eq!(cmd(&mut h, "a", "/bal bob"), "BOB has 130 coins.");
+    assert_eq!(cmd(&mut h, "a", "/bal nobody"), "No such player online.");
+    assert_eq!(cmd(&mut h, "a", "/pay BOB 1000"), "Payment failed: insufficient funds");
+    assert_eq!(cmd(&mut h, "a", "/pay ALICE 1"), "You cannot pay yourself.");
+    assert!(cmd(&mut h, "a", "/pay BOB -1").contains("Usage: /pay <player> <amount>"));
+    assert_eq!(cmd(&mut h, "a", "/eco-give ALICE 5"), "You do not have permission to use /eco-give.");
+    assert_eq!(cmd(&mut h, "c", "/eco-give ALICE 5"), "ALICE now has 75 coins.");
+    assert!(cmd(&mut h, "c", "/eco-give ALICE x").contains("Usage"));
+
+    // Land claim: Alice buys the plot around (20, 40) = plot (1, 2).
+    assert_eq!(cmd(&mut h, "a", "/claim"), "You need to be in the world.");
+    at("a", 20, 40);
+    assert_eq!(cmd(&mut h, "a", "/claiminfo"), "Nobody owns this plot.");
+    assert_eq!(cmd(&mut h, "a", "/claim"), "You bought this plot for 50 coins.");
+    assert_eq!(cmd(&mut h, "a", "/claim"), "You already own this plot.");
+    assert_eq!(cmd(&mut h, "a", "/balance"), "ALICE has 25 coins.");
+    at("b", 31, 47);
+    assert_eq!(cmd(&mut h, "b", "/claim"), "This plot belongs to ALICE.");
+    assert_eq!(cmd(&mut h, "b", "/claiminfo"), "Owned by ALICE.");
+    assert_eq!(cmd(&mut h, "b", "/unclaim"), "You do not own this plot.");
+    let brk = |who: &str, x, y| Event::BlockBreak {
+        player: who.into(),
+        pos: Pos { x, y },
+        layer: BreakLayer::Block,
+        tile: 1,
+        cancelled: false,
+    };
+    assert!(h.fire(brk("b", 16, 32)).cancelled(), "Bob may not dig in Alice's plot");
+    assert_eq!(b.take_chats(), vec![("b".to_string(), "This land belongs to ALICE.".to_string())]);
+    assert!(!h.fire(brk("b", 15, 32)).cancelled(), "next plot is free");
+    assert!(!h.fire(brk("a", 16, 32)).cancelled(), "the owner may");
+    assert!(!h.fire(brk("c", 16, 32)).cancelled(), "admins may");
+    let place = Event::BlockPlace {
+        player: "b".into(),
+        pos: Pos { x: 17, y: 33 },
+        item: 1,
+        data_a: 0,
+        data_b: 0,
+        cancelled: false,
+    };
+    assert!(h.fire(place).cancelled());
+    let obj = Event::ObjectPlace {
+        player: "b".into(),
+        pos: Pos { x: 17, y: 33 },
+        object: ObjectKind::Workbench,
+        item: 1,
+        cancelled: false,
+    };
+    assert!(h.fire(obj).cancelled());
+
+    // Perms: grant Bob the bypass node (a wildcard) and he may dig.
+    assert!(cmd(&mut h, "c", "/perm grant nobody x").contains("Name an online player."));
+    assert_eq!(cmd(&mut h, "c", "/perm list BOB"), "BOB: (none)");
+    assert_eq!(cmd(&mut h, "c", "/perm grant BOB landclaim.*"), "Granted landclaim.* for BOB.");
+    assert_eq!(cmd(&mut h, "c", "/perm grant BOB other"), "Granted other for BOB.");
+    assert_eq!(cmd(&mut h, "c", "/perm list BOB"), "BOB: landclaim.*, other");
+    assert!(!h.fire(brk("b", 16, 32)).cancelled());
+    assert_eq!(cmd(&mut h, "c", "/perm revoke BOB landclaim.*"), "Revoked landclaim.* for BOB.");
+    assert!(h.fire(brk("b", 16, 32)).cancelled());
+    assert!(cmd(&mut h, "c", "/perm frobnicate BOB").contains("Usage"));
+
+    // Unclaim refunds half.
+    assert_eq!(cmd(&mut h, "a", "/unclaim"), "Plot released; 25 coins refunded.");
+    assert_eq!(cmd(&mut h, "a", "/balance"), "ALICE has 50 coins.");
+    assert!(!h.fire(brk("b", 16, 32)).cancelled());
+    // Not enough coins for a plot.
+    at("b", 100, 100);
+    assert_eq!(cmd(&mut h, "b", "/pay ALICE 130"), "Paid 130 coins to ALICE. You have 0 left.");
+    assert_eq!(cmd(&mut h, "b", "/claim"), "A plot costs 50 coins; you have 0.");
+    h.world_save(SavePhase::Post);
+    h.disable_all();
+}

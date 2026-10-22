@@ -1,0 +1,22 @@
+package blockheads-club:economy@1.0.0;
+
+/// The `economy` service of the economy mod. Players are host handles; amounts are whole coins.
+interface economy {
+    /// A connected player (host handle).
+    type player = u64;
+
+    /// The player's coins (a new player starts with `start-balance`).
+    balance: func(who: player) -> s64;
+    /// Adds coins; returns the new balance. `amount` must be >= 0.
+    deposit: func(who: player, amount: s64) -> s64;
+    /// Takes coins if the player has enough; returns false (and changes nothing) otherwise.
+    withdraw: func(who: player, amount: s64) -> bool;
+    /// Moves coins between players; fails with "insufficient funds" or "bad amount".
+    pay: func(%from: player, to: player, amount: s64) -> s64;
+}
+
+/// Fired as the custom event `economy:balance-changed` after every change.
+record balance-changed {
+    player: u64,
+    balance: s64,
+}

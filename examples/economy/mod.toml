@@ -1,0 +1,19 @@
+schema = 1
+id = "economy"
+version = "1.0.0"
+name = { en = "Economy", tr = "Ekonomi" }
+description = { en = "Coins for every player: /balance, /pay and an economy service other mods can use." }
+authors = ["Blockheads Club"]
+license = "MIT OR Apache-2.0"
+homepage = "https://github.com/Blockheads-Club/mod-sdk"
+api = "^0.2"
+
+[sides]
+server = true
+client = false
+
+[entry]
+server = { runtime = "lua", path = "server/main.luau" }
+
+[provides]
+services = [{ name = "economy", version = "1.0.0", wit = "wit/economy.wit" }]

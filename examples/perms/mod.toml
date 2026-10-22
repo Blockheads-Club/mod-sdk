@@ -1,0 +1,19 @@
+schema = 1
+id = "perms"
+version = "1.0.0"
+name = { en = "Permissions", tr = "İzinler" }
+description = { en = "Named permission nodes for players (/perm), offered to other mods as the `permissions` service." }
+authors = ["Blockheads Club"]
+license = "MIT OR Apache-2.0"
+homepage = "https://github.com/Blockheads-Club/mod-sdk"
+api = "^0.2"
+
+[sides]
+server = true
+client = false
+
+[entry]
+server = { runtime = "lua", path = "server/main.luau" }
+
+[provides]
+services = [{ name = "permissions", version = "1.0.0", wit = "wit/permissions.wit" }]
