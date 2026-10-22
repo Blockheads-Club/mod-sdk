@@ -376,12 +376,12 @@
       "body": {
         "reasonCode": 3,
         "text": "This server needs mod loader protocol 1. Update your mod loader with Patcher.",
-        "url": "https://blockheads-club.github.io/website/docs/mods/"
+        "url": "https://blockheads.club/docs/mods/players"
       },
       "description": "Proto mismatch text, followed by 0x26 03.",
       "direction": "S->C",
       "file": "08-reject-text.hex",
-      "length": 157,
+      "length": 146,
       "op": "0x08"
     },
     {

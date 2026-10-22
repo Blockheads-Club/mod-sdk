@@ -198,7 +198,7 @@ fn valid() -> Vec<(&'static str, &'static str, &'static str, Message)> {
             Message::RejectText(RejectText {
                 reason_code: 3,
                 text: "This server needs mod loader protocol 1. Update your mod loader with Patcher.".into(),
-                url: Some("https://blockheads-club.github.io/website/docs/mods/".into()),
+                url: Some("https://blockheads.club/docs/mods/players".into()),
             }),
         ),
         (
