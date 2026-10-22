@@ -1,3 +1,5 @@
+mod index_cmds;
+
 use std::ffi::OsString;
 use std::fs;
 use std::path::{Path, PathBuf};

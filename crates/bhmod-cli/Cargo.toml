@@ -1,6 +1,6 @@
 [package]
 name = "bhmod"
-description = "Blockheads mod tool: check, pack and create mods"
+description = "Blockheads mod tool: check, pack and create mods, and maintain the mod index"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -14,7 +14,10 @@ path = "src/main.rs"
 
 [dependencies]
 bhmod-manifest.workspace = true
+bhmod-index.workspace = true
 clap.workspace = true
+semver.workspace = true
+serde_json.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

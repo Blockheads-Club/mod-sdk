@@ -69,7 +69,8 @@ Copy the `.bhmod` into the server's `mods/` folder (once the server supports mod
 | [`docs/protocol-0xbc.md`](docs/protocol-0xbc.md), [`vectors/`](vectors/) | Client ⇄ server mod protocol and its byte-exact test vectors |
 | `crates/bhmod-manifest` | Reads and checks `mod.toml` and packages |
 | `crates/bhmod-proto` | Encodes and decodes the 0xBC protocol |
-| `crates/bhmod-cli` | The `bhmod` tool (`check`, `pack`, `new`) |
+| `crates/bhmod-cli` | The `bhmod` tool (`check`, `pack`, `new`, `index`) |
+| `crates/bhmod-index` | Checks, builds and signs the public mod index ([`docs/index.md`](docs/index.md)) |
 | `crates/bhmod-core` | The shared mod host (GPL, built from M1 on) |
 
 **Developing:** `cargo test --workspace`. CI also runs clippy, rustfmt, the WIT check, the examples and a 100 % line

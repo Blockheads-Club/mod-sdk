@@ -11,6 +11,7 @@ use bhmod_manifest::package::{check, CheckOptions, DirSource, Report, ZipSource}
 use bhmod_manifest::rules::is_mod_id;
 use clap::{Parser, Subcommand, ValueEnum};
 
+mod index;
 mod templates;
 
 #[derive(Parser)]
@@ -49,6 +50,8 @@ enum Command {
         #[arg(long, default_value = ".")]
         dir: PathBuf,
     },
+    /// Validate, build and sign the public mod index (Blockheads-Club/mods).
+    Index(index::IndexArgs),
 }
 
 /// Template languages.
@@ -73,6 +76,7 @@ pub fn run(args: impl IntoIterator<Item = OsString>, out: &mut dyn Write, err: &
         Command::Check { path, index } => cmd_check(&path, index, out),
         Command::Pack { dir, output } => cmd_pack(&dir, output, out),
         Command::New { id, lang, dir } => cmd_new(&id, lang, &dir, out),
+        Command::Index(args) => index::run(args.command, out),
     };
     match result {
         Ok(true) => 0,
