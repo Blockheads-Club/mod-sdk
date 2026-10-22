@@ -1,0 +1,19 @@
+[package]
+name = "bhmod-client"
+description = "Client side of the Blockheads Club 0xBC mod protocol (sans-IO): join flow, package cache, checks, installed mods"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+bhmod-proto.workspace = true
+bhmod-manifest.workspace = true
+sha2.workspace = true
+semver.workspace = true
+toml.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

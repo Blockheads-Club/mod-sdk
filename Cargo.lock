@@ -141,6 +141,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "bhmod-client"
+version = "0.1.0"
+dependencies = [
+ "bhmod-manifest",
+ "bhmod-proto",
+ "semver",
+ "sha2",
+ "tempfile",
+ "toml",
+]
+
+[[package]]
 name = "bhmod-core"
 version = "0.1.0"
 dependencies = [
