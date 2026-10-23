@@ -61,8 +61,11 @@ impl Texture {
     }
 }
 
+/// The `pixelFormat` of [`Gpu`]: the game's `RGBA4444` (what its own loader uses for every texture).
+pub const PIXEL_FORMAT: u32 = 1;
+
 /// A texture as the game's `CPTexture2D` wants it: edges rounded up to powers of two, colours premultiplied by
-/// alpha, plus the size of the picture inside.
+/// alpha, 4 bits per channel, plus the size of the picture inside.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Gpu {
     /// Padded width (a power of two).
@@ -73,24 +76,30 @@ pub struct Gpu {
     pub content_wide: u32,
     /// The picture's height.
     pub content_high: u32,
-    /// `wide * high * 4` bytes, RGBA, premultiplied; the picture is in the top-left corner, the padding is
-    /// transparent.
-    pub rgba: Vec<u8>,
+    /// `wide * high * 2` bytes: one little-endian `u16` per pixel, `r << 12 | g << 8 | b << 4 | a` (premultiplied
+    /// RGBA4444); the picture is in the top-left corner, the padding is transparent.
+    pub pixels: Vec<u8>,
 }
 
 impl Texture {
     /// The pixels in the form `CPTexture2D initWithData:pixelFormat:pixelsWide:pixelsHigh:contentSize:mipmap:`
-    /// takes them (pixel format 1, RGBA8888, as the game's own loader passes).
+    /// takes them with [`PIXEL_FORMAT`].
     pub fn for_gpu(&self) -> Gpu {
         let (wide, high) = (self.width.next_power_of_two(), self.height.next_power_of_two());
         let src = self.premultiplied();
-        let mut rgba = vec![0; wide as usize * high as usize * 4];
-        let row = self.width as usize * 4;
+        let mut pixels = vec![0; wide as usize * high as usize * 2];
         for y in 0..self.height as usize {
-            let to = y * wide as usize * 4;
-            rgba[to..to + row].copy_from_slice(&src.rgba[y * row..(y + 1) * row]);
+            for x in 0..self.width as usize {
+                let p = &src.rgba[(y * self.width as usize + x) * 4..][..4];
+                let v = u16::from(p[0] >> 4) << 12
+                    | u16::from(p[1] >> 4) << 8
+                    | u16::from(p[2] >> 4) << 4
+                    | u16::from(p[3] >> 4);
+                let to = (y * wide as usize + x) * 2;
+                pixels[to..to + 2].copy_from_slice(&v.to_le_bytes());
+            }
         }
-        Gpu { wide, high, content_wide: self.width, content_high: self.height, rgba }
+        Gpu { wide, high, content_wide: self.width, content_high: self.height, pixels }
     }
 }
 

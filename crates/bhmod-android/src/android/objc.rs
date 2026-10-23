@@ -24,6 +24,7 @@ struct Rt {
     sel_register: unsafe extern "C" fn(*const c_char) -> Sel,
     instance_method: unsafe extern "C" fn(Id, Sel) -> *mut c_void,
     set_imp: unsafe extern "C" fn(*mut c_void, Imp) -> Imp,
+    store_strong: unsafe extern "C" fn(*mut Id, Id),
     msg_send: *const c_void,
     app: usize,
 }
@@ -46,14 +47,15 @@ fn rt() -> Option<&'static Rt> {
             return None;
         }
         let f = |n| sym(sys, n);
-        let (a, b, c, d, e) = (
+        let (a, b, c, d, e, g) = (
             f("objc_getClass"),
             f("sel_registerName"),
             f("class_getInstanceMethod"),
             f("method_setImplementation"),
             f("objc_msgSend"),
+            f("objc_storeStrong"),
         );
-        if [a, b, c, d, e].iter().any(|p| p.is_null()) {
+        if [a, b, c, d, e, g].iter().any(|p| p.is_null()) {
             return None;
         }
         Some(Rt {
@@ -61,6 +63,7 @@ fn rt() -> Option<&'static Rt> {
             sel_register: std::mem::transmute::<*mut c_void, unsafe extern "C" fn(*const c_char) -> Sel>(b),
             instance_method: std::mem::transmute::<*mut c_void, unsafe extern "C" fn(Id, Sel) -> *mut c_void>(c),
             set_imp: std::mem::transmute::<*mut c_void, unsafe extern "C" fn(*mut c_void, Imp) -> Imp>(d),
+            store_strong: std::mem::transmute::<*mut c_void, unsafe extern "C" fn(*mut Id, Id)>(g),
             msg_send: e,
             app: app as usize,
         })
@@ -198,4 +201,12 @@ pub fn string(s: Id) -> String {
 /// An autoreleased `NSNumber` holding an int.
 pub fn nsnumber(v: i32) -> Id {
     unsafe { msg::<unsafe extern "C" fn(Id, Sel, i32) -> Id>()(class("NSNumber"), sel("numberWithInt:"), v) }
+}
+
+/// `objc_storeStrong(slot, obj)`: retains `obj`, releases what `*slot` held and stores it (an ARC assignment to an
+/// ivar). Does nothing without the runtime.
+pub fn store_strong(slot: *mut Id, obj: Id) {
+    if let Some(r) = rt() {
+        unsafe { (r.store_strong)(slot, obj) };
+    }
 }

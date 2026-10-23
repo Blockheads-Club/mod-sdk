@@ -21,4 +21,4 @@ pub mod texture;
 pub use client::{Content, Look, Part, CLOTHING};
 pub use cosmetics::{resolve, CosmeticDef, Resolved, Table, Wearing};
 pub use registry::{Kind, Registry};
-pub use texture::{Gpu, Texture};
+pub use texture::{Gpu, Texture, PIXEL_FORMAT};

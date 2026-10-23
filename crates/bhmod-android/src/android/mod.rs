@@ -12,6 +12,7 @@
 //!   then sent with `bhcModLoader` added to a copy of `myPlayerInfo`.
 //! - `-[BHNetClientMatch disconnect]`: the session ends.
 
+pub mod cosmetics;
 pub mod objc;
 
 use std::cell::RefCell;
@@ -267,6 +268,7 @@ extern "C" fn hook_draw_frame(this: Id, cmd: Sel) {
                 l.on_ui(e);
             }
             if changed {
+                cosmetics::reset();
                 if world.is_null() {
                     l.on_world(None);
                 } else {
@@ -420,6 +422,10 @@ pub extern "system" fn JNI_OnLoad(vm: JavaVM, _reserved: *mut c_void) -> jint {
         }
         let _ = VM.set(vm);
         let hooks = install_hooks();
+        let cosmetics = hooks && cosmetics::install();
+        if hooks && !cosmetics {
+            log(LogLevel::Warn, "a Blockhead method was not found; cosmetics are off");
+        }
         log(
             LogLevel::Info,
             &format!(

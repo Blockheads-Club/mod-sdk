@@ -55,9 +55,9 @@ fn loads_folders_and_zips() {
         assert_eq!(c.table().all().count(), 3);
         let t = c.texture(1, Part::Main).unwrap().unwrap();
         assert_eq!((t.wide, t.high, t.content_wide, t.content_high), (4, 2, 3, 2));
-        assert_eq!(&t.rgba[..4], [255, 0, 0, 255]);
+        assert_eq!(u16::from_le_bytes([t.pixels[0], t.pixels[1]]), 0xF00F);
         // Premultiplied.
-        assert_eq!(&c.texture(2, Part::Main).unwrap().unwrap().rgba[..4], [0, 128, 0, 128]);
+        assert_eq!(c.texture(2, Part::Main).unwrap().unwrap().pixels[..2], 0x0808u16.to_le_bytes());
         assert_eq!(c.texture(2, Part::Arm).unwrap().unwrap().wide, 1);
         // No arm texture declared, unknown id.
         assert!(c.texture(1, Part::Arm).unwrap().is_none());
