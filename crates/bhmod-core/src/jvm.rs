@@ -100,7 +100,12 @@ const LIBJVM: &str = if cfg!(windows) {
 #[cfg(not(target_os = "android"))]
 pub fn libjvm_in(home: &Path) -> Option<PathBuf> {
     let name = LIBJVM;
-    let mut dirs = vec![home.join("lib/server"), home.join("bin/server"), home.join("jre/bin/server")];
+    let mut dirs = vec![
+        home.join("lib/server"),
+        home.join("bin/server"),
+        home.join("jre/bin/server"),
+        home.join("jre/lib/server"),
+    ];
     for arch in ["amd64", "aarch64", "arm", "i386", "x86_64"] {
         dirs.push(home.join("lib").join(arch).join("server"));
         dirs.push(home.join("jre/lib").join(arch).join("server"));
@@ -192,10 +197,25 @@ fn start(cfg: &JvmConfig) -> Result<Vm, String> {
         b = b.option(a.as_str());
     }
     let args = b.build().map_err(jerr)?;
+    #[cfg(windows)]
+    prepend_dll_dirs(&lib);
     let jvm = JavaVM::with_libjvm(args, || Ok::<_, jni::errors::StartJvmError>(lib.clone()))
         .map_err(|e| format!("cannot start the JVM from {}: {e}", lib.display()))?;
     restore_numeric_locale();
     adopt(jvm, None)
+}
+
+/// `jvm.dll` loads its sibling DLLs (`java.dll`, the C runtime) from the JRE's `bin`, which Windows only finds through
+/// the `PATH` of the process: put `<home>\\bin` and `<home>\\bin\\server` first.
+#[cfg(windows)]
+fn prepend_dll_dirs(lib: &Path) {
+    let Some(server) = lib.parent() else { return };
+    let mut dirs = vec![server.to_path_buf()];
+    dirs.extend(server.parent().map(Path::to_path_buf));
+    dirs.extend(std::env::var_os("PATH").iter().flat_map(std::env::split_paths));
+    if let Ok(joined) = std::env::join_paths(dirs) {
+        std::env::set_var("PATH", joined);
+    }
 }
 
 /// The JVM calls `setlocale(LC_ALL, "")` while it starts, which would make the C library of the whole process parse
