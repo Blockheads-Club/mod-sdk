@@ -1,4 +1,4 @@
-# Test guest of bhmod-wasm built against the frozen blockheads:api 0.2.0 (wit/compat), so the runtime's 0.1
+# Test guest of bhmod-wasm built against the frozen blockheads:api 0.2.0 (wit/compat), so the runtime's 0.2
 # compatibility is exercised. Built by scripts/build-wasm.sh into tests/guest02/out/guest02.wasm.
 [package]
 name = "bhmod-wasm-test-guest02"

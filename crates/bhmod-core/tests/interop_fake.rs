@@ -388,6 +388,20 @@ fn trait_defaults_for_0_1_code() {
     assert_eq!(api.content_equipped("p"), Err(ApiError::Unsupported));
     assert_eq!(api.content_equip("p", "a:b"), Err(ApiError::Unsupported));
     assert_eq!(api.content_unequip("p", "hat"), Err(ApiError::Unsupported));
+    let widget = bhmod_core::ui::Widget {
+        slot: bhmod_core::ui::Slot::TopLeft,
+        kind: bhmod_core::ui::WidgetKind::Text,
+        icon: None,
+        title: None,
+        text: String::new(),
+    };
+    let dialog = bhmod_core::ui::Dialog { title: String::new(), text: String::new(), field: None, buttons: vec![] };
+    assert_eq!(api.ui_set_widget("w", widget), Err(ApiError::Unsupported));
+    assert!(!api.ui_remove_widget("w"));
+    assert_eq!(api.ui_toast("t"), Err(ApiError::Unsupported));
+    assert_eq!(api.ui_notice("t", bhmod_core::ui::NoticeLevel::Info), Err(ApiError::Unsupported));
+    assert_eq!(api.ui_show_dialog(dialog), Err(ApiError::Unsupported));
+    assert!(!api.ui_close_dialog(1));
     let mut p = Plain;
     assert!(
         matches!(p.call_service(&mut api, "s", "m", &[0x80]), Err(CallError::Failed(m)) if m.contains("does not implement"))
@@ -396,4 +410,5 @@ fn trait_defaults_for_0_1_code() {
     let nb = NullBridge;
     assert_eq!(nb.player_pos("p"), None);
     assert_eq!(nb.channel_send("m", "m:x", &ChannelTarget::Server, b""), Err(ApiError::Unsupported));
+    assert_eq!(nb.ui("m", &bhmod_core::ui::UiCommand::ClearMod), Err(ApiError::Unsupported));
 }

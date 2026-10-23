@@ -18,7 +18,7 @@ use bhmod_proto::{
 };
 
 use crate::cache::PackageCache;
-use crate::verify::{check_offered, Caps, Refusal};
+use crate::verify::{check_offered_with, Caps, Refusal};
 
 /// Acknowledge after this many chunks (the server keeps 8 in flight).
 pub const ACK_EVERY: u32 = 4;
@@ -42,6 +42,9 @@ pub struct Options {
     pub stall_timeout_ms: u64,
     /// Wait after `FILE_ERROR` BUSY before asking again.
     pub busy_retry_ms: u64,
+    /// Accept packages with native code (the host checked the public index and the player confirmed). Off by
+    /// default: the server can never push native code on its own.
+    pub allow_native: bool,
 }
 
 impl Options {
@@ -56,6 +59,7 @@ impl Options {
             list_timeout_ms: 10_000,
             stall_timeout_ms: 30_000,
             busy_retry_ms: 1_000,
+            allow_native: false,
         }
     }
 }
@@ -206,7 +210,7 @@ enum State {
     Vanilla,
     AwaitList { hello: ServerHello, deadline: u64 },
     Prompt { hello: ServerHello, list: ModList },
-    Download { hello: ServerHello, list: ModList, wanted: Vec<usize>, cur: Transfer },
+    Download { hello: ServerHello, list: ModList, selected: Vec<usize>, wanted: Vec<usize>, cur: Transfer },
     Loading { hello: ServerHello },
     Modded,
     Failed,
@@ -420,10 +424,27 @@ impl Session {
         vec![Output::Prompt { required: hello.client_required, mods, download }]
     }
 
-    /// The player's answer to [`Output::Prompt`].
+    /// The player's answer to [`Output::Prompt`]: `true` takes every listed client mod.
     pub fn decide(&mut self, accept: bool, now: u64) -> Vec<Output> {
+        self.choose(accept, None, now)
+    }
+
+    /// Like [`Session::decide`] when the player picked among the optional mods: with `accept`, the required client
+    /// mods plus the optional ones whose id is in `optional` are downloaded and run (`READY.loaded` tells the
+    /// server which). Declining optional mods never changes `modsHash`.
+    pub fn decide_subset(&mut self, accept: bool, optional: &[String], now: u64) -> Vec<Output> {
+        self.choose(accept, Some(optional), now)
+    }
+
+    fn choose(&mut self, accept: bool, optional: Option<&[String]>, now: u64) -> Vec<Output> {
         let State::Prompt { hello, list } = &self.state else { return Vec::new() };
         let (hello, list) = (hello.clone(), list.clone());
+        let selected: Vec<usize> = (0..list.mods.len())
+            .filter(|&i| {
+                let m = &list.mods[i];
+                client_side(m) && (m.client_required || optional.is_none_or(|o| o.contains(&m.id)))
+            })
+            .collect();
         if !accept {
             if hello.client_required {
                 return self.fail(Failure::Declined);
@@ -431,13 +452,17 @@ impl Session {
             // Only optional client mods: join as a modded client without them.
             return self.modded(hello.mods_hash);
         }
-        if let Some(m) = list.mods.iter().find(|m| client_side(m) && m.permissions.native) {
-            return self.fail(Failure::Refused { id: m.id.clone(), refusal: Refusal::Native });
+        if selected.is_empty() {
+            return self.modded(hello.mods_hash);
         }
-        let wanted: Vec<usize> = (0..list.mods.len())
-            .filter(|&i| client_side(&list.mods[i]) && self.cache.get(&list.mods[i].sha256).is_none())
-            .collect();
-        self.next_file(hello, list, wanted, 0, now)
+        if !self.opts.allow_native {
+            if let Some(m) = selected.iter().map(|&i| &list.mods[i]).find(|m| m.permissions.native) {
+                return self.fail(Failure::Refused { id: m.id.clone(), refusal: Refusal::Native });
+            }
+        }
+        let wanted: Vec<usize> =
+            selected.iter().copied().filter(|&i| self.cache.get(&list.mods[i].sha256).is_none()).collect();
+        self.next_file(hello, list, selected, wanted, 0, now)
     }
 
     /// Starts download `pos` of `wanted`, or checks everything when done.
@@ -445,17 +470,18 @@ impl Session {
         &mut self,
         hello: ServerHello,
         list: ModList,
+        selected: Vec<usize>,
         wanted: Vec<usize>,
         pos: usize,
         now: u64,
     ) -> Vec<Output> {
-        let Some(&index) = wanted.get(pos) else { return self.check_all(hello, list) };
+        let Some(&index) = wanted.get(pos) else { return self.check_all(hello, list, &selected) };
         let m = &list.mods[index];
         let have = self.cache.resume_offset(&m.sha256).min(m.size / CHUNK_SIZE as u64 * CHUNK_SIZE as u64);
         let req = Message::FileRequest(FileRequest { sha256: m.sha256, offset: have }).encode();
         let progress = Output::Progress { id: m.id.clone(), index: pos, count: wanted.len(), done: have, size: m.size };
         let cur = Transfer { index, have, since_ack: 0, deadline: now + self.opts.stall_timeout_ms, busy_until: None };
-        self.state = State::Download { hello, list, wanted, cur };
+        self.state = State::Download { hello, list, selected, wanted, cur };
         vec![progress, Output::Send(req)]
     }
 
@@ -492,8 +518,8 @@ impl Session {
             Err(e) => return self.fail(Failure::Disk(e.to_string())),
         }
         out.push(Output::Send(Message::FileRequest(FileRequest { sha256: sha, offset: size }).encode()));
-        if let State::Download { hello, list, wanted, .. } = std::mem::replace(&mut self.state, State::Idle) {
-            out.extend(self.next_file(hello, list, wanted, pos + 1, now));
+        if let State::Download { hello, list, selected, wanted, .. } = std::mem::replace(&mut self.state, State::Idle) {
+            out.extend(self.next_file(hello, list, selected, wanted, pos + 1, now));
         }
         out
     }
@@ -512,15 +538,15 @@ impl Session {
         self.fail(Failure::Download { id, code })
     }
 
-    fn check_all(&mut self, hello: ServerHello, list: ModList) -> Vec<Output> {
+    fn check_all(&mut self, hello: ServerHello, list: ModList, selected: &[usize]) -> Vec<Output> {
         let mut ok = Vec::new();
-        for m in list.mods.iter().filter(|m| client_side(m)) {
+        for m in selected.iter().map(|&i| &list.mods[i]) {
             let path = self.cache.get(&m.sha256).expect("downloaded or cached");
             let bytes = match std::fs::read(&path) {
                 Ok(b) => b,
                 Err(e) => return self.fail(Failure::Disk(e.to_string())),
             };
-            match check_offered(&bytes, &m.id, &m.version, &self.caps) {
+            match check_offered_with(&bytes, &m.id, &m.version, &self.caps, self.opts.allow_native) {
                 Ok(manifest) => ok.push(Accepted { info: m.clone(), path, manifest }),
                 Err(refusal) => {
                     if !m.client_required {

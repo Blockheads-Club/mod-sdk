@@ -77,6 +77,15 @@ pub enum UiEvent {
     Decide(bool),
     /// The player cancelled the modded join (prompt or download).
     Cancel,
+    /// A mod dialog was answered (`button` counts from 0, [`bhmod_core::ui::CLOSED`] when it went away).
+    Dialog {
+        /// The dialog id.
+        dialog: u32,
+        /// The pressed button.
+        button: u32,
+        /// The field's text.
+        text: Option<String>,
+    },
 }
 
 /// Builds the runtimes for a new host.
@@ -118,6 +127,10 @@ impl<P: Platform> GameBridge for Bridge<P> {
     }
     fn is_builtin_command(&self, _name: &str) -> bool {
         false
+    }
+    fn ui(&self, mod_id: &str, command: &bhmod_core::ui::UiCommand) -> Result<(), ApiError> {
+        self.p.ui(ui::mod_ui(mod_id, command));
+        Ok(())
     }
     fn channel_send(&self, _mod_id: &str, name: &str, target: &ChannelTarget, data: &[u8]) -> Result<(), ApiError> {
         match target {
@@ -263,6 +276,11 @@ impl<P: Platform + 'static> Loader<P> {
                 if let Some(s) = self.session.as_mut() {
                     let out = s.decide(accept, now);
                     self.handle(out);
+                }
+            }
+            UiEvent::Dialog { dialog, button, text } => {
+                if let Some(h) = self.host.as_mut() {
+                    h.ui_result(dialog, button, text);
                 }
             }
             UiEvent::Cancel => {

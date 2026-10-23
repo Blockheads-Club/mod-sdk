@@ -77,7 +77,7 @@ set worn with `/hat` and `/hair` (see [`docs/content.md`](docs/content.md)).
 ## 📚 What's inside
 | Path | What |
 | --- | --- |
-| [`wit/blockheads-api/`](wit/blockheads-api/) | The mod API (`blockheads:api@0.3.0`, WIT): events (incl. gameplay), commands, scheduler, storage, players, services, channels; the frozen 0.1 and 0.2 copies are in [`wit/compat/`](wit/compat/) |
+| [`wit/blockheads-api/`](wit/blockheads-api/) | The mod API (`blockheads:api@0.3.0`, WIT): events (incl. gameplay), commands, scheduler, storage, players, services, channels, client UI (HUD, toasts, dialogs), mod content (items, blocks, cosmetics); the frozen 0.1 and 0.2 copies are in [`wit/compat/`](wit/compat/) |
 | [`docs/luau-api.md`](docs/luau-api.md) | How the API looks from Lua |
 | [`docs/wasm.md`](docs/wasm.md) | WASM mods: Rust SDK, C/Zig/TinyGo, how the host runs them, the conformance suite |
 | [`sdk/rust/blockheads-mod`](sdk/rust/blockheads-mod) | The Rust SDK (bindings + closures for events, commands, tasks) |

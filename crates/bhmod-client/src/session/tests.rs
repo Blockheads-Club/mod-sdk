@@ -392,3 +392,80 @@ fn failure_texts() {
         assert!(!f.to_string().is_empty() && !f.code().is_empty());
     }
 }
+
+#[test]
+fn optional_subset_runs_only_the_picked_mods() {
+    let req = package("req", "1.0.0", "", "");
+    let opt_a = package("opta", "1.0.0", "", "");
+    let opt_b = package("optb", "1.0.0", "", "");
+    let a = info("opta", &opt_a, false, &["client"]);
+    let b = info("optb", &opt_b, false, &["client"]);
+    let q = info("req", &req, true, &["client"]);
+    let hash = hash_of(&[&a, &b, &q]);
+    let started = |pick: &[&str], accept: bool| {
+        let mut r = rig();
+        for p in [&req, &opt_a, &opt_b] {
+            r.cache.put(p).unwrap();
+        }
+        r.s.contact(0);
+        r.s.receive(&hello_pkt(hash, true, 3), 0);
+        r.s.receive(&list_pkt(vec![a.clone(), b.clone(), q.clone()]), 0);
+        let pick: Vec<String> = pick.iter().map(|s| s.to_string()).collect();
+        let out = r.s.decide_subset(accept, &pick, 0);
+        (r, out)
+    };
+    // the required mod and the picked optional one run; the other optional one is not even checked
+    let (mut r, out) = started(&["optb"], true);
+    let Some(Output::Load(ok)) = out.iter().find(|o| matches!(o, Output::Load(_))) else { panic!("{out:?}") };
+    assert_eq!(ok.iter().map(|m| m.info.id.as_str()).collect::<Vec<_>>(), ["optb", "req"]);
+    let out = r.s.loaded(Ok(vec![("optb".into(), "1.0.0".into()), ("req".into(), "1.0.0".into())]));
+    let Message::Ready(ready) = &sent(&out)[0] else { panic!() };
+    assert_eq!((ready.accepted_hash, ready.loaded.len()), (hash, 2));
+    // nothing optional picked: only the required one
+    let (_, out) = started(&[], true);
+    assert!(matches!(&out[..], [Output::Load(v)] if v.len() == 1));
+    // `decide` is the "everything" shorthand
+    let mut r = rig();
+    for p in [&req, &opt_a, &opt_b] {
+        r.cache.put(p).unwrap();
+    }
+    r.s.contact(0);
+    r.s.receive(&hello_pkt(hash, true, 3), 0);
+    r.s.receive(&list_pkt(vec![a.clone(), b.clone(), q.clone()]), 0);
+    assert!(matches!(&r.s.decide(true, 0)[..], [Output::Load(v)] if v.len() == 3));
+    // declining still fails when the server requires mods
+    let (_, out) = started(&["opta"], false);
+    assert!(matches!(&out[..], [Output::Failed(Failure::Declined)]));
+}
+
+#[test]
+fn optional_only_server_with_nothing_picked_joins_plain() {
+    let p = package("opta", "1.0.0", "", "");
+    let a = info("opta", &p, false, &["client"]);
+    let mut r = rig();
+    r.s.contact(0);
+    let hash = hash_of(&[&a]);
+    r.s.receive(&hello_pkt(hash, false, 1), 0);
+    r.s.receive(&list_pkt(vec![a]), 0);
+    r.s.join_requested();
+    // accepted, but no optional mod picked: no download, no READY
+    let out = r.s.decide_subset(true, &[], 0);
+    assert!(matches!(&out[..], [Output::Join(Some(h))] if *h == hash), "{out:?}");
+    assert!(r.s.is_modded());
+}
+
+#[test]
+fn native_mods_need_the_host_to_allow_them() {
+    let p = package("nat", "1.0.0", "native = true\n", "");
+    let mut m = info("nat", &p, true, &["client"]);
+    m.permissions.native = true;
+    let hash = hash_of(&[&m]);
+    let mut r = rig();
+    r.s.opts.allow_native = true;
+    r.cache.put(&p).unwrap();
+    r.s.contact(0);
+    r.s.receive(&hello_pkt(hash, true, 1), 0);
+    r.s.receive(&list_pkt(vec![m]), 0);
+    let out = r.s.decide(true, 0);
+    assert!(matches!(&out[..], [Output::Load(v)] if v.len() == 1 && v[0].manifest.permissions.native), "{out:?}");
+}

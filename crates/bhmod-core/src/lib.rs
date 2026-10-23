@@ -44,6 +44,7 @@ pub mod scheduler;
 pub mod services;
 pub mod storage;
 pub mod types;
+pub mod ui;
 pub mod value;
 
 pub use bridge::GameBridge;

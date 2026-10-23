@@ -21,10 +21,11 @@ world server-mod {
     export guest;
 }
 
-/// A client mod (`[entry] client`). Runs in the game client (PC port or Android loader). In 0.1 it gets the same
-/// core imports; player-join, player-quit and kicks are server-only, and `players` lists the players the client
-/// knows about. Client-specific interfaces (HUD, input, rendering, assets) arrive with milestone M6.
+/// A client mod (`[entry] client`). Runs in the game client (PC port or Android loader). It gets the core imports
+/// (player-join, player-quit and kicks are server-only, and `players` lists the players the client knows about) and,
+/// since 0.3, `ui` for the HUD, toasts and dialogs. Other client interfaces (input, rendering, assets) come later.
 world client-mod {
     include core;
+    import ui;
     export guest;
 }

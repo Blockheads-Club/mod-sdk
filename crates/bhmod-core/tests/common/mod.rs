@@ -9,6 +9,7 @@ use std::time::{Duration, Instant};
 
 use bhmod_core::budget::Clock;
 use bhmod_core::types::{ApiError, ChannelTarget, ContentKind, LogLevel, Pos, Role, Side};
+use bhmod_core::ui::UiCommand;
 use bhmod_core::GameBridge;
 
 /// A channel message the bridge was asked to send: (mod, channel, target, data).
@@ -27,6 +28,10 @@ pub struct FakeBridge {
     pub cosmetic_ids: RefCell<Vec<(String, u64)>>,
     /// Worn cosmetics: (player, slot, id).
     pub worn: RefCell<Vec<(String, String, u64)>>,
+    /// The UI commands the bridge drew: (mod id, command).
+    pub ui: RefCell<Vec<(String, UiCommand)>>,
+    /// True: the bridge has no UI (the server), `ui` answers `unsupported`.
+    pub no_ui: Cell<bool>,
 }
 
 impl FakeBridge {
@@ -38,6 +43,9 @@ impl FakeBridge {
     }
     pub fn leave(&self, id: &str) {
         self.players.borrow_mut().retain(|p| p.0 != id);
+    }
+    pub fn take_ui(&self) -> Vec<(String, UiCommand)> {
+        std::mem::take(&mut self.ui.borrow_mut())
     }
     pub fn take_chats(&self) -> Vec<(String, String)> {
         std::mem::take(&mut self.chats.borrow_mut())
@@ -121,6 +129,13 @@ impl GameBridge for FakeBridge {
     }
     fn cosmetics_of(&self, player: &str) -> Vec<(String, u64)> {
         self.worn.borrow().iter().filter(|w| w.0 == player).map(|w| (w.1.clone(), w.2)).collect()
+    }
+    fn ui(&self, mod_id: &str, command: &UiCommand) -> Result<(), ApiError> {
+        if self.no_ui.get() {
+            return Err(ApiError::Unsupported);
+        }
+        self.ui.borrow_mut().push((mod_id.into(), command.clone()));
+        Ok(())
     }
     fn channel_send(&self, mod_id: &str, name: &str, target: &ChannelTarget, data: &[u8]) -> Result<(), ApiError> {
         if *target == ChannelTarget::Server {

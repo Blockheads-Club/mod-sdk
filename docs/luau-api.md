@@ -1,4 +1,4 @@
-# Luau API mapping (API 0.2)
+# Luau API mapping (API 0.3)
 
 Lua mods use **Luau** (sandboxed, with a memory limit and an interrupt for time budgets). The API is the same
 `blockheads:api` WIT ([`../wit/blockheads-api/`](../wit/blockheads-api/)), mapped by these rules. Since milestone M1
@@ -119,6 +119,28 @@ silently; a server mod cannot target `"server"`); client hosts raise `unsupporte
 
 `bh.value.encode(v) -> string` and `bh.value.decode(s) -> any` (handy for `bh.storage`).
 
+## API 0.3 (client UI)
+
+`bh.ui` draws on the player's screen; only client hosts implement it (on the server every call raises
+`unsupported`). Mods send data, the loader draws it with its own kit (IG-HUD, IG-ModUI): same look for everybody,
+no free placement, never taking focus from the game. It needs no permission; players can hide a mod's widgets.
+
+| Function | |
+| --- | --- |
+| `bh.ui.set_widget(id, w)` | Shows or replaces a HUD widget. `id`: 1 to 32 characters of `a-z 0-9 _ . -`, at most 16 per mod. `w` is `{ slot = "top-left" or "top-right", kind = "text" or "counter" or "panel", icon = <kit icon name>, title = <panel title>, text = <at most 256 bytes> }`; `slot` defaults to `"top-left"`, `kind` to `"text"`. A `counter` shows `icon` and the number in `text`; a `panel` shows `title` and up to four lines of `text`. |
+| `bh.ui.remove_widget(id) -> boolean` | Removes a widget. |
+| `bh.ui.toast(text)` | A short message, bottom right, three visible at most, about four seconds each. |
+| `bh.ui.notice(text, level)` | A message in the top centre, one at a time. `level`: `"info"` (default), `"warning"`, `"success"`, `"error"`. |
+| `bh.ui.show_dialog(d) -> id` | Opens a dialog (one at a time per mod): `{ title, text, field = { placeholder, initial, max_length } (optional), buttons = { { label, kind = "primary" or "secondary" or "danger" }, ... } }` with one to three buttons. |
+| `bh.ui.close_dialog(id) -> boolean` | Closes it without an answer. |
+
+Text limits: toast and notice 200 bytes, dialog title 64, dialog text 512, button label 24, field 200 characters.
+
+The answer to a dialog is the custom event `<mod-id>:ui-action` (subscribe with `bh.events.on_custom`), delivered to
+the mod that opened the dialog and nobody else. Its payload is `{ dialog = <id>, button = <index from 0>, text =
+<field text or nil> }`; `button` is `4294967295` when the dialog went away without an answer (back, leaving the
+world). See `examples/hud-lua`.
+
 ### `bh.content` (0.3)
 
 Content declared in `[content]` and cosmetics, see [content.md](content.md). `kind` is `"block"`, `"item"` or
@@ -133,11 +155,11 @@ Content declared in `[content]` and cosmetics, see [content.md](content.md). `ki
 
 ## API versions
 
-The host implements `blockheads:api@0.3.0` (`bh.host.api_version()`) and also serves 0.1 and 0.2: in 0.x a new minor
+The host implements `blockheads:api@0.3.0` (`bh.host.api_version()`) and also serves 0.2 and 0.1: in 0.x a new minor
 only adds events, functions and fields, so a mod with `api = "^0.1"` keeps loading and running unchanged. A mod that
-uses anything from 0.2 declares `api = "^0.2"`, from 0.3 `api = "^0.3"`. WASM hosts bind the frozen WIT in
-[`../wit/compat/blockheads-api-0.1.0/`](../wit/compat/blockheads-api-0.1.0/) and
-[`../wit/compat/blockheads-api-0.2.0/`](../wit/compat/blockheads-api-0.2.0/) for components built against them.
+uses anything from 0.2 declares `api = "^0.2"`, one that uses `bh.ui` or `bh.content` declares `api = "^0.3"`. WASM hosts bind the
+frozen 0.2 and 0.1 WIT in [`../wit/compat/blockheads-api-0.2.0/`](../wit/compat/blockheads-api-0.2.0/) and
+[`../wit/compat/blockheads-api-0.1.0/`](../wit/compat/blockheads-api-0.1.0/) for components built against them.
 
 ## Host behaviour (M1)
 

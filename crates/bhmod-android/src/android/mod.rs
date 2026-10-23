@@ -13,6 +13,7 @@
 //! - `-[BHNetClientMatch disconnect]`: the session ends.
 
 pub mod cosmetics;
+pub mod menus;
 pub mod objc;
 
 use std::cell::RefCell;
@@ -121,7 +122,7 @@ fn data_dir() -> PathBuf {
 }
 
 /// Calls `Bridge.<name>(String)` on the Java side.
-fn java_post(json: &str) {
+pub(crate) fn java_post(json: &str) {
     let (Some(vm), Some(cls)) = (VM.get(), BRIDGE_CLASS.get()) else { return };
     let Ok(mut env) = vm.attach_current_thread_permanently() else { return };
     let Ok(s) = env.new_string(json) else { return };
@@ -233,9 +234,20 @@ fn send_held_join(key: Option<Hash>) {
     }
 }
 
-/// Lets the game reject the connection as for a vanilla 0x26 (reason 3), so it leaves its join screen.
+/// The game's `GameView`, seen by the drawFrame hook (the game's own "cancel" for a pending join lives there).
+static GAME_VIEW: Mutex<usize> = Mutex::new(0);
+
+/// Leaves the game's join screen the way its own Cancel button does (`-[GameView
+/// cancelSelectedWhileAttemptingToConnect]`: exit the pending world, back to the menu selection), so the player sees
+/// only the loader's message and not a vanilla "rejected" alert. Falls back to feeding the game a vanilla 0x26
+/// (reason 3) when the view is not known.
 fn abort() {
     HELD.with(|h| h.borrow_mut().take());
+    let gv = *GAME_VIEW.lock().unwrap_or_else(|e| e.into_inner());
+    if gv != 0 {
+        objc::send0(gv as Id, "cancelSelectedWhileAttemptingToConnect");
+        return;
+    }
     let Some(c) = conn() else { return };
     let orig = ORIG.get().expect("hooks").receive;
     unsafe {
@@ -244,7 +256,7 @@ fn abort() {
     }
 }
 
-fn guard(what: &str, f: impl FnOnce()) {
+pub(crate) fn guard(what: &str, f: impl FnOnce()) {
     if catch_unwind(AssertUnwindSafe(f)).is_err() {
         log(LogLevel::Error, &format!("panic in {what}; the loader keeps going"));
     }
@@ -261,6 +273,7 @@ extern "C" fn hook_draw_frame(this: Id, cmd: Sel) {
         }
         let events: Vec<UiEvent> = EVENTS.lock().map(|mut e| e.drain(..).collect()).unwrap_or_default();
         let gv = objc::ivar(this, "EvolutionViewController", "gameView");
+        *GAME_VIEW.lock().unwrap_or_else(|e| e.into_inner()) = gv as usize;
         let world = objc::ivar(gv, "GameView", "world");
         let changed = WORLD.with(|w| std::mem::replace(&mut *w.borrow_mut(), world as usize) != world as usize);
         with_loader(|l| {
@@ -386,6 +399,7 @@ fn install_hooks() -> bool {
     let send_info = objc::swizzle("BHNetClientMatch", "sendPlayerInformationToServer:password:", hook_send_info as Imp);
     let disconnect = objc::swizzle("BHNetClientMatch", "disconnect", hook_disconnect as Imp);
     let ok = [draw_frame, receive, send_info, disconnect].iter().all(|p| !p.is_null());
+    menus::install();
     let _ = ORIG.set(Originals { draw_frame, receive, send_info, disconnect });
     if !ok {
         log(LogLevel::Error, "a game method was not found; this game version is not supported, mods may not work");
@@ -467,11 +481,49 @@ pub extern "system" fn Java_com_blockheadsclub_modloader_Native_decide(_env: JNI
     }
 }
 
+/// `Native.dialogAnswer(dialog, button, text)`: a mod dialog was answered (`text` null without a field).
+#[no_mangle]
+pub extern "system" fn Java_com_blockheadsclub_modloader_Native_dialogAnswer(
+    mut env: JNIEnv,
+    _c: JClass,
+    dialog: jint,
+    button: jint,
+    text: JString,
+) {
+    let text = jstr(&mut env, &text);
+    if let Ok(mut e) = EVENTS.lock() {
+        e.push(UiEvent::Dialog { dialog: dialog as u32, button: button as u32, text });
+    }
+}
+
 /// `Native.cancel()`: the player cancelled the modded join.
 #[no_mangle]
 pub extern "system" fn Java_com_blockheadsclub_modloader_Native_cancel(_env: JNIEnv, _c: JClass) {
     if let Ok(mut e) = EVENTS.lock() {
         e.push(UiEvent::Cancel);
+    }
+}
+
+/// `Native.font(id)`: the bytes of an embedded font ([`crate::fonts`]), empty for an unknown id.
+#[no_mangle]
+pub extern "system" fn Java_com_blockheadsclub_modloader_Native_font(
+    env: JNIEnv,
+    _c: JClass,
+    id: jint,
+) -> jni::sys::jbyteArray {
+    let bytes = crate::fonts::get(id).unwrap_or(&[]);
+    env.byte_array_from_slice(bytes).map(|a| a.into_raw()).unwrap_or(std::ptr::null_mut())
+}
+
+/// `Native.setModsLabel(text)`: the label of the Mods buttons in the game's menus.
+#[no_mangle]
+pub extern "system" fn Java_com_blockheadsclub_modloader_Native_setModsLabel(
+    mut env: JNIEnv,
+    _c: JClass,
+    text: JString,
+) {
+    if let Some(s) = jstr(&mut env, &text) {
+        menus::set_label(&s);
     }
 }
 

@@ -1,11 +1,12 @@
-//! A `blockheads:api@0.2.0` component that calls every 0.1 import once in `on-enable` and logs what it gets.
-//! It depends on the 0.2 test guest loaded as `tour` (service `tour`, channel `tour:c`).
+//! A `blockheads:api@0.2.0` component (the frozen WIT, before `ui`) that calls every 0.2 import once in `on-enable`
+//! and logs what it gets.
+//! It depends on the 0.3 test guest loaded as `tour` (service `tour`, channel `tour:c`).
 
 wit_bindgen::generate!({ path: "../../../../wit/compat/blockheads-api-0.2.0", world: "server-mod" });
 
 use blockheads::api::channels::{self, Source, Target};
 use blockheads::api::commands::{self, CommandOutcome, CommandSpec};
-use blockheads::api::events::{self, CommandSender, Event, EventKind, Mutation, Outcome};
+use blockheads::api::events::{self, CommandSender, Event, EventKind, Mutation, Outcome, RejectReason};
 use blockheads::api::log::{self, Level};
 use blockheads::api::players::{self, Role};
 use blockheads::api::types::Priority;
@@ -28,10 +29,11 @@ impl Guest for Old {
             log::log(l, "lvl");
         }
         let p = players::get("p1").ok_or("p1 missing")?;
-        show("p", (p.id(), p.alias(), p.is_online(), p.role(), p.send_chat("hi from 0.1"), p.kick("old kick")));
+        show("p", (p.id(), p.alias(), p.is_online(), p.role(), p.send_chat("hi from 0.2"), p.kick("old kick")));
+        show("pos", (p.pos(), p.value_handle() < 1000, players::from_value_handle(p.value_handle()).map(|q| q.id())));
         show("find", players::find_by_alias("alice").map(|p| p.id()));
         show("online", players::online().len());
-        show("broadcast", players::broadcast("0.1 says hi"));
+        show("broadcast", players::broadcast("0.2 says hi"));
         for kind in [
             EventKind::PlayerJoin,
             EventKind::PlayerQuit,
@@ -40,6 +42,14 @@ impl Guest for Old {
             EventKind::Tick,
             EventKind::WorldLoaded,
             EventKind::WorldSave,
+            EventKind::PlayerPreLogin,
+            EventKind::BlockPlace,
+            EventKind::BlockBreak,
+            EventKind::BlockChanged,
+            EventKind::ObjectPlace,
+            EventKind::Damage,
+            EventKind::Death,
+            EventKind::PlayerMove,
         ] {
             events::subscribe(kind, Priority::Low, false).map_err(|e| format!("{e:?}"))?;
         }
@@ -69,7 +79,7 @@ impl Guest for Old {
         show("provide", services::provide("old", "1.0.0"));
         show("call", services::call("tour", "^1", "echo", &[0x81, 0x01]));
         let c = channels::open("tour:c").map_err(|e| format!("{e:?}"))?;
-        show("send", channels::send(c, &Target::Local, b"from 0.1"));
+        show("send", channels::send(c, &Target::Local, b"from 0.2"));
         show("close", channels::close(9999));
         Ok(())
     }
@@ -83,11 +93,20 @@ impl Guest for Old {
         match ev {
             Event::Chat(c) => {
                 show("old chat", (c.player.id(), &c.text));
-                out.mutation = Some(Mutation::ChatText(format!("{} (0.1)", c.text)));
+                out.mutation = Some(Mutation::ChatText(format!("{} (0.2)", c.text)));
             }
             Event::Command(c) => {
                 show("old command", &c.name);
                 out.cancelled = c.name == "swallow";
+            }
+            Event::PlayerPreLogin(e) => {
+                show("old pre-login", (&e.player_id, &e.alias));
+                out.cancelled = true;
+                out.mutation = Some(Mutation::RejectReason(RejectReason::Banned));
+            }
+            Event::Damage(d) => {
+                show("old damage", (d.blockhead, d.amount));
+                out.mutation = Some(Mutation::DamageAmount(d.amount * 2.0));
             }
             Event::Custom(c) => {
                 show("old custom", (&c.name, &c.source));

@@ -38,14 +38,15 @@
 use core::cell::RefCell;
 use std::collections::BTreeMap;
 
-/// The bindings generated from `wit/blockheads-api` (world `server-mod`).
+/// The bindings generated from `wit/blockheads-api` (world `client-mod`, which has every import of `server-mod` plus
+/// `ui`; a host without UI answers the `ui` calls with `unsupported`).
 #[allow(missing_docs, clippy::all)]
 pub mod bindings {
     wit_bindgen::generate!({
         path: "../../../wit/blockheads-api",
-        world: "server-mod",
+        world: "client-mod",
         pub_export_macro: true,
-        export_macro_name: "__export_server_mod",
+        export_macro_name: "__export_mod",
         default_bindings_module: "blockheads_mod::bindings",
     });
 }
@@ -60,7 +61,7 @@ pub use wit::types::{ApiError, Pos, Priority, Side};
 pub mod prelude {
     pub use crate::commands::{self, Command, Reply, Sender};
     pub use crate::events::{self, EventCtx, EventKind};
-    pub use crate::{channels, content, host, log, players, scheduler, services, storage};
+    pub use crate::{channels, content, host, log, players, scheduler, services, storage, ui};
     pub use crate::{ApiError, Mod, Player, Priority, Role, Side};
 }
 
@@ -90,7 +91,7 @@ macro_rules! export_mod {
     ($t:ty) => {
         const _: () = {
             type BlockheadsModExport = $crate::Exported<$t>;
-    $crate::bindings::__export_server_mod!(BlockheadsModExport with_types_in $crate::bindings);
+            $crate::bindings::__export_mod!(BlockheadsModExport with_types_in $crate::bindings);
         };
     };
 }
@@ -247,6 +248,128 @@ pub mod players {
 /// Content ids and cosmetics (API 0.3).
 pub mod content {
     pub use crate::wit::content::{cosmetics, equip, equipped, id_of, key_of, unequip, CosmeticInfo, Kind};
+}
+
+/// HUD widgets, toasts, notices and dialogs on the client (API 0.3). A host without UI (the server) answers every call
+/// with `ApiError::Unsupported`.
+pub mod ui {
+    use crate::{events, ApiError};
+
+    pub use crate::wit::ui::{
+        close_dialog, notice, remove_widget, set_widget, show_dialog, toast, ButtonKind, Dialog, DialogButton, Field,
+        NoticeLevel, Slot, Widget, WidgetKind,
+    };
+
+    /// The `button` of an answer when the dialog went away without one (back, leaving the world).
+    pub const CLOSED: u32 = u32::MAX;
+
+    /// A one-line text widget.
+    pub fn text(id: &str, slot: Slot, text: &str) -> Result<(), ApiError> {
+        set_widget(id, &Widget { slot, kind: WidgetKind::Text, icon: None, title: None, text: text.to_string() })
+    }
+
+    /// An icon and a number.
+    pub fn counter(id: &str, slot: Slot, icon: &str, value: &str) -> Result<(), ApiError> {
+        set_widget(
+            id,
+            &Widget {
+                slot,
+                kind: WidgetKind::Counter,
+                icon: Some(icon.to_string()),
+                title: None,
+                text: value.to_string(),
+            },
+        )
+    }
+
+    /// A small panel with a title and up to four lines.
+    pub fn panel(id: &str, slot: Slot, title: &str, lines: &str) -> Result<(), ApiError> {
+        set_widget(
+            id,
+            &Widget { slot, kind: WidgetKind::Panel, icon: None, title: Some(title.to_string()), text: lines.to_string() },
+        )
+    }
+
+    /// An answer to a dialog: its id, the pressed button (from 0, [`CLOSED`] without an answer) and the field's text.
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    pub struct Answer {
+        /// The dialog id [`show_dialog`] returned.
+        pub dialog: u32,
+        /// The pressed button.
+        pub button: u32,
+        /// The text of the dialog's field.
+        pub text: Option<String>,
+    }
+
+    /// Subscribes to the answers of this mod's dialogs (the custom event `<mod-id>:ui-action`).
+    pub fn on_answer(mut f: impl FnMut(Answer) + 'static) -> Result<u32, ApiError> {
+        let name = format!("{}:ui-action", crate::host::mod_id());
+        events::on_custom(&name, events::On::default(), move |ctx| {
+            if let events::Event::Custom(c) = ctx.event() {
+                if let Some(a) = parse_answer(&c.payload) {
+                    f(a);
+                }
+            }
+        })
+    }
+
+    /// Reads the canonical CBOR map `{"text", "button", "dialog"}` of a `ui-action` payload.
+    fn parse_answer(b: &[u8]) -> Option<Answer> {
+        fn head(b: &[u8], i: &mut usize) -> Option<(u8, u64)> {
+            let first = *b.get(*i)?;
+            *i += 1;
+            let n = match first & 31 {
+                n @ 0..=23 => u64::from(n),
+                24 => {
+                    *i += 1;
+                    u64::from(*b.get(*i - 1)?)
+                }
+                25 => {
+                    *i += 2;
+                    u64::from(u16::from_be_bytes(b.get(*i - 2..*i)?.try_into().ok()?))
+                }
+                26 => {
+                    *i += 4;
+                    u64::from(u32::from_be_bytes(b.get(*i - 4..*i)?.try_into().ok()?))
+                }
+                _ => return None,
+            };
+            Some((first >> 5, n))
+        }
+        fn text(b: &[u8], i: &mut usize) -> Option<String> {
+            let (major, n) = head(b, i)?;
+            let end = *i + usize::try_from(n).ok()?;
+            let s = (major == 3).then(|| b.get(*i..end)).flatten()?;
+            *i = end;
+            String::from_utf8(s.to_vec()).ok()
+        }
+        let mut i = 0;
+        let (major, entries) = head(b, &mut i)?;
+        if major != 5 {
+            return None;
+        }
+        let (mut dialog, mut button, mut answer) = (None, None, None);
+        for _ in 0..entries {
+            let key = text(b, &mut i)?;
+            if b.get(i) == Some(&0xf6) {
+                i += 1;
+                continue;
+            }
+            match key.as_str() {
+                "text" => answer = Some(text(b, &mut i)?),
+                k => {
+                    let (m, n) = head(b, &mut i)?;
+                    let n = u32::try_from(n).ok().filter(|_| m == 0)?;
+                    match k {
+                        "dialog" => dialog = Some(n),
+                        "button" => button = Some(n),
+                        _ => {}
+                    }
+                }
+            }
+        }
+        Some(Answer { dialog: dialog?, button: button?, text: answer })
+    }
 }
 
 /// The per-mod, per-world key-value store.

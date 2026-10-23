@@ -1,0 +1,57 @@
+// Blockheads Club mod loader: the kit's pixel icons (IG-Kit, 12 x 12 grid, one colour). Copyright (C) 2026 Blockheads Club contributors. GPL-3.0-or-later.
+package com.blockheadsclub.modloader;
+
+import android.graphics.Canvas;
+import android.graphics.ColorFilter;
+import android.graphics.Paint;
+import android.graphics.PixelFormat;
+import android.graphics.drawable.Drawable;
+
+import java.util.HashMap;
+import java.util.Map;
+
+/** The icons mods can name in HUD widgets. An unknown name has no icon. */
+final class Icons {
+    private static final Map<String, String[]> M = new HashMap<>();
+
+    static {
+        M.put("coin", new String[] {"....####....", "..########..", ".####..####.", ".###....###.", "####.##.####", "####.##.####", "####.##.####", "####.##.####", ".###....###.", ".####..####.", "..########..", "....####...."});
+        M.put("heart", new String[] {"............", ".####..####.", "############", "############", "############", "############", ".##########.", "..########..", "...######...", "....####....", ".....##.....", "............"});
+        M.put("info", new String[] {"....####....", "..########..", ".####..####.", "########.###", "####....####", "######.#####", "######.#####", "######.#####", ".####.#####.", "..########..", "....####....", "............"});
+        M.put("warn", new String[] {".....##.....", ".....##.....", "....####....", "....####....", "...##..##...", "...##..##...", "..###..###..", "..########..", ".####..####.", ".##########.", "############", "............"});
+        M.put("check", new String[] {"............", "..........##", ".........###", "........###.", "##.....###..", "###...###...", ".###.###....", "..#####.....", "...###......", "....#.......", "............", "............"});
+        M.put("cross", new String[] {"............", ".##......##.", "###......###", ".###....###.", "..###..###..", "...######...", "...######...", "..###..###..", ".###....###.", "###......###", ".##......##.", "............"});
+        M.put("bell", new String[] {".....##.....", "....####....", "...######...", "...######...", "..########..", "..########..", ".##########.", ".##########.", "############", "............", ".....##.....", "............"});
+        M.put("clock", new String[] {"....####....", "..########..", ".####..####.", ".####..####.", "####....####", "####..#.####", "####..#.####", ".####.#####.", ".####..####.", "..########..", "....####....", "............"});
+    }
+
+    private Icons() {}
+
+    static boolean has(String name) {
+        return name != null && M.containsKey(name);
+    }
+
+    /** A square drawable of `px` pixels. */
+    static Drawable drawable(String name, final int color, final int px) {
+        final String[] rows = M.get(name);
+        return new Drawable() {
+            private final Paint p = new Paint();
+
+            @Override public void draw(Canvas c) {
+                if (rows == null) return;
+                p.setColor(color);
+                float s = px / 12f;
+                for (int y = 0; y < 12; y++) {
+                    for (int x = 0; x < 12; x++) {
+                        if (rows[y].charAt(x) == '#') c.drawRect(x * s, y * s, (x + 1) * s, (y + 1) * s, p);
+                    }
+                }
+            }
+            @Override public int getIntrinsicWidth() { return px; }
+            @Override public int getIntrinsicHeight() { return px; }
+            @Override public void setAlpha(int a) {}
+            @Override public void setColorFilter(ColorFilter cf) {}
+            @Override public int getOpacity() { return PixelFormat.TRANSLUCENT; }
+        };
+    }
+}

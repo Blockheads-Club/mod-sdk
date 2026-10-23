@@ -91,8 +91,13 @@ fn api_of(src: &mut dyn Source) -> String {
     v.get("api").and_then(|a| a.as_str()).unwrap_or("?").to_string()
 }
 
-/// Checks a client package.
+/// Checks a client package. Native code is refused.
 pub fn check_package(bytes: &[u8], caps: &Caps) -> Result<Manifest, Refusal> {
+    check_package_with(bytes, caps, false)
+}
+
+/// Like [`check_package`]; `allow_native` lets a package with native code through (the host did the extra checks).
+pub fn check_package_with(bytes: &[u8], caps: &Caps, allow_native: bool) -> Result<Manifest, Refusal> {
     let mut src =
         ZipSource::open(Cursor::new(bytes), bytes.len() as u64).map_err(|e| Refusal::Unreadable(e.to_string()))?;
     let report = check(&mut src, CheckOptions::default());
@@ -106,7 +111,7 @@ pub fn check_package(bytes: &[u8], caps: &Caps) -> Result<Manifest, Refusal> {
             return Err(Refusal::Invalid(report.errors.iter().map(|i| i.to_string()).collect()));
         }
     };
-    if m.permissions.native {
+    if m.permissions.native && !allow_native {
         return Err(Refusal::Native);
     }
     let entry = m.entry.client.as_ref().ok_or(Refusal::NoClientHalf)?;
@@ -123,7 +128,18 @@ pub fn check_package(bytes: &[u8], caps: &Caps) -> Result<Manifest, Refusal> {
 
 /// Checks a package the server listed as `id@version`.
 pub fn check_offered(bytes: &[u8], id: &str, version: &str, caps: &Caps) -> Result<Manifest, Refusal> {
-    let m = check_package(bytes, caps)?;
+    check_offered_with(bytes, id, version, caps, false)
+}
+
+/// Like [`check_offered`] with the `allow_native` switch of [`check_package_with`].
+pub fn check_offered_with(
+    bytes: &[u8],
+    id: &str,
+    version: &str,
+    caps: &Caps,
+    allow_native: bool,
+) -> Result<Manifest, Refusal> {
+    let m = check_package_with(bytes, caps, allow_native)?;
     if m.id != id || m.version != version {
         return Err(Refusal::WrongMod {
             expected: format!("{id}@{version}"),
@@ -178,6 +194,9 @@ mod tests {
             assert!(!e.to_string().is_empty());
             assert!(!e.code().is_empty());
         }
+        let nat = package("demo", "1.0.0", "native = true\n", "");
+        assert!(check_package_with(&nat, &c, true).unwrap().permissions.native);
+        assert!(check_offered_with(&nat, "demo", "1.0.0", &c, true).is_ok());
         assert_eq!(runtime_name(Runtime::Jvm), "jvm");
         assert_eq!(runtime_name(Runtime::Lua), "lua");
     }

@@ -15,6 +15,7 @@ use crate::types::{
     Event, EventKind, LogLevel, Outcome, Pos, Priority, ServiceError,
 };
 use crate::types::{Role, Side};
+use crate::ui::{Dialog, NoticeLevel, Widget};
 
 /// A subscription id (`events.subscription`).
 pub type SubscriptionId = u32;
@@ -117,7 +118,7 @@ pub trait Instance {
     }
 }
 
-/// The WIT imports, bound to the calling mod. The API 0.2 additions have defaults that report
+/// The WIT imports, bound to the calling mod. The API 0.2 and 0.3 additions have defaults that report
 /// [`ApiError::Unsupported`], so a host API written for 0.1 keeps compiling; [`crate::ModHost`] implements them all.
 pub trait HostApi {
     /// When the current call must end (hard budget).
@@ -281,6 +282,37 @@ pub trait HostApi {
     /// `channels.close`.
     fn channel_close(&mut self, channel: ChannelId) -> bool {
         let _ = channel;
+        false
+    }
+
+    /// `ui.set-widget` (API 0.3).
+    fn ui_set_widget(&mut self, id: &str, widget: Widget) -> Result<(), ApiError> {
+        let _ = (id, widget);
+        Err(ApiError::Unsupported)
+    }
+    /// `ui.remove-widget` (API 0.3).
+    fn ui_remove_widget(&mut self, id: &str) -> bool {
+        let _ = id;
+        false
+    }
+    /// `ui.toast` (API 0.3).
+    fn ui_toast(&mut self, text: &str) -> Result<(), ApiError> {
+        let _ = text;
+        Err(ApiError::Unsupported)
+    }
+    /// `ui.notice` (API 0.3).
+    fn ui_notice(&mut self, text: &str, level: NoticeLevel) -> Result<(), ApiError> {
+        let _ = (text, level);
+        Err(ApiError::Unsupported)
+    }
+    /// `ui.show-dialog` (API 0.3): the dialog id.
+    fn ui_show_dialog(&mut self, dialog: Dialog) -> Result<u32, ApiError> {
+        let _ = dialog;
+        Err(ApiError::Unsupported)
+    }
+    /// `ui.close-dialog` (API 0.3).
+    fn ui_close_dialog(&mut self, id: u32) -> bool {
+        let _ = id;
         false
     }
 }

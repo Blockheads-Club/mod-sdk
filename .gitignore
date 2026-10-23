@@ -4,4 +4,5 @@ target/
 *.bhmod
 /lcov.info
 examples/*/server/mod.wasm
+examples/*/client/mod.wasm
 crates/bhmod-wasm/tests/guest*/out/
