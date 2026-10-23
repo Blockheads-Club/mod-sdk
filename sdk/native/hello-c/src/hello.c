@@ -1,11 +1,11 @@
 /* SPDX-License-Identifier: MIT OR Apache-2.0
  *
  * native-hello: an example native client mod. It installs one hook of each kind through libbhmod and logs a summary
- * every ten seconds:
+ * every 600 world updates:
  *
  *   - an Objective-C swizzle on -[World update:accurateDT:pinchScale:dragInProgress:] (counts world updates),
- *   - an inline hook on the exported game function imageTypeForItemType(ItemType, bool) (counts lookups and calls
- *     the original through the trampoline),
+ *   - an inline hook on the exported game function drawShaderQuad(x, y, w, h, u, v, du, dv) (counts quads and calls
+ *     the original through the trampoline; the four floats on the stack are forwarded as words),
  *   - an import hook on the game's __wrap_glBindTexture (counts texture binds).
  *
  * Build: scripts/build-native-example.sh (needs the Android NDK). No C runtime is used: the library is built with
@@ -15,9 +15,10 @@
 
 static const bhmod_api_t *api;
 static void (*orig_update)(void *self, void *cmd, int dt, int accurate_dt, int scale, int drag);
-static int (*orig_image_type)(unsigned type, int flag);
+static void (*orig_quad)(unsigned x, unsigned y, unsigned w, unsigned h, unsigned u, unsigned v, unsigned du,
+                         unsigned dv);
 static void (*orig_bind)(unsigned target, unsigned name);
-static unsigned updates, lookups, binds;
+static unsigned updates, quads, binds;
 
 static char *put_uint(char *p, unsigned v) {
   char tmp[11];
@@ -39,8 +40,8 @@ static void summary(void) {
   char line[96];
   char *p = put_str(line, "world updates ");
   p = put_uint(p, updates);
-  p = put_str(p, ", item lookups ");
-  p = put_uint(p, lookups);
+  p = put_str(p, ", quads ");
+  p = put_uint(p, quads);
   p = put_str(p, ", texture binds ");
   p = put_uint(p, binds);
   *p = 0;
@@ -54,9 +55,10 @@ static void my_update(void *self, void *cmd, int dt, int accurate_dt, int scale,
   orig_update(self, cmd, dt, accurate_dt, scale, drag);
 }
 
-static int my_image_type(unsigned type, int flag) {
-  if (++lookups == 1) api->log(api, BHMOD_LOG_INFO, "first item lookup through the hook");
-  return orig_image_type(type, flag);
+static void my_quad(unsigned x, unsigned y, unsigned w, unsigned h, unsigned u, unsigned v, unsigned du,
+                    unsigned dv) {
+  if (++quads == 1) api->log(api, BHMOD_LOG_INFO, "first quad through the hook");
+  orig_quad(x, y, w, h, u, v, du, dv);
 }
 
 static void my_bind(unsigned target, unsigned name) {
@@ -79,9 +81,8 @@ int bhmod_native_init(const bhmod_api_t *a) {
   api->log(api, BHMOD_LOG_INFO, "hello from native code");
   report("world update", api->hook_objc(api, "World", "update:accurateDT:pinchScale:dragInProgress:", 0,
                                          (void *)my_update, (void **)&orig_update));
-  report("imageTypeForItemType",
-         api->hook_symbol(api, "libApplication.so", "_Z20imageTypeForItemType8ItemTypea", (void *)my_image_type,
-                          (void **)&orig_image_type));
+  report("drawShaderQuad", api->hook_symbol(api, "libApplication.so", "drawShaderQuad", (void *)my_quad,
+                                             (void **)&orig_quad));
   report("glBindTexture", api->hook_import(api, "libApplication.so", "__wrap_glBindTexture", (void *)my_bind,
                                            (void **)&orig_bind));
   return 0;

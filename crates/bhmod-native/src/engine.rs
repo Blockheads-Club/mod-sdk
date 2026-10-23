@@ -27,9 +27,12 @@ pub struct ModuleInfo {
 pub trait Host {
     /// Reads `len` bytes of game memory.
     fn read(&self, addr: u32, len: usize) -> Option<Vec<u8>>;
-    /// Overwrites game memory, code or data: the host makes the page writable, writes, restores the protection and
-    /// flushes instruction caches (or invalidates its JIT).
+    /// Overwrites data in game memory (a GOT slot): the host makes the page writable for the moment.
     fn write(&mut self, addr: u32, bytes: &[u8]) -> Result<(), String>;
+    /// Overwrites code (an entry patch, a trampoline): like [`Host::write`], and the host flushes instruction caches
+    /// (or invalidates its JIT). Kept apart from data writes because a host may have to leave code pages writable
+    /// and executable (a binary translator that tracks code pages).
+    fn write_code(&mut self, addr: u32, bytes: &[u8]) -> Result<(), String>;
     /// `len` bytes of executable, writable memory aligned to 4 (trampolines).
     fn alloc_exec(&mut self, len: usize) -> Result<u32, String>;
     /// The loaded modules.
@@ -209,10 +212,10 @@ impl Engine {
             Err(e @ RelocError::Unaligned(_)) => return self.fail(Code::Thumb, e.to_string()),
             Err(e) => return self.fail(Code::Reloc, e.to_string()),
         };
-        if let Err(e) = host.write(tramp, &bytes) {
+        if let Err(e) = host.write_code(tramp, &bytes) {
             return self.fail(Code::Memory, format!("cannot write the trampoline: {e}"));
         }
-        if let Err(e) = host.write(addr, &arm::entry_patch(replacement)) {
+        if let Err(e) = host.write_code(addr, &arm::entry_patch(replacement)) {
             return self.fail(Code::Memory, format!("cannot patch {addr:#x}: {e}"));
         }
         Ok(self.add(owner, Kind::Inline { addr, saved: code }, tramp))
@@ -269,7 +272,7 @@ impl Engine {
             return self.fail(Code::Handle, format!("unknown hook handle {handle}"));
         };
         let failed = match rec.kind {
-            Kind::Inline { addr, saved } => host.write(addr, &saved).is_err(),
+            Kind::Inline { addr, saved } => host.write_code(addr, &saved).is_err(),
             Kind::Import { slots } => {
                 slots.iter().fold(false, |bad, &(s, o)| host.write(s, &o.to_le_bytes()).is_err() || bad)
             }

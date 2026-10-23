@@ -27,7 +27,7 @@ extern "C" {
     fn pipe(fds: *mut c_int) -> c_int;
     fn read(fd: c_int, buf: *mut c_void, n: usize) -> isize;
     fn write(fd: c_int, buf: *const c_void, n: usize) -> isize;
-    fn syscall(n: i32, ...) -> i32;
+    fn cacheflush(start: usize, end: usize, flags: usize) -> c_int;
     fn dl_iterate_phdr(cb: extern "C" fn(*mut PhdrInfo, usize, *mut c_void) -> c_int, data: *mut c_void) -> c_int;
 }
 
@@ -39,8 +39,6 @@ const PROT_EXEC: c_int = 4;
 const MAP_PRIVATE: c_int = 2;
 const MAP_ANONYMOUS: c_int = 0x20;
 const PT_DYNAMIC: u32 = 2;
-/// `__ARM_NR_cacheflush`.
-const NR_CACHEFLUSH: i32 = 0x000f_0002;
 const PAGE: usize = 4096;
 const ARENA: usize = 64 * 1024;
 
@@ -126,17 +124,11 @@ impl Host for Process {
     }
 
     fn write(&mut self, addr: u32, bytes: &[u8]) -> Result<(), String> {
-        let (start, end) = (addr as usize & !(PAGE - 1), (addr as usize + bytes.len()).next_multiple_of(PAGE));
-        let original = protection_of(addr as usize);
-        unsafe {
-            if mprotect(start as *mut c_void, end - start, PROT_READ | PROT_WRITE | PROT_EXEC) != 0 {
-                return Err(format!("mprotect failed (errno {})", errno()));
-            }
-            std::ptr::copy_nonoverlapping(bytes.as_ptr(), addr as usize as *mut u8, bytes.len());
-            syscall(NR_CACHEFLUSH, addr as usize, addr as usize + bytes.len(), 0);
-            mprotect(start as *mut c_void, end - start, original);
-        }
-        Ok(())
+        patch(addr, bytes, false)
+    }
+
+    fn write_code(&mut self, addr: u32, bytes: &[u8]) -> Result<(), String> {
+        patch(addr, bytes, true)
     }
 
     fn alloc_exec(&mut self, len: usize) -> Result<u32, String> {
@@ -185,6 +177,28 @@ impl Host for Process {
         let old = objc::set_imp(method as usize as *mut c_void, imp as usize as objc::Imp);
         (!old.is_null()).then_some(old as usize as u32)
     }
+}
+
+/// Writes `bytes` at `addr`. The page is made writable (and executable for code) for the write. Afterwards it gets
+/// its protection back, except a code page whose mapping was not executable to begin with: a binary translator (the
+/// emulator's ARM translation shows the game's code as `r--p` and crashes when it is restored) keeps it RWX.
+fn patch(addr: u32, bytes: &[u8], code: bool) -> Result<(), String> {
+    let (start, end) = (addr as usize & !(PAGE - 1), (addr as usize + bytes.len()).next_multiple_of(PAGE));
+    let original = protection_of(addr as usize);
+    let open = if code { PROT_READ | PROT_WRITE | PROT_EXEC } else { PROT_READ | PROT_WRITE };
+    unsafe {
+        if mprotect(start as *mut c_void, end - start, open) != 0 {
+            return Err(format!("mprotect failed (errno {})", errno()));
+        }
+        std::ptr::copy_nonoverlapping(bytes.as_ptr(), addr as usize as *mut u8, bytes.len());
+        if code {
+            cacheflush(addr as usize, addr as usize + bytes.len(), 0);
+        }
+        if !code || original & PROT_EXEC != 0 {
+            mprotect(start as *mut c_void, end - start, original);
+        }
+    }
+    Ok(())
 }
 
 fn errno() -> i32 {

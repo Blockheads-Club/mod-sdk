@@ -101,6 +101,9 @@ impl Host for Fake {
         self.mem[addr as usize..addr as usize + bytes.len()].copy_from_slice(bytes);
         Ok(())
     }
+    fn write_code(&mut self, addr: u32, bytes: &[u8]) -> Result<(), String> {
+        self.write(addr, bytes)
+    }
     fn alloc_exec(&mut self, len: usize) -> Result<u32, String> {
         if self.fail_alloc {
             return Err("no memory".into());
