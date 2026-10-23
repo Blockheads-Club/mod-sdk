@@ -125,7 +125,7 @@ fn texture_of_an_unloaded_package() {
     let dir = tmp.path().join("hats-src");
     source_dir(&dir);
     let mut c = Content::new();
-    c.load(&registry(), &[dir.clone()]);
+    c.load(&registry(), std::slice::from_ref(&dir));
     c.packages.clear();
     assert!(c.texture(1, Part::Main).unwrap_err().contains("not loaded"));
     let _ = dir;

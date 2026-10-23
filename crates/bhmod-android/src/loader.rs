@@ -12,6 +12,7 @@ use std::rc::Rc;
 use bhmod_client::installed::Installed;
 use bhmod_client::session::{Accepted, Output};
 use bhmod_client::{Caps, Options, PackageCache, Session};
+use bhmod_content::Content;
 use bhmod_core::budget::Budgets;
 use bhmod_core::host::{HostOptions, ModHost, ModState};
 use bhmod_core::runtime::Runtime;
@@ -144,6 +145,7 @@ pub struct Loader<P: Platform + 'static> {
     last_tick: u64,
     last_progress: u64,
     budgets: Budgets,
+    content: Content,
 }
 
 impl<P: Platform + 'static> Loader<P> {
@@ -163,6 +165,7 @@ impl<P: Platform + 'static> Loader<P> {
             last_tick: 0,
             last_progress: 0,
             budgets: Budgets::default(),
+            content: Content::new(),
         }
     }
 
@@ -175,6 +178,16 @@ impl<P: Platform + 'static> Loader<P> {
     /// The installed-mods store (also used from Java threads through its own instance).
     pub fn installed(&self) -> Installed {
         Installed::new(&self.dirs.installed, self.caps.clone())
+    }
+
+    /// The cosmetics of the running mods and who wears them (read by the game hooks).
+    pub fn content(&self) -> &Content {
+        &self.content
+    }
+
+    /// Mutable access, for the hooks that fetch textures.
+    pub fn content_mut(&mut self) -> &mut Content {
+        &mut self.content
     }
 
     /// True while mods run.
@@ -313,6 +326,7 @@ impl<P: Platform + 'static> Loader<P> {
         if let Some(mut h) = self.host.take() {
             h.disable_all();
         }
+        self.content = Content::new();
         self.last_tick = 0;
     }
 
@@ -366,6 +380,9 @@ impl<P: Platform + 'static> Loader<P> {
                     self.p.abort_join();
                 }
                 Output::Reject(r) => self.p.ui(ui::reject(&self.server, &r)),
+                Output::Cosmetics(c) => {
+                    self.content.apply(&c);
+                }
                 Output::Channel { name, data } => {
                     if let Some(h) = self.host.as_mut() {
                         h.channel_receive(&name, ChannelSource::Server, data);
@@ -375,18 +392,31 @@ impl<P: Platform + 'static> Loader<P> {
         }
     }
 
+    /// Reads the cosmetics of the packages that run, with the ids of the server's world.
+    fn load_content(&mut self, packages: &[PathBuf]) {
+        let registry = self.session.as_ref().map(|s| s.registry().clone()).unwrap_or_default();
+        for problem in self.content.load(&registry, packages) {
+            self.p.log(LogLevel::Warn, &format!("content: {problem}"));
+        }
+    }
+
     /// Builds the run directory from the server's packages plus the player's enabled installed mods (server
     /// versions win) and starts a host. Returns the `(id, version)` of every loaded mod, or an error when a server
     /// mod did not start.
     fn start_host(&mut self, server_mods: &[Accepted]) -> Result<Vec<(String, String)>, String> {
         self.stop_host();
-        let run = &self.dirs.run;
+        let run_dir = self.dirs.run.clone();
+        let run = &run_dir;
         let _ = fs::remove_dir_all(run);
         let mut grants: BTreeMap<String, Vec<String>> = BTreeMap::new();
         let mut ids = BTreeSet::new();
-        let copy = |from: &Path, id: &str| -> io::Result<()> {
+        let mut placed: Vec<PathBuf> = Vec::new();
+        let mut copy = |from: &Path, id: &str| -> io::Result<()> {
             fs::create_dir_all(run)?;
-            fs::copy(from, run.join(format!("{id}.bhmod"))).map(|_| ())
+            let to = run.join(format!("{id}.bhmod"));
+            fs::copy(from, &to)?;
+            placed.push(to);
+            Ok(())
         };
         for a in server_mods {
             copy(&a.path, &a.manifest.id).map_err(|e| e.to_string())?;
@@ -398,6 +428,7 @@ impl<P: Platform + 'static> Loader<P> {
                 grants.insert(m.manifest.id.clone(), bhmod_core::config::required_permissions(&m.manifest.permissions));
             }
         }
+        self.load_content(&placed);
         if grants.is_empty() {
             return Ok(Vec::new());
         }

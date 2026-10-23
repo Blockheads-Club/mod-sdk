@@ -10,6 +10,7 @@ authors.workspace = true
 
 [dependencies]
 bhmod-proto.workspace = true
+bhmod-content.workspace = true
 bhmod-manifest.workspace = true
 sha2.workspace = true
 semver.workspace = true

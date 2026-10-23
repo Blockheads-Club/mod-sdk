@@ -20,6 +20,7 @@ wasm = ["dep:bhmod-wasm"]
 
 [dependencies]
 bhmod-client.workspace = true
+bhmod-content.workspace = true
 bhmod-core = { path = "../bhmod-core" }
 bhmod-manifest.workspace = true
 bhmod-proto.workspace = true
@@ -32,3 +33,4 @@ jni = { version = "0.21", default-features = false }
 
 [dev-dependencies]
 tempfile.workspace = true
+png = { version = "0.17", default-features = false }

@@ -1,7 +1,7 @@
 use std::cell::Cell;
 
 use super::*;
-use crate::testutil::package;
+use crate::testutil::{content_package, package};
 use bhmod_client::cache::sha256;
 use bhmod_proto::{
     mods_hash, Channel, ChannelInfo, FileChunk, Message, ModInfo, ModList, ModPermissions, RejectText, ServerHello,
@@ -329,4 +329,50 @@ fn installed_mods_that_cannot_start_are_logged() {
     r.l.on_world(Some("Solo"));
     fs::set_permissions(&locked, fs::Permissions::from_mode(0o755)).unwrap();
     assert!(r.p.logged("installed mods did not start"), "{:?}", r.p.logs.borrow());
+}
+
+#[test]
+fn cosmetics_follow_the_registry_and_the_server() {
+    let mut r = rig();
+    let pkg = content_package("crowns");
+    let m = info("crowns", &pkg);
+    let hash = mods_hash([(m.id.as_str(), m.version.as_str(), &m.sha256)]);
+    r.l.on_contact("10.0.2.2:15151");
+    r.l.on_join_request();
+    r.l.on_packet(&server_hello(hash, 1));
+    let registry = std::collections::BTreeMap::from([(
+        "cosmetics".to_string(),
+        std::collections::BTreeMap::from([("crowns:crown".to_string(), 4u64)]),
+    )]);
+    let list = ModList { mods: vec![m.clone()], channels: vec![], registry };
+    r.l.on_packet(&Message::ModList(list).encode());
+    r.l.on_ui(UiEvent::Decide(true));
+    let chunk = Message::FileChunk(FileChunk { sha256: m.sha256, offset: 0, total: m.size, data: pkg });
+    r.l.on_packet(&chunk.encode());
+    assert!(r.l.content().is_active());
+    // COSMETICS after the join: player p wears the crown (on an empty hat slot it wears the base item).
+    let wear = Message::Cosmetics(bhmod_proto::Cosmetics {
+        full: true,
+        players: [("p".to_string(), [("hat".to_string(), 4u64)].into())].into(),
+    });
+    r.l.on_packet(&wear.encode());
+    let look = r.l.content().look("p", [None; 4]);
+    assert_eq!(look.clothing[3], Some((4, Some(115))));
+    let tex = r.l.content_mut().texture(4, bhmod_content::Part::Main).unwrap().unwrap();
+    assert_eq!((tex.wide, tex.high), (2, 2));
+    // The world closing ends it all.
+    r.l.on_world(Some("Sunny"));
+    r.l.on_world(None);
+    assert!(!r.l.content().is_active());
+    assert!(r.l.content().look("p", [None; 4]).is_empty());
+}
+
+#[test]
+fn a_broken_content_package_is_reported_not_fatal() {
+    let mut r = rig();
+    let junk = r._t.path().join("junk.bhmod");
+    std::fs::write(&junk, b"not a zip").unwrap();
+    r.l.load_content(&[junk]);
+    assert!(r.p.logged("content:"), "{:?}", r.p.logs.borrow());
+    assert!(!r.l.content().is_active());
 }

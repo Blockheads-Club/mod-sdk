@@ -145,11 +145,13 @@ name = "bhmod-android"
 version = "0.1.0"
 dependencies = [
  "bhmod-client",
+ "bhmod-content",
  "bhmod-core",
  "bhmod-manifest",
  "bhmod-proto",
  "bhmod-wasm",
  "jni",
+ "png",
  "semver",
  "serde_json",
  "tempfile",
@@ -159,6 +161,7 @@ dependencies = [
 name = "bhmod-client"
 version = "0.1.0"
 dependencies = [
+ "bhmod-content",
  "bhmod-manifest",
  "bhmod-proto",
  "semver",

@@ -10,10 +10,11 @@ use std::collections::BTreeMap;
 use std::fmt;
 use std::path::PathBuf;
 
+use bhmod_content::registry::Wire;
 use bhmod_manifest::Manifest;
 use bhmod_proto::{
-    file_error, Channel, FileRequest, Hash, Hello, Message, ModInfo, ModList, Ready, RejectText, ServerHello,
-    CHUNK_SIZE, HELLO_TIMEOUT_MS, MAX_CHANNEL_PAYLOAD, PROTO,
+    file_error, Channel, Cosmetics, FileRequest, Hash, Hello, Message, ModInfo, ModList, Ready, RejectText,
+    ServerHello, CHUNK_SIZE, HELLO_TIMEOUT_MS, MAX_CHANNEL_PAYLOAD, PROTO,
 };
 
 use crate::cache::PackageCache;
@@ -178,6 +179,8 @@ pub enum Output {
     Failed(Failure),
     /// The server's `REJECT_TEXT` (the vanilla 0x26 follows): show it instead of the vanilla text.
     Reject(RejectText),
+    /// Which cosmetics players wear (`COSMETICS`, only after the join).
+    Cosmetics(Cosmetics),
     /// A channel message for the running mods.
     Channel {
         /// `<mod-id>:<name>`.
@@ -220,6 +223,7 @@ pub struct Session {
     join: Option<Option<Hash>>,
     joined: bool,
     channels: BTreeMap<String, u16>,
+    registry: Wire,
 }
 
 fn client_side(m: &ModInfo) -> bool {
@@ -238,7 +242,13 @@ impl Session {
             join: None,
             joined: false,
             channels: BTreeMap::new(),
+            registry: Wire::new(),
         }
+    }
+
+    /// The content id map of the server's `MOD_LIST` (empty until it arrived or without content).
+    pub fn registry(&self) -> &Wire {
+        &self.registry
     }
 
     /// A short state name for logs.
@@ -368,6 +378,7 @@ impl Session {
                 self.channels.insert(c.name, c.id);
                 Vec::new()
             }
+            Message::Cosmetics(c) if self.is_modded() => vec![Output::Cosmetics(c)],
             Message::Channel(c) if self.is_modded() => {
                 match self.channels.iter().find(|(_, id)| **id == c.channel_id) {
                     Some((name, _)) => vec![Output::Channel { name: name.clone(), data: c.payload }],
@@ -392,6 +403,7 @@ impl Session {
     fn on_list(&mut self, list: ModList) -> Vec<Output> {
         let State::AwaitList { hello, .. } = &self.state else { return Vec::new() };
         let hello = hello.clone();
+        self.registry = list.registry.clone();
         for c in &list.channels {
             self.channels.insert(c.name.clone(), c.id);
         }

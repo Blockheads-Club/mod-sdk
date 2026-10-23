@@ -1,7 +1,7 @@
 use super::*;
 use crate::cache::sha256;
 use crate::testutil::{caps, package};
-use bhmod_proto::{mods_hash, ChannelInfo, ChannelRegister, FileChunk, FileError, ModPermissions};
+use bhmod_proto::{mods_hash, ChannelInfo, ChannelRegister, Cosmetics, FileChunk, FileError, ModPermissions};
 
 fn info(id: &str, bytes: &[u8], required: bool, sides: &[&str]) -> ModInfo {
     ModInfo {
@@ -48,7 +48,8 @@ fn hello_pkt(hash: Hash, required: bool, count: u64) -> Vec<u8> {
 
 fn list_pkt(mods: Vec<ModInfo>) -> Vec<u8> {
     let channels = vec![ChannelInfo { name: "demo:echo".into(), id: 3 }];
-    Message::ModList(ModList { mods, channels, registry: BTreeMap::new() }).encode()
+    let registry = BTreeMap::from([("cosmetics".to_string(), BTreeMap::from([("demo:crown".to_string(), 1)]))]);
+    Message::ModList(ModList { mods, channels, registry }).encode()
 }
 
 fn chunks(bytes: &[u8], sha: Hash, from: usize) -> Vec<Vec<u8>> {
@@ -183,6 +184,14 @@ fn full_join_with_download_resume_and_channels() {
     assert!(mods[0].cached && mods[0].client && !mods[1].cached);
     assert_eq!(r.s.state_name(), "prompt");
     assert!(r.s.join_requested().is_empty());
+    assert_eq!(r.s.registry()["cosmetics"]["demo:crown"], 1);
+    // COSMETICS before the join is over is dropped.
+    let wear = Message::Cosmetics(Cosmetics {
+        full: true,
+        players: BTreeMap::from([("p".to_string(), BTreeMap::from([("hat".to_string(), 1)]))]),
+    })
+    .encode();
+    assert!(r.s.receive(&wear, 25).is_empty());
 
     let out = r.s.decide(true, 30);
     assert!(matches!(&out[0], Output::Progress { index: 0, count: 1, done, .. } if *done == 2 * CHUNK_SIZE as u64));
@@ -218,6 +227,7 @@ fn full_join_with_download_resume_and_channels() {
     assert!(matches!(&m[0], Message::Ready(Ready { accepted_hash, .. }) if *accepted_hash == hash));
     assert!(matches!(out.last(), Some(Output::Join(Some(x))) if *x == hash));
     assert!(r.s.is_modded());
+    assert!(matches!(&r.s.receive(&wear, 250)[..], [Output::Cosmetics(c)] if c.full && c.players["p"]["hat"] == 1));
 
     // channels: by list id, by a later CHANNEL_REGISTER, unknown ids dropped
     let ch = Message::Channel(Channel { channel_id: 3, payload: b"echo:hi".to_vec() }).encode();
