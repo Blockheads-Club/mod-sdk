@@ -69,6 +69,10 @@ that behave exactly the same (a test checks it): [`hello-lua`](examples/hello-lu
 [`chat-filter-rust`](examples/chat-filter-rust) (cancel and rewrite chat), [`scheduler-lua`](examples/scheduler-lua) /
 [`scheduler-rust`](examples/scheduler-rust) (`/countdown`, `/remind`). Rust, C, Zig and Go: [`docs/wasm.md`](docs/wasm.md).
 
+Java and Kotlin (milestone M9) are unsandboxed, so they need the `native` permission and a host with JVM support
+turned on: `bhmod new my-mod --lang java`, the examples ending in `-java` (`shop-java` calls the Lua `economy`
+service) and [`docs/jvm.md`](docs/jvm.md).
+
 ---
 
 ## 📚 What's inside
@@ -77,6 +81,7 @@ that behave exactly the same (a test checks it): [`hello-lua`](examples/hello-lu
 | [`wit/blockheads-api/`](wit/blockheads-api/) | The mod API (`blockheads:api@0.2.0`, WIT): events (incl. gameplay), commands, scheduler, storage, players, services, channels; the frozen 0.1 copy is in [`wit/compat/`](wit/compat/) |
 | [`docs/luau-api.md`](docs/luau-api.md) | How the API looks from Lua |
 | [`docs/wasm.md`](docs/wasm.md) | WASM mods: Rust SDK, C/Zig/TinyGo, how the host runs them, the conformance suite |
+| [`docs/jvm.md`](docs/jvm.md) | JVM mods: Java/Kotlin SDK (generated from the WIT), how the host runs them, Android (ART) |
 | [`sdk/rust/blockheads-mod`](sdk/rust/blockheads-mod) | The Rust SDK (bindings + closures for events, commands, tasks) |
 | [`docs/package.md`](docs/package.md) | The `.bhmod` package and its rules |
 | [`schema/`](schema/) | JSON Schemas for `mod.toml`, index entries and the published `index.json` |

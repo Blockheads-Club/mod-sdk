@@ -38,7 +38,7 @@ input always gives the same bytes and the same SHA-256.
 
 - `api` must match one of the API versions the SDK serves (`0.1.0`, `0.2.0`; see [luau-api.md](luau-api.md#api-versions)); `loader` and dependency versions must be semver requirements.
 - Each enabled side needs exactly one entry point inside `<side>/` (not `<side>/native/`); a disabled side must not have one.
-- Runtime and extension match: `wasm` → `.wasm`, `lua` → `.luau`, `jvm` → `.jar`. `jvm` needs `permissions.native = true`.
+- Runtime and extension match: `wasm` → `.wasm`, `lua` → `.luau`, `jvm` → `.jar`. `jvm` needs `permissions.native = true`; the jar's manifest names the entry class (`Bhmod-Main`, else `Main-Class`) and may carry `classes.dex` for Android (see [jvm.md](jvm.md)).
 - No self-dependency; an id may not be in both `dependencies` and `soft-dependencies`.
 - `permissions.net-http` needs a server side.
 - `[content]` needs `sides.client = true` and forces `client-required = true` (explicit `false` is an error). Keys are

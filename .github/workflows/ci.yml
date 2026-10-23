@@ -29,8 +29,14 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: rustfmt
         run: cargo fmt --all --check
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
       - name: clippy
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - name: clippy with the JVM runtime
+        run: cargo clippy --workspace --all-targets --locked --features bhmod-core/jvm,bhmod-android/jvm -- -D warnings
 
   test:
     runs-on: ubuntu-latest
@@ -64,7 +70,7 @@ jobs:
         run: cargo test -p bhmod-proto --test vectors --locked
       - name: Tests with 100 % line coverage gate
         # The wasmtime bindgen! output (bhmod-wasm/src/wit*.rs) is generated code and not measured.
-        run: cargo llvm-cov --workspace --features bhmod-core/jvm --locked --ignore-filename-regex 'bhmod-wasm/src/wit' --fail-under-lines 100 --lcov --output-path lcov.info
+        run: cargo llvm-cov --workspace --features bhmod-core/jvm,bhmod-android/jvm --locked --ignore-filename-regex 'bhmod-wasm/src/wit' --fail-under-lines 100 --lcov --output-path lcov.info
       - name: Coverage summary
         run: cargo llvm-cov report --summary-only
 
