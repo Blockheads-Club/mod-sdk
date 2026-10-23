@@ -5,18 +5,15 @@
 //!
 //! - `-[Blockhead updateClothingCubes]` (the game's own, for this client's blockheads): runs the original, then
 //!   replaces `hatTexture`, `shirtBodyTexture`, `shirtArmTexture`, `pantsTexture`, `shoesTexture`. While it runs,
-//! - `-[Blockhead clothingItemAtIndex:]` gives an empty slot a plain vanilla item when a cosmetic needs a shape to
-//!   draw on (the item type then travels in the blockhead's creation data, so other players see the shape too).
 //! - `-[Blockhead updateSkin]`: replaces `headHairTexture`.
 //! - `-[Blockhead setupFromNetCreationData:]` (other players' blockheads): replaces clothing and hair textures.
-//! - `-[Blockhead updateAnimation]` (every frame): refreshes a blockhead when the cosmetics changed since it was
-//!   last looked at.
+//! - `-[Blockhead update:accurateDT:isSimulation:]` (every frame): refreshes a blockhead the first time it is seen and
+//!   whenever the cosmetics changed.
 //!
 //! Textures are made with `-[CPTexture2D initWithData:pixelFormat:pixelsWide:pixelsHigh:contentSize:mipmap:]`, the
-//! initializer the game's own loader uses (pixel format 0 is RGBA8888, the loader itself passes 1, RGBA4444), from the
-//! mod's decoded PNG.
+//! initializer the game's own loader uses (pixel format 1, RGBA4444; 0 makes it return nil), from the mod's decoded PNG.
 
-use std::cell::{Cell, RefCell};
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::sync::{Arc, OnceLock};
 
@@ -27,11 +24,10 @@ use super::objc::{self, Id, Imp, Sel};
 use super::{log, with_loader};
 
 struct Originals {
-    clothing_item: Imp,
     update_cubes: Imp,
     update_skin: Imp,
     setup_net: Imp,
-    update_animation: Imp,
+    update_frame: Imp,
 }
 // SAFETY: code addresses, written once when the hooks are installed.
 unsafe impl Send for Originals {}
@@ -44,14 +40,12 @@ struct State {
     seen: HashMap<usize, u64>,
     /// `CPTexture2D` objects made from the mods' textures (0 = could not be made).
     textures: HashMap<(u64, u8), usize>,
-    /// Vanilla `InventoryItem`s given to empty slots, by item type.
-    items: HashMap<u16, usize>,
+    /// The game's own texture of every ivar a cosmetic replaced (retained), by blockhead and ivar.
+    originals: HashMap<(usize, &'static str), usize>,
 }
 
 thread_local! {
     static STATE: RefCell<State> = RefCell::new(State::default());
-    /// True while `-[Blockhead updateClothingCubes]` runs.
-    static IN_UPDATE: Cell<bool> = const { Cell::new(false) };
 }
 
 fn part_key(p: Part) -> u8 {
@@ -88,13 +82,54 @@ fn is_net(bh: Id) -> bool {
     !p.is_null() && unsafe { *p } != 0
 }
 
-fn store(bh: Id, ivar: &str, tex: Id) {
-    if tex.is_null() {
+/// Replaces the texture in `ivar` with `tex`, keeping the game's own texture to put back later.
+fn store(bh: Id, ivar: &'static str, tex: Id) {
+    let slot = objc::ivar_ptr(bh, "Blockhead", ivar);
+    if tex.is_null() || slot.is_null() {
         return;
     }
-    let slot = objc::ivar_ptr(bh, "Blockhead", ivar);
-    if !slot.is_null() {
-        objc::store_strong(slot, tex);
+    let first = STATE.with(|s| !s.borrow().originals.contains_key(&(bh as usize, ivar)));
+    if first {
+        let cur = unsafe { *slot };
+        if !cur.is_null() {
+            objc::send0(cur, "retain");
+            STATE.with(|s| s.borrow_mut().originals.insert((bh as usize, ivar), cur as usize));
+        }
+    }
+    objc::store_strong(slot, tex);
+}
+
+const CLOTHING_IVARS: [&str; 5] = ["hatTexture", "shirtBodyTexture", "shirtArmTexture", "pantsTexture", "shoesTexture"];
+
+impl Which {
+    /// The texture ivars this part covers.
+    fn ivars(self) -> Vec<&'static str> {
+        let mut v = Vec::new();
+        if self != Which::Hair {
+            v.extend(CLOTHING_IVARS);
+        }
+        if self != Which::Clothing {
+            v.push("headHairTexture");
+        }
+        v
+    }
+}
+
+/// Puts the game's own textures back into a blockhead (`keep`: leave the ivars alone and only drop what was saved,
+/// because the game just rebuilt them).
+fn restore(bh: Id, which: Which, keep: bool) {
+    let mine = which.ivars();
+    let saved: Vec<(&'static str, usize)> = STATE.with(|s| {
+        let mut s = s.borrow_mut();
+        let keys: Vec<_> = s.originals.keys().filter(|k| k.0 == bh as usize && mine.contains(&k.1)).copied().collect();
+        keys.into_iter().filter_map(|k| s.originals.remove(&k).map(|v| (k.1, v))).collect()
+    });
+    for (ivar, obj) in saved {
+        let slot = objc::ivar_ptr(bh, "Blockhead", ivar);
+        if !keep && !slot.is_null() {
+            objc::store_strong(slot, obj as Id);
+        }
+        objc::send0(obj as Id, "release");
     }
 }
 
@@ -120,21 +155,21 @@ fn texture(id: u64, part: Part) -> Id {
 fn make_texture(g: &Gpu) -> Id {
     unsafe {
         let data = objc::send0(objc::class("NSMutableData"), "alloc");
-        let data = objc::send1(data, "initWithLength:", g.rgba.len() as *const _);
+        let data = objc::send1(data, "initWithLength:", g.pixels.len() as *const _);
         let ptr = objc::send0(data, "mutableBytes") as *mut u8;
         if ptr.is_null() {
             objc::send0(data, "release");
             return std::ptr::null_mut();
         }
-        std::ptr::copy_nonoverlapping(g.rgba.as_ptr(), ptr, g.rgba.len());
+        std::ptr::copy_nonoverlapping(g.pixels.as_ptr(), ptr, g.pixels.len());
         let tex = objc::send0(objc::class("CPTexture2D"), "alloc");
-        // pixelFormat 0 (RGBA8888; the game's own loader passes 1, RGBA4444), contentSize as two floats (softfp: the same words as two u32), no mipmaps.
+        // The game's own pixel format (1, RGBA4444), contentSize as two floats (softfp: the same words as two u32), no mipmaps.
         let init = objc::msg::<unsafe extern "C" fn(Id, Sel, *const u8, i32, u32, u32, u32, u32, i8) -> Id>();
         let tex = init(
             tex,
             objc::sel("initWithData:pixelFormat:pixelsWide:pixelsHigh:contentSize:mipmap:"),
             ptr,
-            0,
+            bhmod_content::PIXEL_FORMAT as i32,
             g.wide,
             g.high,
             (g.content_wide as f32).to_bits(),
@@ -146,27 +181,6 @@ fn make_texture(g: &Gpu) -> Id {
     }
 }
 
-/// A vanilla `InventoryItem` of `item_type` for an empty slot.
-fn item(item_type: u16) -> Id {
-    if let Some(i) = STATE.with(|s| s.borrow().items.get(&item_type).copied()) {
-        return i as Id;
-    }
-    let alloc = objc::send0(objc::class("InventoryItem"), "alloc");
-    let it = unsafe {
-        objc::msg::<unsafe extern "C" fn(Id, Sel, i32, u16, u16, Id, Id) -> Id>()(
-            alloc,
-            objc::sel("initWithType:dataA:dataB:subItems:dynamicObjectSaveDict:"),
-            i32::from(item_type),
-            0,
-            0,
-            std::ptr::null_mut(),
-            std::ptr::null_mut(),
-        )
-    };
-    STATE.with(|s| s.borrow_mut().items.insert(item_type, it as usize));
-    it
-}
-
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Which {
     Clothing,
@@ -176,6 +190,8 @@ enum Which {
 
 /// Writes the cosmetics' textures into a blockhead.
 fn apply_to(bh: Id, which: Which) {
+    // The game just rebuilt (some of) these textures: what was saved of them is stale.
+    restore(bh, which, true);
     let player = player_of(bh);
     let w = worn(bh);
     let Some((look, serial)) = with_loader(|l| (l.content().look(&player, w), l.content().serial())) else { return };
@@ -206,29 +222,10 @@ fn apply_to(bh: Id, which: Which) {
     }
 }
 
-extern "C" fn hook_clothing_item(this: Id, cmd: Sel, idx: i32) -> Id {
-    let orig = ORIG.get().expect("hooks").clothing_item;
-    let real = unsafe { std::mem::transmute::<Imp, unsafe extern "C" fn(Id, Sel, i32) -> Id>(orig)(this, cmd, idx) };
-    if !real.is_null() || !IN_UPDATE.with(Cell::get) || !(0..4).contains(&idx) {
-        return real;
-    }
-    let player = player_of(this);
-    let wear = with_loader(|l| l.content().resolve(&player, CLOTHING[idx as usize], None).and_then(|r| r.wear)).flatten();
-    match wear {
-        Some(t) => item(t),
-        None => real,
-    }
-}
-
 extern "C" fn hook_update_cubes(this: Id, cmd: Sel) {
     let orig = ORIG.get().expect("hooks").update_cubes;
-    let on = active();
-    if on {
-        IN_UPDATE.with(|f| f.set(true));
-    }
     unsafe { std::mem::transmute::<Imp, unsafe extern "C" fn(Id, Sel)>(orig)(this, cmd) };
-    if on {
-        IN_UPDATE.with(|f| f.set(false));
+    if active() {
         apply_to(this, Which::Clothing);
     }
 }
@@ -249,22 +246,35 @@ extern "C" fn hook_setup_net(this: Id, cmd: Sel, data: Id) {
     }
 }
 
-extern "C" fn hook_update_animation(this: Id, cmd: Sel) {
+extern "C" fn hook_update_frame(this: Id, cmd: Sel, dt: u32, accurate: u32, simulation: i8) {
     if active() {
         let now = serial();
         let seen = STATE.with(|s| s.borrow().seen.get(&(this as usize)).copied());
         if seen != Some(now) {
             STATE.with(|s| s.borrow_mut().seen.insert(this as usize, now));
-            if is_net(this) {
-                apply_to(this, Which::Both);
-            } else {
-                objc::send0(this, "updateClothingCubes");
-                objc::send0(this, "updateSkin");
+            let player = player_of(this);
+            let w = worn(this);
+            let look = with_loader(|l| l.content().look(&player, w)).unwrap_or_default();
+            let had = STATE.with(|s| s.borrow().originals.keys().any(|k| k.0 == this as usize));
+            if !look.is_empty() || had {
+                if is_net(this) {
+                    // Other players' blockheads are never rebuilt by the game: put the old textures back, then
+                    // override.
+                    restore(this, Which::Both, false);
+                    apply_to(this, Which::Both);
+                } else {
+                    objc::send0(this, "updateClothingCubes");
+                    objc::send0(this, "updateSkin");
+                }
             }
         }
     }
-    let orig = ORIG.get().expect("hooks").update_animation;
-    unsafe { std::mem::transmute::<Imp, unsafe extern "C" fn(Id, Sel)>(orig)(this, cmd) };
+    let orig = ORIG.get().expect("hooks").update_frame;
+    unsafe {
+        std::mem::transmute::<Imp, unsafe extern "C" fn(Id, Sel, u32, u32, i8)>(orig)(
+            this, cmd, dt, accurate, simulation,
+        )
+    };
 }
 
 /// Forgets which blockheads were looked at (a world closed: the addresses may be reused).
@@ -274,12 +284,11 @@ pub fn reset() {
 
 /// Installs the hooks. False when a method is missing (cosmetics stay off).
 pub fn install() -> bool {
-    let clothing_item = objc::swizzle("Blockhead", "clothingItemAtIndex:", hook_clothing_item as Imp);
     let update_cubes = objc::swizzle("Blockhead", "updateClothingCubes", hook_update_cubes as Imp);
     let update_skin = objc::swizzle("Blockhead", "updateSkin", hook_update_skin as Imp);
     let setup_net = objc::swizzle("Blockhead", "setupFromNetCreationData:", hook_setup_net as Imp);
-    let update_animation = objc::swizzle("Blockhead", "updateAnimation", hook_update_animation as Imp);
-    let ok = [clothing_item, update_cubes, update_skin, setup_net, update_animation].iter().all(|p| !p.is_null());
-    let _ = ORIG.set(Originals { clothing_item, update_cubes, update_skin, setup_net, update_animation });
+    let update_frame = objc::swizzle("Blockhead", "update:accurateDT:isSimulation:", hook_update_frame as Imp);
+    let ok = [update_cubes, update_skin, setup_net, update_frame].iter().all(|p| !p.is_null());
+    let _ = ORIG.set(Originals { update_cubes, update_skin, setup_net, update_frame });
     ok
 }
