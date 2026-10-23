@@ -50,7 +50,7 @@ def ember():
             img.putpixel((x, y), (0, 0, 0, 255))
     for face_x in (0, 8, 16, 24):
         for dx in range(8):
-            depth = 3 + (2 if dx % 2 == 0 else 0) + (1 if dx % 4 == 0 else 0)
+            depth = 1 + (1 if dx % 2 == 0 else 0)
             for dy in range(depth):
                 img.putpixel((face_x + dx, 8 + dy), (0, 0, 0, 255))
     return img

@@ -76,3 +76,22 @@ fn gpu_form_pads_to_powers_of_two() {
     let one = Texture { width: 1, height: 1, rgba: vec![255, 0, 0, 128] };
     assert_eq!(one.for_gpu().pixels, [128, 0, 0, 128]);
 }
+
+#[test]
+fn item_atlas_places_the_picture_in_its_cell() {
+    let t = Texture { width: 2, height: 1, rgba: vec![255, 0, 0, 255, 0, 255, 0, 128] };
+    let g = t.on_item_atlas(33).unwrap();
+    assert_eq!((g.wide, g.high, g.pixels.len()), (2048, 1024, 2048 * 1024 * 4));
+    // Image 33 is column 1, row 1: pixel (64, 64).
+    let at = |x: usize, y: usize| g.pixels[(y * 2048 + x) * 4..][..4].to_vec();
+    assert_eq!(at(64, 64), [255, 0, 0, 255]);
+    assert_eq!(at(65, 64), [0, 128, 0, 128]);
+    assert_eq!(at(66, 64), [0, 0, 0, 0]);
+    assert_eq!(at(0, 0), [0, 0, 0, 0]);
+    assert!(Texture { width: 65, height: 1, rgba: vec![0; 65 * 4] }
+        .on_item_atlas(0)
+        .unwrap_err()
+        .contains("does not fit"));
+    assert!(t.on_item_atlas(512).unwrap_err().contains("outside"));
+    assert!(t.on_item_atlas(511).is_ok());
+}

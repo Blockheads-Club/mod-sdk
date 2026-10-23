@@ -190,3 +190,24 @@ fn local_registry_for_developer_tests() {
     assert!(local_registry(&[]).is_empty());
     assert_eq!(read_manifest(&dir).unwrap().id, "hats");
 }
+
+#[test]
+fn weapon_pictures_come_as_item_atlases() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path().join("hats-src");
+    source_dir(&dir);
+    let mut c = Content::new();
+    c.load(&registry(), std::slice::from_ref(&dir));
+    // The 3x2 crown texture fits a cell.
+    let a = c.item_atlas(1, 5).unwrap().unwrap();
+    assert_eq!((a.wide, a.high), (2048, 1024));
+    assert_eq!(&a.pixels[(5 * 64) * 4..][..4], [255, 0, 0, 255]);
+    assert!(Arc::ptr_eq(&a, &c.item_atlas(1, 5).unwrap().unwrap()));
+    // Outside the atlas, unknown id, missing file, unloaded package.
+    assert!(c.item_atlas(1, 9999).unwrap_err().contains("outside"));
+    assert!(c.item_atlas(1, 9999).unwrap().is_none());
+    assert!(c.item_atlas(99, 0).unwrap().is_none());
+    assert!(c.item_atlas(3, 0).unwrap_err().contains("missing.png"));
+    c.packages.clear();
+    assert!(c.item_atlas(2, 0).unwrap_err().contains("not loaded"));
+}
