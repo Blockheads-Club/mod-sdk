@@ -103,7 +103,11 @@ You do not implement `guest`; `Api` keeps the handlers:
 | `call-service` | `api.provide(name, version, (method, args) -> result)` |
 | `on-channel-message` | `api.openChannel(name, (origin, data) -> ...)`, `api.send(channel, target, bytes)` |
 
-Services from other mods: `api.service("economy", "^1").call("withdraw", player, 30L)`. Raw access to any WIT import by
+Services from other mods: `api.service("economy", "^1").call("withdraw", player, 30L)`. Services on the other side
+of the network (API 0.3.1): `api.callRemote(new RemoteTarget.Server(), "shop", "^1", "price", Arrays.asList("apple"),
+3000L, new RemoteCallback() { ok(Object value) ... failed(String kind, String message) ... })` returns the call id at
+once and the callback runs later; `api.cancelRemote(id)`; inside a provider `api.caller()` is the calling mod and
+player. Raw access to any WIT import by
 name, also one a newer host has and this SDK has no wrapper for yet: `api.bridge().call("interface.function", args...)`.
 
 ### Values (services, custom events, `storage` stays bytes)

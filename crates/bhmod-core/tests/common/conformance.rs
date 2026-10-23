@@ -235,3 +235,37 @@ pub fn hud_cancel(r: &mut Run) {
     r.note("closed", v);
     r.flush();
 }
+
+/// The price check mods: `/price <item>` sends a remote call; scripted answers come back in any order.
+pub fn prices(r: &mut Run) {
+    use bhmod_core::remote::{RemoteError, RemoteTarget};
+    use bhmod_core::value::Value;
+    r.h.enable("World", "wid");
+    r.note("state", r.state());
+    r.command(CommandSender::Console, "/price");
+    for item in ["apple", "ghost", "sword", "bread"] {
+        r.command(CommandSender::Console, &format!("/price {item}"));
+    }
+    let sent: Vec<String> =
+        r.b.remote_calls
+            .borrow()
+            .iter()
+            .map(|c| {
+                let args = Value::decode(&c.args).unwrap();
+                format!("{} {:?} {} {} {} {args:?} ", c.id, c.target, c.service, c.version_req, c.method)
+            })
+            .collect();
+    r.note("sent", sent);
+    r.flush();
+    let s = RemoteTarget::Server;
+    let a = r.h.remote_result(&s, 2, Ok(Value::Null.encode()));
+    let b = r.h.remote_result(&s, 1, Ok(Value::Int(3).encode()));
+    let c = r.h.remote_result(&s, 3, Err(RemoteError::NotPermitted));
+    let d = r.h.remote_result(&s, 4, Err(RemoteError::Timeout));
+    let e = r.h.remote_result(&s, 4, Ok(Value::Int(5).encode()));
+    r.note("answers", (a, b, c, d, e));
+    r.flush();
+    r.h.disable_all();
+    r.note("state", r.state());
+    r.flush();
+}

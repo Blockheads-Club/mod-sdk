@@ -69,6 +69,10 @@ that behave exactly the same (a test checks it): [`hello-lua`](examples/hello-lu
 [`chat-filter-rust`](examples/chat-filter-rust) (cancel and rewrite chat), [`scheduler-lua`](examples/scheduler-lua) /
 [`scheduler-rust`](examples/scheduler-rust) (`/countdown`, `/remind`). Rust, C, Zig and Go: [`docs/wasm.md`](docs/wasm.md).
 
+A client mod can call a service of a server mod over the network (API 0.3.1, asynchronous):
+[`prices-lua`](examples/prices-lua) is a price check with a server half that provides `prices` (`remote = true`) and a client
+half (`/price <item>`), [`prices-rust`](examples/prices-rust) is the Rust twin of the client half.
+
 Content mods (API 0.3) declare textures in `[content]`: [`cosmetics-hats`](examples/cosmetics-hats) is a hat and hair
 set worn with `/hat` and `/hair` (see [`docs/content.md`](docs/content.md)).
 
@@ -81,7 +85,7 @@ service) and [`docs/jvm.md`](docs/jvm.md).
 ## 📚 What's inside
 | Path | What |
 | --- | --- |
-| [`wit/blockheads-api/`](wit/blockheads-api/) | The mod API (`blockheads:api@0.3.0`, WIT): events (incl. gameplay), commands, scheduler, storage, players, services, channels, client UI (HUD, toasts, dialogs), mod content (items, blocks, cosmetics); the frozen 0.1 and 0.2 copies are in [`wit/compat/`](wit/compat/) |
+| [`wit/blockheads-api/`](wit/blockheads-api/) | The mod API (`blockheads:api@0.3.1`, WIT): events (incl. gameplay), commands, scheduler, storage, players, services (also across the network, client <-> server), channels, client UI (HUD, toasts, dialogs), mod content (items, blocks, cosmetics); the frozen 0.1, 0.2 and 0.3.0 copies are in [`wit/compat/`](wit/compat/) |
 | [`docs/luau-api.md`](docs/luau-api.md) | How the API looks from Lua |
 | [`docs/wasm.md`](docs/wasm.md) | WASM mods: Rust SDK, C/Zig/TinyGo, how the host runs them, the conformance suite |
 | [`docs/jvm.md`](docs/jvm.md) | JVM mods: Java/Kotlin SDK (generated from the WIT), how the host runs them, Android (ART) |

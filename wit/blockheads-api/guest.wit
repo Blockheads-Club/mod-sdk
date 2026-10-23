@@ -1,4 +1,4 @@
-package blockheads:api@0.3.0;
+package blockheads:api@0.3.1;
 
 /// Callbacks every mod exports. The host calls them on the main thread; a trap or a run over the time budget
 /// (5 ms soft, 25 ms hard per call) counts against the mod, and three hard traps within 60 s disable it.

@@ -58,6 +58,12 @@ Build with `cargo build --release --target wasm32-wasip2` (after `rustup target 
 - API 0.2: `events::on_custom` / `events::fire_custom`, `services::{provide, call}` (implement
   `Mod::call_service`), `channels::{open, send, close}` (implement `Mod::on_channel_message`), gameplay events with
   `EventCtx::set_reject_reason` / `set_damage`, `Player::pos` and value handles. Values are canonical CBOR.
+- API 0.3.1: `services::call_remote(&Target::Server | &Target::Player(&p), name, req, method, &[Value], timeout_ms,
+  |result| ...)` calls a service on the other side (a client mod the server, a server mod a player's client); the
+  closure runs later with `Ok(Value)` or `Err(RemoteError { kind, message })`. `services::cancel_remote(id)`,
+  `services::caller()` (inside the provider). `blockheads_mod::cbor::Value` builds and reads canonical CBOR.
+  Other languages use `services.call-remote` and subscribe to the custom event `<mod-id>:service-result`, see
+  [`wit/blockheads-api/services.wit`](../wit/blockheads-api/services.wit).
 - The raw generated bindings are in `blockheads_mod::bindings`.
 
 Examples (each the twin of a Luau example): [`hello-rust`](../examples/hello-rust),
@@ -108,7 +114,7 @@ The SDK has no TinyGo example yet because no TinyGo toolchain was available wher
 | Time | Epoch interruption: a helper thread advances the epoch every 1 ms while a guest call runs; the store traps at the host's hard deadline (25 ms) → `CallError::Timeout`. Fuel is off. |
 | Memory | `InstanceLimits.memory_bytes` (32 MiB by default) caps the instance's linear memories through `StoreLimits`; a failed `memory.grow` makes Rust's allocator abort, which is a trap. |
 | WASI | p2 with an empty context: no files, network, environment or arguments; clocks and random work; stdout/stderr go to the log. |
-| Versions | Components of `blockheads:api@0.3.0`, `@0.2.0` and `@0.1.0` load side by side (three bindings, one implementation); a 0.1 mod never receives the 0.2-only events. The 0.3 bindings are generated for the `client-mod` world (a superset of the imports), so server and client mods share them; `ui` calls on a host without UI return `unsupported`, and only 0.3 components import `content`. |
+| Versions | Components of `blockheads:api@0.3.1`, `@0.3.0`, `@0.2.0` and `@0.1.0` load side by side (three bindings, one implementation; 0.3.0 and 0.3.1 share the 0.3 binding: wasmtime links the 0.3.0 names of a component to the 0.3.1 definitions); a 0.1 mod never receives the 0.2-only events. The 0.3 bindings are generated for the `client-mod` world (a superset of the imports), so server and client mods share them; `ui` calls on a host without UI return `unsupported`, and only 0.3 components import `content`. |
 | Traps | A trap or panic poisons the instance (the component model forbids re-entering it); later calls fail fast and count as faults. `on-enable` returning `err` disables the mod without a fault. |
 | Cache | Compiled code is stored as `<cache_dir>/<sha256 of the .wasm>-<engine hash>.cwasm`; a later load only deserializes it (x86_64: 0.5 ms instead of ~230 ms for an 87 KB component). |
 | Precompiled | With `WasmConfig.trust_precompiled`, a package may ship `<entry stem>.<target>.cwasm` next to the `.wasm`, for example `server/mod.pulley32.cwasm`, made on a build machine with `bhmod_wasm::precompile_for("pulley32", wasm)`. 32-bit devices then skip the on-device compile (2 s under qemu for the same component). Precompiled code is trusted like native code, so only enable this for packages you trust. Builds without the `compiler` feature (the future Android client loader) can only load such artifacts. |
@@ -139,7 +145,8 @@ device decides.
 ## Conformance suite
 
 `crates/bhmod-wasm/tests/conformance.rs` runs the same scenarios against the Luau and the WASM twin of each example
-(`hello-lua`/`hello-rust`, `chat-filter`/`chat-filter-rust`, `scheduler-lua`/`scheduler-rust`) through the real
+(`hello-lua`/`hello-rust`, `chat-filter`/`chat-filter-rust`, `scheduler-lua`/`scheduler-rust`, the client mods
+`hud-lua`/`hud-rust` and `prices-lua`/`prices-rust`) through the real
 `ModHost` and a fake game, and requires identical transcripts: command replies, event results, chat, broadcasts,
 kicks and log lines (mod id masked). A new runtime (JVM, a client loader) adds its twins to the same table.
 

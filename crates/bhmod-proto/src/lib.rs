@@ -23,6 +23,8 @@ pub const CHUNK_SIZE: usize = 32 * 1024;
 pub const MAX_IN_FLIGHT: u64 = 8;
 /// Largest `CHANNEL` payload.
 pub const MAX_CHANNEL_PAYLOAD: usize = 32 * 1024;
+/// Largest `SERVICE_CALL` arguments and `SERVICE_RESULT` value (canonical CBOR bytes).
+pub const MAX_SERVICE_PAYLOAD: usize = 32 * 1024;
 /// Largest CBOR body.
 pub const MAX_BODY: usize = 1024 * 1024;
 /// How long a modded client waits for `SERVER_HELLO` before it carries on as a vanilla client.
@@ -42,6 +44,28 @@ pub mod file_error {
     pub const BUSY: u64 = 3;
     /// The server failed to read the file.
     pub const INTERNAL: u64 = 4;
+}
+
+/// `SERVICE_RESULT` failure codes (the `code` of an `ok = false` result).
+pub mod service_error {
+    /// No provider with that name is loaded on the answering side.
+    pub const NOT_FOUND: u8 = 1;
+    /// Providers exist but none matches the version requirement.
+    pub const VERSION_MISMATCH: u8 = 2;
+    /// The service (or the method) is not exposed to the other side.
+    pub const NOT_PERMITTED: u8 = 3;
+    /// Rate limited or too many calls in flight; retry later.
+    pub const BUSY: u8 = 4;
+    /// The provider returned an error on purpose; `message` is its text.
+    pub const PROVIDER_ERROR: u8 = 5;
+    /// The provider trapped or ran over its time budget.
+    pub const TRAP: u8 = 6;
+    /// The arguments or the result were not valid canonical CBOR for the call.
+    pub const BAD_VALUE: u8 = 7;
+    /// The arguments or the result are larger than the protocol allows.
+    pub const TOO_LARGE: u8 = 8;
+    /// Anything else (the answering side could not run the call).
+    pub const INTERNAL: u8 = 9;
 }
 
 /// A SHA-256 digest.
@@ -116,6 +140,10 @@ pub enum Op {
     ChannelRegister = 0x11,
     /// S->C, the cosmetics the players wear (M8).
     Cosmetics = 0x12,
+    /// Both directions, a cross-side service call (M10).
+    ServiceCall = 0x13,
+    /// Both directions, the answer to a `SERVICE_CALL` (M10).
+    ServiceResult = 0x14,
 }
 
 impl Op {
@@ -134,6 +162,8 @@ impl Op {
             0x10 => Op::Channel,
             0x11 => Op::ChannelRegister,
             0x12 => Op::Cosmetics,
+            0x13 => Op::ServiceCall,
+            0x14 => Op::ServiceResult,
             _ => return None,
         })
     }
@@ -312,6 +342,41 @@ pub struct Cosmetics {
     pub players: BTreeMap<String, BTreeMap<String, u64>>,
 }
 
+/// `SERVICE_CALL` (both): calls a service the other side provides.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ServiceCall {
+    /// Chosen by the caller, echoed by the `SERVICE_RESULT`; unique among the caller's open calls.
+    pub id: u32,
+    /// The calling mod (its id), for the answering side's rules and logs.
+    pub mod_id: String,
+    /// Service name.
+    pub service: String,
+    /// Semver requirement on the service version (`^1.1`).
+    pub version_req: String,
+    /// Method name.
+    pub method: String,
+    /// Canonical CBOR array of the arguments, up to [`MAX_SERVICE_PAYLOAD`] bytes.
+    pub args: Vec<u8>,
+}
+
+/// Why a service call failed on the answering side.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ServiceFailure {
+    /// One of [`service_error`].
+    pub code: u8,
+    /// Human readable detail (the provider's own error text for `PROVIDER_ERROR`).
+    pub message: String,
+}
+
+/// `SERVICE_RESULT` (both): the answer to the `SERVICE_CALL` with the same id.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ServiceResult {
+    /// The call this answers.
+    pub id: u32,
+    /// The result value (canonical CBOR, up to [`MAX_SERVICE_PAYLOAD`] bytes) or the failure.
+    pub outcome: Result<Vec<u8>, ServiceFailure>,
+}
+
 /// A decoded 0xBC packet.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Message {
@@ -339,6 +404,10 @@ pub enum Message {
     ChannelRegister(ChannelRegister),
     /// 0x12.
     Cosmetics(Cosmetics),
+    /// 0x13.
+    ServiceCall(ServiceCall),
+    /// 0x14.
+    ServiceResult(ServiceResult),
 }
 
 fn text(s: &str) -> Value {
@@ -377,6 +446,8 @@ impl Message {
             Message::Channel(_) => Op::Channel,
             Message::ChannelRegister(_) => Op::ChannelRegister,
             Message::Cosmetics(_) => Op::Cosmetics,
+            Message::ServiceCall(_) => Op::ServiceCall,
+            Message::ServiceResult(_) => Op::ServiceResult,
         }
     }
 
@@ -462,6 +533,27 @@ impl Message {
                     ),
                 ),
             ]),
+            Message::ServiceCall(c) => map(vec![
+                ("id", Value::Uint(u64::from(c.id))),
+                ("mod", text(&c.mod_id)),
+                ("service", text(&c.service)),
+                ("req", text(&c.version_req)),
+                ("method", text(&c.method)),
+                ("args", Value::Bytes(c.args.clone())),
+            ]),
+            Message::ServiceResult(r) => match &r.outcome {
+                Ok(v) => map(vec![
+                    ("id", Value::Uint(u64::from(r.id))),
+                    ("ok", Value::Bool(true)),
+                    ("value", Value::Bytes(v.clone())),
+                ]),
+                Err(f) => map(vec![
+                    ("id", Value::Uint(u64::from(r.id))),
+                    ("ok", Value::Bool(false)),
+                    ("code", Value::Uint(u64::from(f.code))),
+                    ("message", text(&f.message)),
+                ]),
+            },
             Message::FileChunk(c) => {
                 let mut raw = c.sha256.to_vec();
                 raw.extend(c.offset.to_le_bytes());
@@ -569,6 +661,26 @@ fn decode_cbor(op: Op, f: &Fields) -> Result<Message, Error> {
                 })
                 .collect::<Result<_, Error>>()?,
         }),
+        Op::ServiceCall => Message::ServiceCall(ServiceCall {
+            id: f.u32("id")?,
+            mod_id: f.text("mod")?,
+            service: f.text("service")?,
+            version_req: f.text("req")?,
+            method: f.text("method")?,
+            args: f.payload("args")?,
+        }),
+        Op::ServiceResult => {
+            let id = f.u32("id")?;
+            Message::ServiceResult(ServiceResult {
+                id,
+                outcome: if f.bool("ok")? {
+                    Ok(f.payload("value")?)
+                } else {
+                    let code = u8::try_from(f.uint("code")?).map_err(|_| Error::Type("code"))?;
+                    Err(ServiceFailure { code, message: f.text("message")? })
+                },
+            })
+        }
         // FILE_CHUNK and CHANNEL never reach here; CHANNEL_REGISTER is the remaining CBOR message.
         _ => Message::ChannelRegister(ChannelRegister { name: f.text("name")?, id: f.u16("id")? }),
     })
@@ -670,8 +782,21 @@ impl Fields {
         u16::try_from(self.uint(key)?).map_err(|_| Error::Type(key))
     }
 
+    fn u32(&self, key: &'static str) -> Result<u32, Error> {
+        u32::try_from(self.uint(key)?).map_err(|_| Error::Type(key))
+    }
+
     fn text(&self, key: &'static str) -> Result<String, Error> {
         as_text(self.req(key)?, key)
+    }
+
+    /// A byte string of at most [`MAX_SERVICE_PAYLOAD`] bytes.
+    fn payload(&self, key: &'static str) -> Result<Vec<u8>, Error> {
+        match self.req(key)? {
+            Value::Bytes(b) if b.len() > MAX_SERVICE_PAYLOAD => Err(Error::TooLarge("service payload")),
+            Value::Bytes(b) => Ok(b.clone()),
+            _ => Err(Error::Type(key)),
+        }
     }
 
     fn opt_text(&self, key: &'static str) -> Result<Option<String>, Error> {

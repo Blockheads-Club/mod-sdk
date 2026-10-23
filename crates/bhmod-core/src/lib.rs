@@ -40,6 +40,7 @@ pub mod host;
 pub mod jvm;
 #[cfg(feature = "luau")]
 pub mod lua;
+pub mod remote;
 pub mod resolve;
 pub mod runtime;
 pub mod scheduler;
@@ -51,10 +52,11 @@ pub mod value;
 
 pub use bridge::GameBridge;
 pub use host::{HostOptions, ModHost, ModInfo, ModState};
+pub use remote::{RemoteCall, RemoteCaller, RemoteError, RemoteLimits, RemoteTarget};
 pub use runtime::{CallError, HostApi, Instance, Runtime};
 
 /// The `blockheads:api` version this host implements.
-pub const API_VERSION: &str = "0.3.0";
+pub const API_VERSION: &str = "0.3.1";
 
 /// The runtimes compiled into this build.
 pub fn default_runtimes() -> Vec<Box<dyn Runtime>> {

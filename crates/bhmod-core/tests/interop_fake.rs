@@ -402,6 +402,10 @@ fn trait_defaults_for_0_1_code() {
     assert_eq!(api.ui_notice("t", bhmod_core::ui::NoticeLevel::Info), Err(ApiError::Unsupported));
     assert_eq!(api.ui_show_dialog(dialog), Err(ApiError::Unsupported));
     assert!(!api.ui_close_dialog(1));
+    let to = bhmod_core::RemoteTarget::Server;
+    assert_eq!(api.call_remote(to, "s", "^1", "m", &[0x80], 0), Err(ApiError::Unsupported));
+    assert!(!api.cancel_remote(1));
+    assert_eq!(api.remote_caller(), None);
     let mut p = Plain;
     assert!(
         matches!(p.call_service(&mut api, "s", "m", &[0x80]), Err(CallError::Failed(m)) if m.contains("does not implement"))
@@ -411,4 +415,14 @@ fn trait_defaults_for_0_1_code() {
     assert_eq!(nb.player_pos("p"), None);
     assert_eq!(nb.channel_send("m", "m:x", &ChannelTarget::Server, b""), Err(ApiError::Unsupported));
     assert_eq!(nb.ui("m", &bhmod_core::ui::UiCommand::ClearMod), Err(ApiError::Unsupported));
+    let call = bhmod_core::RemoteCall {
+        id: 1,
+        target: bhmod_core::RemoteTarget::Server,
+        mod_id: "m".into(),
+        service: "s".into(),
+        version_req: "*".into(),
+        method: "x".into(),
+        args: vec![0x80],
+    };
+    assert_eq!(nb.service_send(&call), Err(bhmod_core::RemoteError::Unavailable));
 }

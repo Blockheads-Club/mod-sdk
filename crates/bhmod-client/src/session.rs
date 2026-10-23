@@ -14,7 +14,7 @@ use bhmod_content::registry::Wire;
 use bhmod_manifest::Manifest;
 use bhmod_proto::{
     file_error, Channel, Cosmetics, FileRequest, Hash, Hello, Message, ModInfo, ModList, Ready, RejectText,
-    ServerHello, CHUNK_SIZE, HELLO_TIMEOUT_MS, MAX_CHANNEL_PAYLOAD, PROTO,
+    ServerHello, ServiceCall, ServiceResult, CHUNK_SIZE, HELLO_TIMEOUT_MS, MAX_CHANNEL_PAYLOAD, PROTO,
 };
 
 use crate::cache::PackageCache;
@@ -192,6 +192,10 @@ pub enum Output {
         /// Payload.
         data: Vec<u8>,
     },
+    /// The server calls a service of a client mod (`SERVICE_CALL`); answer with [`Session::service_result`].
+    ServiceCall(ServiceCall),
+    /// The server's answer to a call of a client mod (`SERVICE_RESULT`).
+    ServiceResult(ServiceResult),
 }
 
 #[derive(Debug, Clone)]
@@ -383,6 +387,8 @@ impl Session {
                 Vec::new()
             }
             Message::Cosmetics(c) if self.is_modded() => vec![Output::Cosmetics(c)],
+            Message::ServiceCall(c) if self.is_modded() => vec![Output::ServiceCall(c)],
+            Message::ServiceResult(r) if self.is_modded() => vec![Output::ServiceResult(r)],
             Message::Channel(c) if self.is_modded() => {
                 match self.channels.iter().find(|(_, id)| **id == c.channel_id) {
                     Some((name, _)) => vec![Output::Channel { name: name.clone(), data: c.payload }],
@@ -572,6 +578,16 @@ impl Session {
             }
             Err(e) => self.fail(Failure::LoadFailed(e)),
         }
+    }
+
+    /// A `SERVICE_CALL` packet (a client mod calls a service of the server's mods), when the session is modded.
+    pub fn service_call(&self, call: ServiceCall) -> Option<Vec<u8>> {
+        self.is_modded().then(|| Message::ServiceCall(call).encode())
+    }
+
+    /// A `SERVICE_RESULT` packet (the answer to a call of the server), when the session is modded.
+    pub fn service_result(&self, result: ServiceResult) -> Option<Vec<u8>> {
+        self.is_modded().then(|| Message::ServiceResult(result).encode())
     }
 
     /// A `CHANNEL` packet for a mod channel, when the session is modded and the server announced the channel.

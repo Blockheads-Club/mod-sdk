@@ -21,7 +21,11 @@ done
 mkdir -p "$root/examples/hud-rust/client"
 cp "$CARGO_TARGET_DIR/wasm32-wasip2/release/hud_rust.wasm" "$root/examples/hud-rust/client/mod.wasm"
 echo "built examples/hud-rust/client/mod.wasm"
-for g in guest guest01 guest02; do
+(cd "$root/examples/prices-rust" && cargo build $locked --release --target wasm32-wasip2 -q)
+mkdir -p "$root/examples/prices-rust/client"
+cp "$CARGO_TARGET_DIR/wasm32-wasip2/release/prices_rust.wasm" "$root/examples/prices-rust/client/mod.wasm"
+echo "built examples/prices-rust/client/mod.wasm"
+for g in guest guest01 guest02 guest03; do
   d="$root/crates/bhmod-wasm/tests/$g"
   (cd "$d" && cargo build $locked --release --target wasm32-wasip2 -q)
   mkdir -p "$d/out"

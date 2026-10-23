@@ -16,11 +16,12 @@ use bhmod_client::{Caps, Options, PackageCache, Session};
 use bhmod_content::Content;
 use bhmod_core::budget::Budgets;
 use bhmod_core::host::{HostOptions, ModHost, ModState};
+use bhmod_core::remote::{RemoteCall, RemoteError, RemoteTarget};
 use bhmod_core::runtime::Runtime;
 use bhmod_core::storage::FileStorage;
 use bhmod_core::types::{ApiError, ChannelSource, ChannelTarget, LogLevel, Role, Side};
 use bhmod_core::GameBridge;
-use bhmod_proto::{Hash, PACKET_TYPE};
+use bhmod_proto::{Hash, ServiceCall, ServiceFailure, ServiceResult, PACKET_TYPE};
 
 use crate::inbox::NetEvent;
 use crate::ui;
@@ -92,8 +93,15 @@ pub enum UiEvent {
 /// Builds the runtimes for a new host.
 pub type RuntimeFactory = Box<dyn Fn() -> Vec<Box<dyn Runtime>>>;
 
-/// Messages mods send on channels, flushed after every host call.
-type Outbox = Rc<RefCell<Vec<(String, Vec<u8>)>>>;
+/// What mods send to the server, flushed after every host call.
+enum Outgoing {
+    /// A channel message (name, data).
+    Channel(String, Vec<u8>),
+    /// A remote service call.
+    Call(RemoteCall),
+}
+
+type Outbox = Rc<RefCell<Vec<Outgoing>>>;
 
 struct Bridge<P: Platform> {
     p: Rc<P>,
@@ -136,11 +144,15 @@ impl<P: Platform> GameBridge for Bridge<P> {
     fn channel_send(&self, _mod_id: &str, name: &str, target: &ChannelTarget, data: &[u8]) -> Result<(), ApiError> {
         match target {
             ChannelTarget::Server => {
-                self.outbox.borrow_mut().push((name.to_string(), data.to_vec()));
+                self.outbox.borrow_mut().push(Outgoing::Channel(name.to_string(), data.to_vec()));
                 Ok(())
             }
             _ => Err(ApiError::Unsupported),
         }
+    }
+    fn service_send(&self, call: &RemoteCall) -> Result<(), RemoteError> {
+        self.outbox.borrow_mut().push(Outgoing::Call(call.clone()));
+        Ok(())
     }
 }
 
@@ -264,9 +276,14 @@ impl<P: Platform + 'static> Loader<P> {
         if self.session.take().is_some() {
             self.p.ui(ui::closed());
         }
+        if let Some(h) = self.host.as_mut() {
+            // Remote calls still open can never be answered.
+            h.remote_peer_gone(&RemoteTarget::Server);
+        }
         if self.world.is_none() {
             self.stop_host();
         }
+        self.flush_outbox();
     }
 
     /// An answer from the UI.
@@ -349,12 +366,35 @@ impl<P: Platform + 'static> Loader<P> {
         self.last_tick = 0;
     }
 
+    /// Sends what the mods queued. A failed call is answered to the mod at once (`unavailable`), which may queue
+    /// more, so this repeats (a mod that calls again from every failure cannot spin: the host caps its open calls).
     fn flush_outbox(&mut self) {
-        let msgs: Vec<_> = self.outbox.borrow_mut().drain(..).collect();
-        for (name, data) in msgs {
-            match self.session.as_ref().and_then(|s| s.channel(&name, &data)) {
-                Some(pkt) => self.p.send(&pkt),
-                None => self.p.log(LogLevel::Warn, &format!("channel {name}: not connected to a modded server")),
+        loop {
+            let msgs: Vec<_> = self.outbox.borrow_mut().drain(..).collect();
+            if msgs.is_empty() {
+                return;
+            }
+            for m in msgs {
+                match m {
+                    Outgoing::Channel(name, data) => {
+                        match self.session.as_ref().and_then(|s| s.channel(&name, &data)) {
+                            Some(pkt) => self.p.send(&pkt),
+                            None => {
+                                self.p.log(LogLevel::Warn, &format!("channel {name}: not connected to a modded server"))
+                            }
+                        }
+                    }
+                    Outgoing::Call(call) => {
+                        match self.session.as_ref().and_then(|s| s.service_call(ServiceCall::from(&call))) {
+                            Some(pkt) => self.p.send(&pkt),
+                            None => {
+                                if let Some(h) = self.host.as_mut() {
+                                    h.remote_result(&RemoteTarget::Server, call.id, Err(RemoteError::Unavailable));
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
     }
@@ -414,6 +454,28 @@ impl<P: Platform + 'static> Loader<P> {
                 Output::Channel { name, data } => {
                     if let Some(h) = self.host.as_mut() {
                         h.channel_receive(&name, ChannelSource::Server, data);
+                    }
+                }
+                Output::ServiceCall(c) => {
+                    let Some(h) = self.host.as_mut() else { continue };
+                    let out = h.remote_call_in(
+                        &RemoteTarget::Server,
+                        &c.mod_id,
+                        &c.service,
+                        &c.version_req,
+                        &c.method,
+                        &c.args,
+                    );
+                    let outcome = out.map_err(|e| ServiceFailure::from(&e));
+                    if let Some(pkt) =
+                        self.session.as_ref().and_then(|s| s.service_result(ServiceResult { id: c.id, outcome }))
+                    {
+                        self.p.send(&pkt);
+                    }
+                }
+                Output::ServiceResult(r) => {
+                    if let Some(h) = self.host.as_mut() {
+                        h.remote_result(&RemoteTarget::Server, r.id, r.outcome.map_err(RemoteError::from));
                     }
                 }
             }

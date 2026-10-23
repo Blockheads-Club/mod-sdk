@@ -1,0 +1,12 @@
+package blockheads-club:prices@1.0.0;
+
+/// The `prices` service of the price check mod. Callable from clients (`remote = true`), so every argument is
+/// checked and every answer is small.
+interface prices {
+    /// The price of an item in coins, or none when it is not for sale.
+    price: func(item: string) -> option<s64>;
+    /// The names of everything that is for sale, sorted.
+    catalog: func() -> list<string>;
+    /// Changes a price (server mods only: it is not in `remote-methods`).
+    update: func(item: string, coins: s64);
+}

@@ -230,10 +230,101 @@ pub mod log {
     }
 }
 
-/// Cross-mod services: values are canonical CBOR (players as `{"$h": player.value_handle()}`).
+/// Cross-mod services: values are canonical CBOR (players as `{"$h": player.value_handle()}`, see [`cbor`]).
+///
+/// Since API 0.3.1 a client mod can call a service a server mod provides, and the other way round: [`call_remote`]
+/// returns at once and the answer arrives later in the closure. The providing side lists the service with
+/// `remote = true` in its `mod.toml` `[provides]`; inside the provider [`caller`] tells who called.
 pub mod services {
-    pub use crate::wit::services::{call, provide, CallError};
+    use std::cell::{Cell, RefCell};
+    use std::collections::BTreeMap;
+
+    use crate::cbor::{self, Value};
+    use crate::{events, ApiError, Player};
+
+    pub use crate::wit::services::{call, provide, CallError, RemoteTarget as Target};
+
+    /// Why a remote call failed. `kind` is `not-found`, `version-mismatch`, `not-permitted`, `busy`,
+    /// `provider-error`, `trap`, `bad-value`, `too-large`, `internal` (the other side's answer) or `unavailable`,
+    /// `timeout`, `disconnected` (decided on this side).
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    pub struct RemoteError {
+        /// The kind of failure.
+        pub kind: String,
+        /// Detail text (the provider's own message for `provider-error`), often empty.
+        pub message: String,
+    }
+
+    type Callback = Box<dyn FnOnce(Result<Value, RemoteError>)>;
+
+    thread_local! {
+        static PENDING: RefCell<BTreeMap<u32, Callback>> = const { RefCell::new(BTreeMap::new()) };
+        static SUBSCRIBED: Cell<bool> = const { Cell::new(false) };
+    }
+
+    /// Reads the `service-result` event payload `{"id", "ok", "value" | "error": {"kind", "message"}}`.
+    fn answer(payload: &[u8]) {
+        let Ok(p) = Value::decode(payload) else { return };
+        let Some(id) = p.get("id").and_then(Value::as_i64).and_then(|n| u32::try_from(n).ok()) else { return };
+        let Some(f) = PENDING.with(|m| m.borrow_mut().remove(&id)) else { return };
+        let result = if p.get("ok").and_then(Value::as_bool) == Some(true) {
+            Ok(p.get("value").cloned().unwrap_or(Value::Null))
+        } else {
+            let e = p.get("error");
+            let text = |k: &str| e.and_then(|e| e.get(k)).and_then(Value::as_str).unwrap_or_default().to_string();
+            Err(RemoteError { kind: text("kind"), message: text("message") })
+        };
+        f(result);
+    }
+
+    /// Calls `method` of the best provider of `name` (matching the semver requirement `version_req`) on the other
+    /// side: the server from a client mod, a player's client from a server mod. `timeout_ms` of 0 means 5000, the
+    /// largest is 30000. Needs the `channels` permission. `f` runs once, later, with the result or the failure;
+    /// it never runs before this function returns. Returns the call id for [`cancel_remote`].
+    pub fn call_remote(
+        to: &Target<'_>,
+        name: &str,
+        version_req: &str,
+        method: &str,
+        args: &[Value],
+        timeout_ms: u32,
+        f: impl FnOnce(Result<Value, RemoteError>) + 'static,
+    ) -> Result<u32, ApiError> {
+        if !SUBSCRIBED.with(Cell::get) {
+            let event = format!("{}:service-result", crate::host::mod_id());
+            events::on_custom(&event, events::On::default(), |ctx| {
+                if let events::Event::Custom(c) = ctx.event() {
+                    answer(&c.payload);
+                }
+            })?;
+            SUBSCRIBED.with(|s| s.set(true));
+        }
+        let id = crate::wit::services::call_remote(to, name, version_req, method, &cbor::args(args), timeout_ms)?;
+        PENDING.with(|m| m.borrow_mut().insert(id, Box::new(f)));
+        Ok(id)
+    }
+
+    /// Forgets an open remote call: its closure never runs. False if it was not open.
+    pub fn cancel_remote(id: u32) -> bool {
+        PENDING.with(|m| m.borrow_mut().remove(&id));
+        crate::wit::services::cancel_remote(id)
+    }
+
+    /// Who made the remote call a provider is serving.
+    pub struct Caller {
+        /// The calling mod, on the other side.
+        pub mod_id: String,
+        /// The calling player when a client called this server mod; `None` when the server called this client mod.
+        pub player: Option<Player>,
+    }
+
+    /// The caller of the remote call being served right now; `None` for a call from a mod on this side.
+    pub fn caller() -> Option<Caller> {
+        crate::wit::services::caller().map(|c| Caller { mod_id: c.mod_id, player: c.player })
+    }
 }
+
+pub mod cbor;
 
 /// Named byte channels between mods (local delivery since API 0.2).
 pub mod channels {

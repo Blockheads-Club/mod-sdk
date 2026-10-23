@@ -1,0 +1,25 @@
+schema = 1
+id = "prices-lua"
+version = "0.1.0"
+name = { en = "Price check (Lua)", tr = "Fiyat sorgusu (Lua)" }
+description = { en = "Players type /price <item> and the client asks the server. Example of a service that clients may call (Luau)." }
+authors = ["Blockheads Club"]
+license = "MIT OR Apache-2.0"
+homepage = "https://github.com/Blockheads-Club/mod-sdk"
+api = "^0.3.1"
+
+[sides]
+server = true
+client = true
+
+[entry]
+server = { runtime = "lua", path = "server/main.luau" }
+client = { runtime = "lua", path = "client/main.luau" }
+
+# `channels` also covers calling the other side's services.
+[permissions]
+channels = true
+
+# `remote = true` lets clients call this service over the network; without it only server mods can.
+[provides]
+services = [{ name = "prices", version = "1.0.0", wit = "wit/prices.wit", remote = true, remote-methods = ["price", "catalog"] }]

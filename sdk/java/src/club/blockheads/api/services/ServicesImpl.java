@@ -29,4 +29,36 @@ public final class ServicesImpl implements Services {
         Object r = Wire.unwrap(b.call("services.call", name, versionReq, method, Wire.valueOut(args, b)), x -> new club.blockheads.api.services.CallErrorException(club.blockheads.api.services.CallError.fromWire(x, b)));
         return Wire.value(r, b);
     }
+
+    /**
+     * (0.3.1) Calls `method` of the best provider matching `version-req` on the other side. `args` is a canonical
+     * CBOR array of at most 32 KiB. `timeout-ms` is how long to wait for the answer: 0 means 5000, the largest is
+     * 30000. Fails at once with `invalid-argument` (bad names, requirement, arguments or timeout),
+     * `limit-exceeded` (too many open calls, arguments too large), `not-permitted` (no `channels` permission),
+     * `stale-handle` (the player left); everything else comes back as the `service-result` event.
+     */
+    @Override
+    public long callRemote(club.blockheads.api.services.RemoteTarget to, String name, String versionReq, String method, Object args, long timeoutMs) {
+        Object r = Wire.unwrap(b.call("services.call-remote", to.toWire(b), name, versionReq, method, Wire.valueOut(args, b), timeoutMs), x -> new club.blockheads.api.types.ApiErrorException(club.blockheads.api.types.ApiError.fromWire(x, b)));
+        return Wire.num(r);
+    }
+
+    /**
+     * (0.3.1) Forgets an open remote call: no event is delivered for it. False if it was not open.
+     */
+    @Override
+    public boolean cancelRemote(long id) {
+        Object r = b.call("services.cancel-remote", id);
+        return Wire.bool(r);
+    }
+
+    /**
+     * (0.3.1) The caller of the remote call being served right now (also inside services that provider calls),
+     * or none when `call-service` was reached from a local call.
+     */
+    @Override
+    public club.blockheads.api.services.RemoteCaller caller() {
+        Object r = b.call("services.caller");
+        return Wire.optIn(r, x0 -> club.blockheads.api.services.RemoteCaller.fromWire(x0, b));
+    }
 }

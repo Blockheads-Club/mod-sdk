@@ -81,8 +81,10 @@ client                                   modded server                  vanilla 
 | `10` | both | `CHANNEL` | raw: `channelId:u16le payload[0..=32768]` |
 | `11` | both | `CHANNEL_REGISTER` | `{name, id}` |
 | `12` | S->C | `COSMETICS` | `{full, players}` |
+| `13` | both | `SERVICE_CALL` | `{id, mod, service, req, method, args}` |
+| `14` | both | `SERVICE_RESULT` | `{id, ok, value}` or `{id, ok, code, message}` |
 
-Ops `09`, `0a`-`0f` and `13`-`ff` are reserved.
+Ops `09`, `0a`-`0f` and `15`-`ff` are reserved.
 
 ### 00 HELLO (client -> server)
 
@@ -213,6 +215,49 @@ clients in the game, and only by servers whose mods declare cosmetics.
 - A server resends a delta when a mod equips or takes off a cosmetic, and `{full: false, players: {id: {}}}` when the
   player leaves. Cosmetics are not saved by the server: mods re-equip on `player-join` from their own storage.
 
+### 13 SERVICE_CALL / 14 SERVICE_RESULT (both directions, after approval)
+
+Cross-side service calls (API 0.3.1, milestone M10): a client mod calls a service a server mod provides, and a server
+mod one a client mod provides. Both ops are CBOR maps, sent reliably, only between a modded client that is in the game
+and the server. The services are the ones of the mod host (`name@semver`, canonical CBOR values), see
+`docs/luau-api.md#remote-services-api-031`.
+
+`SERVICE_CALL`:
+
+| Key | Type | Meaning |
+| --- | --- | --- |
+| `id` | uint ≤ 4294967295 | Chosen by the caller, unique among its open calls (`0` is never used). The answer carries it back. Ids of the two directions are independent. |
+| `mod` | text | The calling mod (`[a-z0-9_-]{2,40}`), for the answering side's logs and for `services.caller`. |
+| `service` | text | Service name. |
+| `req` | text | Semver requirement on the service version (`^1.1`). |
+| `method` | text | Method name (≤ 64 bytes). |
+| `args` | bytes | Canonical CBOR **array** of the arguments, at most 32768 bytes. |
+
+`SERVICE_RESULT`:
+
+| Key | Type | Meaning |
+| --- | --- | --- |
+| `id` | uint | The call it answers. |
+| `ok` | bool | `true`: the call returned. |
+| `value` | bytes | With `ok = true`: the canonical CBOR result, at most 32768 bytes. |
+| `code` | uint ≤ 255 | With `ok = false`: `1` NOT_FOUND (no provider of that name), `2` VERSION_MISMATCH, `3` NOT_PERMITTED (the service or method is not exposed to the other side), `4` BUSY (rate limited, too many calls, mods not running), `5` PROVIDER_ERROR (the provider returned an error on purpose), `6` TRAP (the provider crashed or ran out of time), `7` BAD_VALUE (arguments or result are not valid values), `8` TOO_LARGE, `9` INTERNAL. An unknown code reads as INTERNAL. |
+| `message` | text | With `ok = false`: detail text, at most 256 bytes; for PROVIDER_ERROR the provider's own text without any traceback. |
+
+Rules:
+
+- The answering side runs the service under the **providing mod's** time budget, on its main thread, and answers with
+  exactly one `SERVICE_RESULT` per accepted `SERVICE_CALL` (also a failure). It never answers a call it could not
+  decode (malformed packets are dropped), so a caller always needs its own timeout.
+- Only services the provider declared `remote = true` in its `mod.toml` `[provides]` (optionally only the methods in
+  `remote-methods`) can be reached; everything else answers NOT_PERMITTED. Exposure is the provider's decision alone.
+- The answering side limits each peer (reference server: a burst of 20 calls, then 10 per second per player, and 200 / 100 per second for
+  all players together); more gets BUSY.
+- The caller times out locally (default 5 s, at most 30 s; the call then fails with `timeout`, a late answer is
+  dropped) and fails open calls with `disconnected` when the peer leaves. The ids, the timeout and the `unavailable`
+  failure (no modded peer) are not on the wire.
+- An older peer that does not know the ops ignores them (section 9), so the caller sees a timeout. Vanilla clients
+  never receive a byte; a server without mods does not handle the ops.
+
 ## 6. Join after acceptance
 
 After `READY` the client sends its normal 0x1f player-information plist with **one extra key**:
@@ -300,8 +345,8 @@ Example, `02-list-request.hex`: `bc02a0`. `10-channel.hex` (channel 1, payload `
 
 ## 9. Versioning
 
-`proto` is bumped only for incompatible changes (`COSMETICS` is a compatible addition: an older client ignores the
-unknown op). New keys and new ops are compatible additions (ignored by older
+`proto` is bumped only for incompatible changes (`COSMETICS`, `SERVICE_CALL` and `SERVICE_RESULT` are compatible
+additions: an older client ignores the unknown op). New keys and new ops are compatible additions (ignored by older
 peers). The API version (`HELLO.api`, `mod.toml` `api`) is independent of `proto`.
 
 ## 10. Server behaviour (blockheads-server, M5)
@@ -324,5 +369,10 @@ Clarifications that hold for the reference server; clients must not depend on mo
 - `REJECT_TEXT` precedes the 0x26 rejection of a modded client (one that sent `HELLO`) for a protocol mismatch, a
   missing or stale `bhcModLoader`, and a refusal by a server mod (`player-pre-login`; the reason byte is the mod's).
   Peers that never sent `HELLO` get only the vanilla 0x26.
+- `SERVICE_CALL` and `SERVICE_RESULT` are accepted only from players in the game that sent `HELLO` (the same rule as
+  `CHANNEL`). A server mod calling a player without the mod loader (or not in the game) fails locally with
+  `unavailable`; nothing is sent. The `mod` of an incoming call must be a mod in the player's `READY.loaded` (a peer that
+  never sent `READY` is not restricted, as for channels), otherwise the answer is NOT_PERMITTED and no token is used;
+  beyond that the provider's `remote = true` is the gate.
 - A server mod sending on a channel to a player without the mod loader (or not in the game) is a silent no-op;
   `all-players` reaches every modded player in the game.
