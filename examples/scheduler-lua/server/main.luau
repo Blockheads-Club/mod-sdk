@@ -2,6 +2,7 @@
 -- scheduler-lua: delayed and repeating tasks. One tick is one world step (0.2 s on the server), so 5 ticks = 1 s.
 
 local TICKS_PER_SECOND = 5
+local MAX_REMIND_SECONDS = 86400
 
 local mod = {}
 local countdown: number? = nil
@@ -21,7 +22,8 @@ function mod.on_enable()
 		if countdown then
 			return { handled = true, reply = { "A countdown is already running." } }
 		end
-		local left = math.clamp(tonumber(args[1]) or 3, 1, 10)
+		-- A whole number of seconds: a fraction such as 2.5 would never reach 0 and the countdown would run forever.
+		local left = math.floor(math.clamp(tonumber(args[1]) or 3, 1, 10))
 		local id: number
 		id = bh.scheduler.run_every(0, TICKS_PER_SECOND, function()
 			if left == 0 then
@@ -48,12 +50,17 @@ function mod.on_enable()
 		if not seconds or #args < 2 or not who then
 			return { handled = false, reply = {} }
 		end
+		-- Negative or huge delays are not valid ticks (a Luau error counts as a fault), so keep them in range.
+		seconds = math.clamp(seconds, 0, MAX_REMIND_SECONDS)
 		local text = table.concat(args, " ", 2)
-		bh.scheduler.run_later(math.floor(seconds * TICKS_PER_SECOND), function()
+		local ok = pcall(bh.scheduler.run_later, math.floor(seconds * TICKS_PER_SECOND), function()
 			if who:is_online() then
 				who:send_chat("Reminder: " .. text)
 			end
 		end)
+		if not ok then
+			return { handled = true, reply = { "Too many reminders are waiting; try again later." } }
+		end
 		bh.scheduler.run_next_poll(function()
 			if who:is_online() then
 				who:send_chat(`OK, I will remind you in {seconds} s.`)

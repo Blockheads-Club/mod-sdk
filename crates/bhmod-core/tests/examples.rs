@@ -123,6 +123,17 @@ fn scheduler_lua() {
         h.tick(0.2);
     }
     assert_eq!(b.take_chats(), vec![("p1".into(), "Reminder: drink water".into())]);
+    // A fractional countdown still ends, and a negative or huge delay is clamped instead of faulting the mod.
+    assert_eq!(h.command(player("p1"), "/countdown 1.5"), Some(vec![]));
+    for _ in 0..15 {
+        h.tick(0.2);
+    }
+    assert_eq!(b.take_broadcasts(), vec!["1", "Go!"]);
+    assert_eq!(h.command(player("p1"), "/remind -5 now"), Some(vec![]));
+    assert_eq!(h.command(player("p1"), "/remind 1e12 never"), Some(vec![]));
+    assert_eq!(h.mods()[0].state, ModState::Enabled, "{}", b.log_text());
+    h.poll();
+    b.take_chats();
     assert_eq!(h.command(player("p1"), "/remind soon"), Some(vec!["Usage: /remind <seconds> <text>".into()]));
     assert_eq!(h.command(CommandSender::Console, "/remind 1 x"), Some(vec!["Usage: /remind <seconds> <text>".into()]));
     // A reminder for a player who left is dropped.
