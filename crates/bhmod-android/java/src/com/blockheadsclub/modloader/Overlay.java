@@ -55,6 +55,7 @@ final class Overlay {
         if (attachedTo == a && added.contains(markWin)) return;
         detach();
         attachedTo = a;
+        Fonts.load(a);
         root = new FrameLayout(a);
         markWin = new FrameLayout(a);
         mark = Kit.badge(a, Strings.t("mark", "v", version), Kit.TEXT, Kit.panel(a));
@@ -145,6 +146,7 @@ final class Overlay {
 
     static void updateMark() {
         if (mark == null) return;
+        mark.setTypeface(Kit.title);
         mark.setText(Strings.t("mark", "v", version));
         mark.setVisibility(ready && !inWorld && dialog == null ? View.VISIBLE : View.GONE);
     }
@@ -154,6 +156,8 @@ final class Overlay {
         String t = c.optString("t");
         switch (t) {
             case "ready":
+                if (activity() != null) Fonts.load(activity());
+                Native.ok(new Runnable() { public void run() { Native.setModsLabel(Strings.t("mods").toUpperCase(java.util.Locale.getDefault())); } });
                 if (!added.contains(markWin)) { Activity a = activity(); if (a != null) { attachedTo = null; attach(a); } }
                 ready = c.optBoolean("hooks", false);
                 version = c.optString("version", version);
@@ -161,13 +165,17 @@ final class Overlay {
                 maybeWelcome();
                 Bridge.ui.postDelayed(new Runnable() { public void run() { raise(); } }, 5000);
                 break;
+            case "open-mods":
+                ModsScreen.open();
+                break;
             case "world":
                 inWorld = c.optBoolean("open");
                 updateMark();
                 raise();
                 break;
             default:
-                JoinFlow.command(t, c);
+                if (ModUi.handles(t)) ModUi.command(t, c);
+                else JoinFlow.command(t, c);
         }
     }
 
@@ -192,7 +200,9 @@ final class Overlay {
         }
         TextView tv = Kit.title(a, title);
         if (Build.VERSION.SDK_INT >= 28) tv.setAccessibilityHeading(true);
-        Kit.ellipsize(tv);
+        // A long title (a server name in a narrow portrait window) wraps to up to three lines instead of being cut off.
+        tv.setMaxLines(3);
+        tv.setEllipsize(android.text.TextUtils.TruncateAt.END);
         head.addView(tv, Kit.weight(1));
         panel.addView(head, Kit.fill());
         ScrollView sv = new ScrollView(a);

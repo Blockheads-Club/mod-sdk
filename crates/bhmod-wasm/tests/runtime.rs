@@ -64,7 +64,7 @@ fn tour_calls_every_import() {
     let log = b.log_text();
     assert_eq!(h.mods()[0].state, ModState::Enabled, "{log}");
     for line in [
-        "api = \"0.2.0\"",
+        "api = \"0.3.0\"",
         "id = \"tour\"",
         "version = \"1.2.3\"",
         "side = Side::Server",
@@ -314,7 +314,7 @@ fn bad_components_are_refused() {
     // A component without the guest export.
     f.files.insert("server/missing.wasm".into(), b"(component)".to_vec());
     let e = rt.instantiate("m", &f, LIMITS).err().unwrap();
-    assert!(e.contains("no exported instance named `blockheads:api/guest@0.2.0`"), "{e}");
+    assert!(e.contains("no exported instance named `blockheads:api/guest@0.3.0`"), "{e}");
 }
 
 #[test]
@@ -448,6 +448,11 @@ fn guest01_wasm() -> Vec<u8> {
     fs::read(&p).unwrap_or_else(|e| panic!("{}: {e} (run scripts/build-wasm.sh first)", p.display()))
 }
 
+fn guest02_wasm() -> Vec<u8> {
+    let p = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/guest02/out/guest02.wasm");
+    fs::read(&p).unwrap_or_else(|e| panic!("{}: {e} (run scripts/build-wasm.sh first)", p.display()))
+}
+
 /// A `blockheads:api@0.1.0` component next to 0.2 ones: every 0.1 import and export, services and channels across
 /// versions.
 #[test]
@@ -477,7 +482,7 @@ fn api_0_1_components_still_work() {
         assert_eq!(info.state, ModState::Enabled, "{}: {log}", info.id);
     }
     for line in [
-        "old: api = (\"0.2.0\", \"old\", \"1.0.0\", Side::Server, \"fake-host 1.0\")",
+        "old: api = (\"0.3.0\", \"old\", \"1.0.0\", Side::Server, \"fake-host 1.0\")",
         "[trace] old: lvl",
         "old: p = (\"p1\", \"ALICE\", true, Role::Player, Ok(()), Ok(()))",
         "old: find = Some(\"p1\")",
@@ -537,6 +542,69 @@ fn api_0_1_components_still_work() {
     assert!(b.has_log("old message = (3, \"server\", \"\\u{1}\")"), "{}", b.log_text());
     assert!(b.has_log("old message = (3, \"p1\", \"\\u{2}\")"));
     assert!(b.has_log("old message = (3, \"tour\", "));
+    h.disable_all();
+    assert!(b.has_log("old disabled"));
+}
+
+/// A `blockheads:api@0.2.0` component (the frozen WIT, no `ui`) next to a 0.3 one: its imports, the 0.2 events with
+/// their mutations, and services across versions.
+#[test]
+fn api_0_2_components_still_work() {
+    let tmp = tempfile::tempdir().unwrap();
+    let m = tmp.path();
+    wasm_mod(m, "tour", TOUR_TOML, &guest_wasm());
+    let old = "[permissions]\nplayers = [\"chat\", \"kick\"]\nchannels = true\n[dependencies]\ntour = \"^1\"\n[provides]\nservices = [{ name = \"old\", version = \"1.0.0\", wit = \"wit/tour.wit\" }]\n";
+    wasm_mod(m, "old", old, &guest02_wasm());
+    wasm_mod(m, "caller", "[dependencies]\nold = \"^1\"\n", &guest_wasm());
+    fs::write(
+        m.join("mods.toml"),
+        format!("{TOUR_GRANTS}[old]\ngrant = [\"players:chat\", \"players:kick\", \"channels\"]\n"),
+    )
+    .unwrap();
+    for id in ["old", "caller"] {
+        let t = m.join(id).join("mod.toml");
+        fs::write(&t, fs::read_to_string(&t).unwrap().replace("version = \"1.2.3\"", "version = \"1.0.0\"")).unwrap();
+    }
+    let (b, mut h) = host(m, WasmConfig::default());
+    b.join("p1", "ALICE", Role::Player);
+    b.join("p2", "BOB", Role::Player);
+    b.positions.borrow_mut().push(("p1".into(), bhmod_core::types::Pos { x: 7, y: 9 }));
+    h.enable("World", "wid");
+    let log = b.log_text();
+    for info in h.mods() {
+        assert_eq!(info.state, ModState::Enabled, "{}: {log}", info.id);
+    }
+    for line in [
+        "old: api = (\"0.3.0\", \"old\"",
+        "old: pos = (Some(Pos { x: 7, y: 9 }), true, Some(\"p1\"))",
+        "old: call = Ok([129, 1])",
+        "old: send = Ok(())",
+    ] {
+        assert!(log.contains(line), "missing {line:?} in\n{log}");
+    }
+    // 0.2 events in their shape, with the 0.2 mutations applied.
+    let ev = h.fire(Event::PlayerPreLogin {
+        player: "p3".into(),
+        alias: "CARL".into(),
+        cancelled: false,
+        reason: bhmod_core::types::RejectReason::ClientTooOld,
+    });
+    assert!(ev.cancelled());
+    assert!(matches!(ev, Event::PlayerPreLogin { reason: bhmod_core::types::RejectReason::Banned, .. }));
+    let ev = h.fire(Event::Damage { player: None, blockhead: 5, amount: 1.5, attacker: None, cancelled: false });
+    // The `tour` guest (0.3) sets the final amount after the 0.2 one doubled it.
+    assert!(matches!(ev, Event::Damage { amount, .. } if (amount - 0.25).abs() < 1e-6), "{ev:?}");
+    assert!(b.has_log("old pre-login = (\"p3\", \"CARL\")"), "{}", b.log_text());
+    assert!(b.has_log("old damage = (5, 1.5)"));
+    // Commands, tasks, services and channels through the 0.2 bindings.
+    assert_eq!(h.command(CommandSender::Player("p1".into()), "/old x"), Some(vec!["ALICE ran old".into()]));
+    h.tick(0.2);
+    h.tick(0.2);
+    assert!(b.has_log("old task = "), "{}", b.log_text());
+    assert!(b.log_text().contains("caller: echo = Ok([129, 2])"), "{}", b.log_text());
+    assert!(h.channel_receive("tour:c", ChannelSourceAlias::Server, vec![1]));
+    h.poll();
+    assert!(b.has_log("old message = (3, \"server\", \"\\u{1}\")"), "{}", b.log_text());
     h.disable_all();
     assert!(b.has_log("old disabled"));
 }

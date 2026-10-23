@@ -4,6 +4,7 @@
 //! mod call is running, so implementations must not call back into the [`crate::ModHost`].
 
 use crate::types::{ApiError, ChannelTarget, LogLevel, Pos, Role, Side};
+use crate::ui::UiCommand;
 
 /// The game side of the mod host. Players are identified by their player id string (the vanilla `playerID`).
 pub trait GameBridge {
@@ -48,6 +49,13 @@ pub trait GameBridge {
     /// [`ApiError::Unsupported`].
     fn channel_send(&self, mod_id: &str, name: &str, target: &ChannelTarget, data: &[u8]) -> Result<(), ApiError> {
         let _ = (mod_id, name, target, data);
+        Err(ApiError::Unsupported)
+    }
+
+    /// Draws mod UI (API 0.3 `ui`; clients only). The command is already validated and limited
+    /// ([`crate::ui`]); the default, for hosts without a UI such as the server, reports [`ApiError::Unsupported`].
+    fn ui(&self, mod_id: &str, command: &UiCommand) -> Result<(), ApiError> {
+        let _ = (mod_id, command);
         Err(ApiError::Unsupported)
     }
 }

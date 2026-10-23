@@ -36,7 +36,7 @@ input always gives the same bytes and the same SHA-256.
 
 ## Semantic `mod.toml` rules (beyond the JSON Schema)
 
-- `api` must match one of the API versions the SDK serves (`0.1.0`, `0.2.0`; see [luau-api.md](luau-api.md#api-versions)); `loader` and dependency versions must be semver requirements.
+- `api` must match one of the API versions the SDK serves (`0.1.0`, `0.2.0`, `0.3.0`; see [luau-api.md](luau-api.md#api-versions)); `loader` and dependency versions must be semver requirements.
 - Each enabled side needs exactly one entry point inside `<side>/` (not `<side>/native/`); a disabled side must not have one.
 - Runtime and extension match: `wasm` → `.wasm`, `lua` → `.luau`, `jvm` → `.jar`. `jvm` needs `permissions.native = true`.
 - No self-dependency; an id may not be in both `dependencies` and `soft-dependencies`.

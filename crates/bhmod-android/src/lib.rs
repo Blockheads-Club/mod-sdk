@@ -9,8 +9,10 @@
 #![warn(missing_docs)]
 
 pub mod api;
+pub mod fonts;
 pub mod inbox;
 pub mod loader;
+pub mod menus;
 pub mod ui;
 
 #[cfg(test)]
@@ -38,12 +40,14 @@ pub fn kinds() -> Vec<Kind> {
 }
 
 /// Mod budgets on 32-bit phones: interpreted Luau and Pulley run several times slower than on a server, and the first
-/// call of a mod also compiles it, so the hard limit is wider than the server's 25 ms (to be tuned on devices).
+/// call of a mod also compiles it, so the hard limit is wider than the server's 25 ms. Measured on a Galaxy Z Fold4
+/// (a 20k-step workload took Luau 14.7 ms median / 20.5 ms worst, Pulley 2 ms; `on-enable` 10 to 20 ms for Luau),
+/// so 100 ms leaves room for a slower phone without letting a mod stall a frame for a quarter of a second.
 pub fn budgets() -> bhmod_core::budget::Budgets {
     use std::time::Duration;
     bhmod_core::budget::Budgets {
         soft: Duration::from_millis(10),
-        hard: Duration::from_millis(250),
+        hard: Duration::from_millis(100),
         step: Duration::from_millis(40),
         ..Default::default()
     }
