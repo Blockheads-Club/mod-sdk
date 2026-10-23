@@ -196,6 +196,19 @@ fn provides() {
         &svc("{ name = \"xx\", version = \"1.0.0\", wit = \"wit/x.wit\" }, { name = \"xx\", version = \"1.0.0\", wit = \"wit/x.wit\" }"),
         "duplicate service name",
     );
+    let remote = |extra: &str| svc(&format!("{{ name = \"xx\", version = \"1.0.0\", wit = \"wit/x.wit\"{extra} }}"));
+    has(&remote(", remote-methods = [\"a\"]"), "remote-methods needs remote = true");
+    has(&remote(", remote = true, remote-methods = [\"a\", \"a\"]"), "duplicate remote-methods");
+    has(&remote(", remote = true, remote-methods = [\"a b\"]"), "remote-methods must match");
+    has(&remote(", remote = true, remote-methods = [\"\"]"), "remote-methods must match");
+    let long = "a".repeat(65);
+    has(&remote(&format!(", remote = true, remote-methods = [\"{long}\"]")), "remote-methods must match");
+    let ok = Manifest::parse(&format!(
+        "{BASE}{SERVER}[provides]\nservices = [{{ name = \"xx\", version = \"1.0.0\", wit = \"wit/x.wit\", remote = true, remote-methods = [\"get_1.x-y\"] }}]\n"
+    ))
+    .unwrap();
+    assert!(ok.provides.services[0].remote);
+    assert_eq!(ok.provides.services[0].remote_methods, ["get_1.x-y"]);
 }
 
 #[test]

@@ -30,6 +30,10 @@ pub fn package_files(id: &str, version: &str, perms: &str, entry: &str, src: &st
         fs::create_dir_all(p.parent().unwrap()).unwrap();
         fs::write(p, bytes).unwrap();
     }
+    if perms.contains("[provides]") {
+        fs::create_dir_all(t.path().join("wit")).unwrap();
+        fs::write(t.path().join("wit/hud.wit"), "package demo:hud@1.0.0;\n").unwrap();
+    }
     let mut s = DirSource::open(t.path()).unwrap();
     write_zip(&mut s, std::io::Cursor::new(Vec::new())).unwrap().into_inner()
 }

@@ -10,6 +10,7 @@ use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 use bhmod_core::budget::Clock;
+use bhmod_core::remote::{RemoteCall, RemoteError};
 use bhmod_core::types::{ApiError, ChannelTarget, ContentKind, LogLevel, Pos, Role, Side};
 use bhmod_core::ui::UiCommand;
 use bhmod_core::GameBridge;
@@ -36,6 +37,10 @@ pub struct FakeBridge {
     pub ui: RefCell<Vec<(String, UiCommand)>>,
     /// True: the bridge has no UI (the server), `ui` answers `unsupported`.
     pub no_ui: Cell<bool>,
+    /// The remote service calls the bridge was asked to send.
+    pub remote_calls: RefCell<Vec<RemoteCall>>,
+    /// When set, `service_send` fails with this error (and sends nothing).
+    pub remote_fail: RefCell<Option<RemoteError>>,
 }
 
 impl FakeBridge {
@@ -75,6 +80,13 @@ impl GameBridge for FakeBridge {
     }
     fn host_name(&self) -> String {
         "fake-host 1.0".into()
+    }
+    fn service_send(&self, call: &RemoteCall) -> Result<(), RemoteError> {
+        if let Some(e) = self.remote_fail.borrow().clone() {
+            return Err(e);
+        }
+        self.remote_calls.borrow_mut().push(call.clone());
+        Ok(())
     }
     fn log(&self, mod_id: Option<&str>, level: LogLevel, message: &str) {
         self.logs.borrow_mut().push((mod_id.map(str::to_string), level, message.to_string()));
@@ -161,6 +173,14 @@ pub struct FakeClock {
 impl FakeClock {
     pub fn new() -> FakeClock {
         FakeClock { now: Rc::new(Cell::new(Instant::now())), auto: Rc::new(Cell::new(Duration::ZERO)) }
+    }
+    /// A clock an hour ahead of the real one, for tests that run Luau under it: guest deadlines are compared with the
+    /// real clock, so a manual clock that stands still must not be behind it.
+    pub fn ahead() -> FakeClock {
+        FakeClock {
+            now: Rc::new(Cell::new(Instant::now() + Duration::from_secs(3600))),
+            auto: Rc::new(Cell::new(Duration::ZERO)),
+        }
     }
     pub fn advance(&self, d: Duration) {
         self.now.set(self.now.get() + d);

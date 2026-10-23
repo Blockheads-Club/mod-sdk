@@ -19,6 +19,7 @@ jvm = ["dep:jni"]
 
 [dependencies]
 bhmod-manifest.workspace = true
+bhmod-proto.workspace = true
 serde.workspace = true
 toml.workspace = true
 semver.workspace = true

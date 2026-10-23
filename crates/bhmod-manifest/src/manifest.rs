@@ -5,7 +5,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use semver::{Version, VersionReq};
 use serde::Deserialize;
 
-use crate::rules::{check_path, is_host, is_lang, is_mod_id, is_slug};
+use crate::rules::{check_path, is_host, is_lang, is_method_name, is_mod_id, is_slug};
 use crate::{Issue, SCHEMA_VERSION, SUPPORTED_API_VERSIONS};
 
 /// A localized text: language code -> text. `en` is required.
@@ -227,6 +227,13 @@ pub struct ServiceDecl {
     pub version: String,
     /// WIT file under `wit/`.
     pub wit: String,
+    /// (API 0.3.1) True: the other side (clients for a server mod, the server for a client mod) may call this
+    /// service over the network. Off by default; the provider alone decides.
+    #[serde(default)]
+    pub remote: bool,
+    /// (API 0.3.1) Limits `remote` to these methods; empty means every method.
+    #[serde(default, rename = "remote-methods")]
+    pub remote_methods: Vec<String>,
 }
 
 /// `[content]`.
@@ -464,6 +471,16 @@ impl Manifest {
             }
             if check_path(&s.wit).is_err() || !s.wit.starts_with("wit/") || !s.wit.ends_with(".wit") {
                 v.push(Issue::new(&key, "wit must be a .wit file under wit/"));
+            }
+            if !s.remote && !s.remote_methods.is_empty() {
+                v.push(Issue::new(&key, "remote-methods needs remote = true"));
+            }
+            let methods: BTreeSet<_> = s.remote_methods.iter().collect();
+            if methods.len() != s.remote_methods.len() {
+                v.push(Issue::new(&key, "duplicate remote-methods"));
+            }
+            if s.remote_methods.iter().any(|m| !is_method_name(m)) {
+                v.push(Issue::new(&key, "remote-methods must match [A-Za-z0-9_.-]{1,64}"));
             }
         }
     }

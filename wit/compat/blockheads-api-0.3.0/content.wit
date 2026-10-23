@@ -1,0 +1,49 @@
+package blockheads:api@0.3.0;
+
+/// (0.3) Content a mod declares in `[content]` of `mod.toml` and the numeric ids the world gave it, plus cosmetics:
+/// a server mod puts one of its own cosmetics on a player and the modded clients draw it.
+interface content {
+    use types.{api-error};
+    use players.{player};
+
+    /// A kind of content.
+    enum kind {
+        /// A block.
+        block,
+        /// An item.
+        item,
+        /// A cosmetic (hat, shirt, pants, shoes, hair, weapon skin).
+        cosmetic,
+    }
+
+    /// A cosmetic of a loaded mod.
+    record cosmetic-info {
+        /// `<mod-id>:<name>`.
+        key: string,
+        /// The mod that declares it.
+        mod-id: string,
+        /// `hat`, `shirt`, `pants`, `shoes`, `hair` or `weapon`.
+        slot: string,
+        /// The world's id; `none` on hosts that keep no registry.
+        id: option<u32>,
+    }
+
+    /// The id this world gave a declared key; `none` for an unknown key or on hosts without a registry.
+    id-of: func(kind: kind, key: string) -> option<u32>;
+
+    /// The key of an id; `none` when unknown.
+    key-of: func(kind: kind, id: u32) -> option<string>;
+
+    /// The cosmetics of all loaded mods.
+    cosmetics: func() -> list<cosmetic-info>;
+
+    /// What a player wears as (slot, key) pairs.
+    equipped: func(who: borrow<player>) -> result<list<tuple<string, string>>, api-error>;
+
+    /// Puts one of the calling mod's cosmetics on a player, replacing the one in its slot. Other mods' keys give
+    /// `not-permitted`, unknown keys `invalid-argument`, a player who left `stale-handle`; clients get `unsupported`.
+    equip: func(who: borrow<player>, key: string) -> result<_, api-error>;
+
+    /// Takes the cosmetic of `slot` off a player.
+    unequip: func(who: borrow<player>, slot: string) -> result<_, api-error>;
+}

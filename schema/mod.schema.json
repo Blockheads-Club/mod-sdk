@@ -71,8 +71,17 @@
             "properties": {
               "name": { "$ref": "#/$defs/modId" },
               "version": { "$ref": "#/$defs/semver" },
-              "wit": { "$ref": "#/$defs/path", "pattern": "^wit/.*\\.wit$" }
-            }
+              "wit": { "$ref": "#/$defs/path", "pattern": "^wit/.*\\.wit$" },
+              "remote": { "type": "boolean", "default": false, "description": "API 0.3.1: the other side (clients for a server mod, the server for a client mod) may call this service over the network." },
+              "remote-methods": {
+                "type": "array",
+                "uniqueItems": true,
+                "items": { "type": "string", "pattern": "^[A-Za-z0-9_.-]{1,64}$" },
+                "description": "Limits `remote` to these methods; empty means every method."
+              }
+            },
+            "if": { "required": ["remote-methods"], "properties": { "remote-methods": { "minItems": 1 } } },
+            "then": { "required": ["remote"], "properties": { "remote": { "const": true } } }
           }
         }
       }

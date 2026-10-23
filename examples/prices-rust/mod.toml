@@ -1,0 +1,19 @@
+schema = 1
+id = "prices-rust"
+version = "0.1.0"
+name = { en = "Price check (Rust)", tr = "Fiyat sorgusu (Rust)" }
+description = { en = "Players type /price <item> and the client asks the server. Rust twin of the client half of prices-lua." }
+authors = ["Blockheads Club"]
+license = "MIT OR Apache-2.0"
+homepage = "https://github.com/Blockheads-Club/mod-sdk"
+api = "^0.3.1"
+
+[sides]
+server = false
+client = true
+
+[entry]
+client = { runtime = "wasm", path = "client/mod.wasm" }
+
+[permissions]
+channels = true

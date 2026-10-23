@@ -1,4 +1,4 @@
-//! The code wasmtime generates from `wit/blockheads-api` (`blockheads:api@0.3.0`, world `client-mod`: the imports of
+//! The code wasmtime generates from `wit/blockheads-api` (`blockheads:api@0.3.1`, world `client-mod`: the imports of
 //! both worlds and the same `guest` export, so it serves server and client mods) and from the frozen
 //! `wit/compat/blockheads-api-0.2.0` ([`v02`]) and `wit/compat/blockheads-api-0.1.0` ([`v01`]), so components built
 //! against any of the three versions load.

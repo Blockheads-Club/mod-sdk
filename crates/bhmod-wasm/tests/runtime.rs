@@ -50,7 +50,7 @@ fn one(id: &str, extra: &str, grants: &str) -> (tempfile::TempDir, Rc<FakeBridge
     (tmp, b, h)
 }
 
-const TOUR_TOML: &str = "[permissions]\nplayers = [\"chat\", \"kick\"]\nchannels = true\n[provides]\nservices = [{ name = \"tour\", version = \"1.0.0\", wit = \"wit/tour.wit\" }]\n";
+const TOUR_TOML: &str = "[permissions]\nplayers = [\"chat\", \"kick\"]\nchannels = true\n[provides]\nservices = [{ name = \"tour\", version = \"1.0.0\", wit = \"wit/tour.wit\", remote = true, remote-methods = [\"whoami\", \"garbage\"] }]\n";
 const TOUR_GRANTS: &str = "[tour]\ngrant = [\"players:chat\", \"players:kick\", \"channels\"]\n";
 
 #[test]
@@ -64,7 +64,7 @@ fn tour_calls_every_import() {
     let log = b.log_text();
     assert_eq!(h.mods()[0].state, ModState::Enabled, "{log}");
     for line in [
-        "api = \"0.3.0\"",
+        "api = \"0.3.1\"",
         "id = \"tour\"",
         "version = \"1.2.3\"",
         "side = Side::Server",
@@ -111,6 +111,13 @@ fn tour_calls_every_import() {
         "call-missing = Err(CallError::NotFound)",
         "call-version = Err(CallError::VersionMismatch)",
         "call-self = Err(CallError::Reentrant)",
+        "call-remote = Ok(1)",
+        "cancel-remote = Ok(true)",
+        "cancel-remote-unknown = false",
+        "call-remote-server = Err(\"invalid argument: a server mod calls players",
+        "caller = None",
+        "call-remote-garbage = Err(\"invalid argument: arguments:",
+        "call-remote-scalar = Err(\"invalid argument: arguments must be a list",
         "send-local = Ok(())",
         "send-server = Err(\"unsupported\")",
         "send-player = Ok(())",
@@ -121,6 +128,27 @@ fn tour_calls_every_import() {
     ] {
         assert!(log.contains(line), "missing {line:?} in\n{log}");
     }
+    // Remote calls (API 0.3.1): the guest's call went to the bridge; the answer reaches its closure later.
+    let sent = b.remote_calls.borrow().clone();
+    assert_eq!(sent.len(), 2);
+    assert_eq!((sent[0].id, sent[0].service.as_str(), sent[0].method.as_str()), (1, "hud", "title"));
+    assert_eq!(sent[0].target, bhmod_core::RemoteTarget::Player("p1".into()));
+    let p1 = bhmod_core::RemoteTarget::Player("p1".into());
+    assert!(h.remote_result(&p1, 1, Ok(bhmod_core::value::Value::Int(9).encode())));
+    assert!(b.has_log("remote-answer = Ok(Int(9))"), "{}", b.log_text());
+    assert!(!h.remote_result(&p1, 2, Ok(bhmod_core::value::Value::Null.encode())), "cancelled by the guest");
+    // ... and a remote call into the guest sees its caller (only `whoami` is exposed).
+    let args = bhmod_core::value::Value::List(vec![]).encode();
+    let r = h.remote_call_in(&p1, "app", "tour", "^1", "whoami", &args).unwrap();
+    let who = bhmod_core::value::Value::decode(&r).unwrap();
+    assert_eq!(who.get("mod"), Some(&bhmod_core::value::Value::text("app")));
+    assert_eq!(who.get("player"), Some(&bhmod_core::value::Value::text("p1")));
+    assert_eq!(h.remote_call_in(&p1, "app", "tour", "^1", "echo", &args), Err(bhmod_core::RemoteError::NotPermitted));
+    // A provider that returns bytes that are no value is the provider's bug, not a value for the caller.
+    assert!(matches!(
+        h.remote_call_in(&p1, "app", "tour", "^1", "garbage", &args),
+        Err(bhmod_core::RemoteError::BadValue(m)) if m.starts_with("result:")
+    ));
     assert_eq!(b.take_chats(), vec![("p1".to_string(), "hi p1".to_string())]);
     assert_eq!(b.take_broadcasts(), vec!["to all"]);
     assert_eq!(b.kicks.borrow().clone(), vec![("p2".to_string(), "bye".to_string())]);
@@ -314,7 +342,7 @@ fn bad_components_are_refused() {
     // A component without the guest export.
     f.files.insert("server/missing.wasm".into(), b"(component)".to_vec());
     let e = rt.instantiate("m", &f, LIMITS).err().unwrap();
-    assert!(e.contains("no exported instance named `blockheads:api/guest@0.3.0`"), "{e}");
+    assert!(e.contains("no exported instance named `blockheads:api/guest@0.3.1`"), "{e}");
 }
 
 #[test]
@@ -487,7 +515,7 @@ fn old_components(old_wasm: Vec<u8>) {
         assert_eq!(info.state, ModState::Enabled, "{}: {log}", info.id);
     }
     for line in [
-        "old: api = (\"0.3.0\", \"old\", \"1.0.0\", Side::Server, \"fake-host 1.0\")",
+        "old: api = (\"0.3.1\", \"old\", \"1.0.0\", Side::Server, \"fake-host 1.0\")",
         "[trace] old: lvl",
         "old: p = (\"p1\", \"ALICE\", true, Role::Player, Ok(()), Ok(()))",
         "old: find = Some(\"p1\")",
@@ -595,15 +623,31 @@ fn content_imports() {
     }
 }
 
-/// A `blockheads:api@0.2.0` component (the frozen WIT, no `ui`) next to a 0.3 one: its imports, the 0.2 events with
+fn guest03_wasm() -> Vec<u8> {
+    let p = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/guest03/out/guest03.wasm");
+    fs::read(&p).unwrap_or_else(|e| panic!("{}: {e} (run scripts/build-wasm.sh first)", p.display()))
+}
+
+/// A `blockheads:api@0.2.0` component (the frozen WIT, no `ui`) next to a 0.3.1 one: its imports, the 0.2 events with
 /// their mutations, and services across versions.
 #[test]
 fn api_0_2_components_still_work() {
+    newer_than_0_2_components(guest02_wasm());
+}
+
+/// A component built for the frozen `blockheads:api@0.3.0` (before remote service calls) links and runs against the
+/// 0.3.1 host unchanged: the 0.3.1 package is a superset and wasmtime matches the 0.3.x names semver-compatibly.
+#[test]
+fn api_0_3_0_components_still_work() {
+    newer_than_0_2_components(guest03_wasm());
+}
+
+fn newer_than_0_2_components(old_wasm: Vec<u8>) {
     let tmp = tempfile::tempdir().unwrap();
     let m = tmp.path();
     wasm_mod(m, "tour", TOUR_TOML, &guest_wasm());
     let old = "[permissions]\nplayers = [\"chat\", \"kick\"]\nchannels = true\n[dependencies]\ntour = \"^1\"\n[provides]\nservices = [{ name = \"old\", version = \"1.0.0\", wit = \"wit/tour.wit\" }]\n";
-    wasm_mod(m, "old", old, &guest02_wasm());
+    wasm_mod(m, "old", old, &old_wasm);
     wasm_mod(m, "caller", "[dependencies]\nold = \"^1\"\n", &guest_wasm());
     fs::write(
         m.join("mods.toml"),
@@ -624,7 +668,7 @@ fn api_0_2_components_still_work() {
         assert_eq!(info.state, ModState::Enabled, "{}: {log}", info.id);
     }
     for line in [
-        "old: api = (\"0.3.0\", \"old\"",
+        "old: api = (\"0.3.1\", \"old\"",
         "old: pos = (Some(Pos { x: 7, y: 9 }), true, Some(\"p1\"))",
         "old: call = Ok([129, 1])",
         "old: send = Ok(())",

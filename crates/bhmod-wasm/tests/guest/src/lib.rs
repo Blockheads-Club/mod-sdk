@@ -7,6 +7,7 @@
 //! - `oom`: the tick handler allocates past the memory limit.
 
 use blockheads_mod::bindings::blockheads::api::events as wev;
+use blockheads_mod::cbor;
 use blockheads_mod::events::On;
 use blockheads_mod::prelude::*;
 
@@ -147,6 +148,34 @@ fn tour() -> Result<(), String> {
     show("call-missing", services::call("x", "^1", "m", &[0x80]));
     show("call-version", services::call("tour", "^2", "m", &[0x80]));
     show("call-self", services::call("tour", "^1", "echo", &[0x80]));
+    // Remote service calls (0.3.1): the answer arrives later, in the closure.
+    let id =
+        services::call_remote(&services::Target::Player(&p), "hud", "^1", "title", &[cbor::Value::Int(7)], 0, |r| {
+            show("remote-answer", r)
+        });
+    show("call-remote", &id);
+    let gone = services::call_remote(&services::Target::Player(&p), "hud", "^1", "gone", &[], 1000, |_| {});
+    show("cancel-remote", gone.map(services::cancel_remote));
+    show("cancel-remote-unknown", services::cancel_remote(999));
+    show(
+        "call-remote-server",
+        services::call_remote(&services::Target::Server, "hud", "^1", "title", &[], 0, |_| {}).map_err(String::from),
+    );
+    show("caller", services::caller().map(|c| c.mod_id));
+    // The raw import checks what the SDK helper cannot get wrong: arguments must be a canonical CBOR list.
+    let raw = |args: &[u8]| {
+        blockheads_mod::bindings::blockheads::api::services::call_remote(
+            &services::Target::Player(&p),
+            "hud",
+            "^1",
+            "title",
+            args,
+            0,
+        )
+        .map_err(String::from)
+    };
+    show("call-remote-garbage", raw(&[0xff]));
+    show("call-remote-scalar", raw(&[0x01]));
     let c = channels::open("tour:c").map_err(String::from)?;
     show("send-local", channels::send(c, &channels::Target::Local, &[1]));
     show("send-server", channels::send(c, &channels::Target::Server, &[2]).map_err(String::from));
@@ -208,6 +237,17 @@ impl Mod for Guest {
     fn call_service(name: String, method: String, args: Vec<u8>) -> Result<Vec<u8>, String> {
         match method.as_str() {
             "echo" => Ok(args),
+            // Not a value: the host refuses to pass it on.
+            "garbage" => Ok(vec![0xff]),
+            "whoami" => {
+                let c = services::caller().ok_or("not a remote call")?;
+                let player = c.player.map(|p| p.id());
+                Ok(cbor::Value::Map(vec![
+                    ("mod".into(), c.mod_id.into()),
+                    ("player".into(), player.map_or(cbor::Value::Null, Into::into)),
+                ])
+                .encode())
+            }
             _ => Err(format!("{name}: no method {method}")),
         }
     }

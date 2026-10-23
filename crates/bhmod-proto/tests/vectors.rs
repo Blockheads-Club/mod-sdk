@@ -267,6 +267,59 @@ fn valid() -> Vec<(&'static str, &'static str, &'static str, Message)> {
                 ]),
             }),
         ),
+        (
+            "13-service-call",
+            "both",
+            "Client mod shop-ui calls economy ^1.1 `balance(\"player-a\")`; the args are the canonical CBOR array.",
+            Message::ServiceCall(ServiceCall {
+                id: 7,
+                mod_id: "shop-ui".into(),
+                service: "economy".into(),
+                version_req: "^1.1".into(),
+                method: "balance".into(),
+                args: cbor::encode(&Value::Array(vec![Value::text("player-a")])),
+            }),
+        ),
+        (
+            "13-service-call-no-args",
+            "both",
+            "A call without arguments (empty CBOR array).",
+            Message::ServiceCall(ServiceCall {
+                id: 4_000_000_000,
+                mod_id: "landclaim".into(),
+                service: "claims".into(),
+                version_req: "*".into(),
+                method: "count".into(),
+                args: cbor::encode(&Value::Array(vec![])),
+            }),
+        ),
+        (
+            "14-service-result-ok",
+            "both",
+            "The answer to call 7: the integer 250.",
+            Message::ServiceResult(ServiceResult { id: 7, outcome: Ok(cbor::encode(&Value::Uint(250))) }),
+        ),
+        (
+            "14-service-result-error",
+            "both",
+            "The service is not exposed to the caller's side (NOT_PERMITTED).",
+            Message::ServiceResult(ServiceResult {
+                id: 7,
+                outcome: Err(ServiceFailure {
+                    code: service_error::NOT_PERMITTED,
+                    message: "economy is not callable from clients".into(),
+                }),
+            }),
+        ),
+        (
+            "14-service-result-provider-error",
+            "both",
+            "The provider returned an error of its own (PROVIDER_ERROR).",
+            Message::ServiceResult(ServiceResult {
+                id: 4_000_000_000,
+                outcome: Err(ServiceFailure { code: service_error::PROVIDER_ERROR, message: "no such account".into() }),
+            }),
+        ),
     ]
 }
 
@@ -274,6 +327,16 @@ fn valid() -> Vec<(&'static str, &'static str, &'static str, Message)> {
 fn invalid() -> Vec<(&'static str, String, &'static str)> {
     let hash = to_hex(&h("x"));
     let cbor_hex = |v: Value| to_hex(&cbor::encode(&v));
+    let call_body = |id: Value, args: Value| {
+        cbor_hex(Value::Map(vec![
+            (Value::text("id"), id),
+            (Value::text("mod"), Value::text("a")),
+            (Value::text("service"), Value::text("s")),
+            (Value::text("req"), Value::text("*")),
+            (Value::text("method"), Value::text("m")),
+            (Value::text("args"), args),
+        ]))
+    };
     let req = |offset: Value| {
         cbor_hex(Value::Map(vec![
             (Value::text("sha256"), Value::Bytes(h("x").to_vec())),
@@ -340,6 +403,47 @@ fn invalid() -> Vec<(&'static str, String, &'static str)> {
             "cosmetics-missing-full",
             format!("bc12{}", cbor_hex(Value::Map(vec![(Value::text("players"), Value::Map(vec![]))]))),
             "missing",
+        ),
+        (
+            "service-call-missing-method",
+            format!(
+                "bc13{}",
+                cbor_hex(Value::Map(vec![
+                    (Value::text("id"), Value::Uint(1)),
+                    (Value::text("mod"), Value::text("a")),
+                    (Value::text("service"), Value::text("s")),
+                    (Value::text("req"), Value::text("*")),
+                    (Value::text("args"), Value::Bytes(vec![0x80])),
+                ]))
+            ),
+            "missing",
+        ),
+        (
+            "service-call-id-too-big",
+            format!("bc13{}", call_body(Value::Uint(1 << 32), Value::Bytes(vec![0x80]))),
+            "type",
+        ),
+        ("service-call-args-text", format!("bc13{}", call_body(Value::Uint(1), Value::text("80"))), "type"),
+        (
+            "service-result-ok-without-value",
+            format!(
+                "bc14{}",
+                cbor_hex(Value::Map(vec![(Value::text("id"), Value::Uint(1)), (Value::text("ok"), Value::Bool(true))]))
+            ),
+            "missing",
+        ),
+        (
+            "service-result-big-code",
+            format!(
+                "bc14{}",
+                cbor_hex(Value::Map(vec![
+                    (Value::text("id"), Value::Uint(1)),
+                    (Value::text("ok"), Value::Bool(false)),
+                    (Value::text("code"), Value::Uint(256)),
+                    (Value::text("message"), Value::text("x")),
+                ]))
+            ),
+            "type",
         ),
         (
             "reject-text-big-reason",

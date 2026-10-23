@@ -77,6 +77,26 @@
       "file": "invalid/cosmetics-missing-full.hex"
     },
     {
+      "error": "missing",
+      "file": "invalid/service-call-missing-method.hex"
+    },
+    {
+      "error": "type",
+      "file": "invalid/service-call-id-too-big.hex"
+    },
+    {
+      "error": "type",
+      "file": "invalid/service-call-args-text.hex"
+    },
+    {
+      "error": "missing",
+      "file": "invalid/service-result-ok-without-value.hex"
+    },
+    {
+      "error": "type",
+      "file": "invalid/service-result-big-code.hex"
+    },
+    {
       "error": "type",
       "file": "invalid/reject-text-big-reason.hex"
     }
@@ -522,6 +542,80 @@
       "file": "12-cosmetics-delta.hex",
       "length": 43,
       "op": "0x12"
+    },
+    {
+      "body": {
+        "args": {
+          "$bytes": "8168706c617965722d61"
+        },
+        "id": 7,
+        "method": "balance",
+        "mod": "shop-ui",
+        "req": "^1.1",
+        "service": "economy"
+      },
+      "description": "Client mod shop-ui calls economy ^1.1 `balance(\"player-a\")`; the args are the canonical CBOR array.",
+      "direction": "both",
+      "file": "13-service-call.hex",
+      "length": 75,
+      "op": "0x13"
+    },
+    {
+      "body": {
+        "args": {
+          "$bytes": "80"
+        },
+        "id": 4000000000,
+        "method": "count",
+        "mod": "landclaim",
+        "req": "*",
+        "service": "claims"
+      },
+      "description": "A call without arguments (empty CBOR array).",
+      "direction": "both",
+      "file": "13-service-call-no-args.hex",
+      "length": 66,
+      "op": "0x13"
+    },
+    {
+      "body": {
+        "id": 7,
+        "ok": true,
+        "value": {
+          "$bytes": "18fa"
+        }
+      },
+      "description": "The answer to call 7: the integer 250.",
+      "direction": "both",
+      "file": "14-service-result-ok.hex",
+      "length": 20,
+      "op": "0x14"
+    },
+    {
+      "body": {
+        "code": 3,
+        "id": 7,
+        "message": "economy is not callable from clients",
+        "ok": false
+      },
+      "description": "The service is not exposed to the caller's side (NOT_PERMITTED).",
+      "direction": "both",
+      "file": "14-service-result-error.hex",
+      "length": 63,
+      "op": "0x14"
+    },
+    {
+      "body": {
+        "code": 5,
+        "id": 4000000000,
+        "message": "no such account",
+        "ok": false
+      },
+      "description": "The provider returned an error of its own (PROVIDER_ERROR).",
+      "direction": "both",
+      "file": "14-service-result-provider-error.hex",
+      "length": 45,
+      "op": "0x14"
     }
   ],
   "vanillaReject": {

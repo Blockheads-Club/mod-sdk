@@ -1,0 +1,40 @@
+package blockheads:api@0.3.0;
+
+/// Cross-mod services (shape only in 0.1; implemented since 0.2).
+///
+/// A provider declares the service in `mod.toml` `[provides]` and registers it with `provide`. Consumers call it by
+/// name and a semver requirement; the host picks the highest compatible provider, converts values and calls the
+/// provider's `guest.call-service`. The SDK turns the provider's WIT into typed stubs, so authors rarely use
+/// `call` directly.
+///
+/// Rules: a consumer may only call providers it depends or soft-depends on. Calls are synchronous; a call that
+/// would re-enter a mod already on the call stack (A -> B -> A) fails with `reentrant`. Players inside values are
+/// host handles `{"$h": n}`; a handle of a player who left is stale.
+interface services {
+    use types.{value, api-error};
+
+    /// Why a service call failed.
+    variant call-error {
+        /// No provider with that name is loaded.
+        not-found,
+        /// Providers exist but none matches the version requirement.
+        version-mismatch,
+        /// The caller does not depend (or soft-depend) on the provider, or the method is admin-only.
+        not-permitted,
+        /// The call would re-enter a mod that is already on the call stack (A -> B -> A).
+        reentrant,
+        /// The provider returned an error; the payload is its message.
+        provider-error(string),
+        /// The provider trapped or ran over its time budget.
+        trap,
+        /// Arguments or result were not valid canonical CBOR for the method.
+        bad-value(string),
+    }
+
+    /// Registers the calling mod as provider of `name` at `version` (semver). Must match `mod.toml`.
+    provide: func(name: string, version: string) -> result<_, api-error>;
+
+    /// Calls `method` of the best provider matching `version-req` (a semver requirement such as `^1.1`).
+    /// `args` is a canonical CBOR array of the method's parameters.
+    call: func(name: string, version-req: string, method: string, args: value) -> result<value, call-error>;
+}

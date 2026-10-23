@@ -1,7 +1,10 @@
 use super::*;
 use crate::cache::sha256;
 use crate::testutil::{caps, package};
-use bhmod_proto::{mods_hash, ChannelInfo, ChannelRegister, Cosmetics, FileChunk, FileError, ModPermissions};
+use bhmod_proto::{
+    mods_hash, ChannelInfo, ChannelRegister, Cosmetics, FileChunk, FileError, ModPermissions, ServiceCall,
+    ServiceResult,
+};
 
 fn info(id: &str, bytes: &[u8], required: bool, sides: &[&str]) -> ModInfo {
     ModInfo {
@@ -241,6 +244,45 @@ fn full_join_with_download_resume_and_channels() {
     assert!(r.s.receive(&unk, 300).is_empty());
     let rt = Message::RejectText(RejectText { reason_code: 3, text: "no".into(), url: None }).encode();
     assert!(matches!(&r.s.receive(&rt, 300)[..], [Output::Reject(_)]));
+
+    // service calls travel both ways
+    let call = ServiceCall {
+        id: 4,
+        mod_id: "demo".into(),
+        service: "prices".into(),
+        version_req: "^1".into(),
+        method: "price".into(),
+        args: vec![0x80],
+    };
+    let pkt = r.s.service_call(call.clone()).unwrap();
+    assert_eq!(Message::decode(&pkt).unwrap(), Message::ServiceCall(call.clone()));
+    let result = ServiceResult { id: 4, outcome: Ok(vec![0x03]) };
+    let pkt = r.s.service_result(result.clone()).unwrap();
+    assert_eq!(Message::decode(&pkt).unwrap(), Message::ServiceResult(result.clone()));
+    assert!(
+        matches!(&r.s.receive(&Message::ServiceCall(call.clone()).encode(), 300)[..], [Output::ServiceCall(c)] if *c == call)
+    );
+    assert!(
+        matches!(&r.s.receive(&Message::ServiceResult(result.clone()).encode(), 300)[..], [Output::ServiceResult(x)] if *x == result)
+    );
+}
+
+#[test]
+fn service_ops_need_a_modded_session() {
+    let mut r = rig();
+    let call = ServiceCall {
+        id: 1,
+        mod_id: "demo".into(),
+        service: "s".into(),
+        version_req: "*".into(),
+        method: "m".into(),
+        args: vec![0x80],
+    };
+    let result = ServiceResult { id: 1, outcome: Ok(vec![0xf6]) };
+    assert!(r.s.service_call(call.clone()).is_none());
+    assert!(r.s.service_result(result.clone()).is_none());
+    assert!(r.s.receive(&Message::ServiceCall(call).encode(), 1).is_empty());
+    assert!(r.s.receive(&Message::ServiceResult(result).encode(), 1).is_empty());
 }
 
 #[test]

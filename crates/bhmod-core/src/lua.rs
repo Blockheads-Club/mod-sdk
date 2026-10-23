@@ -14,6 +14,7 @@ use mlua::{
 };
 
 use crate::channels::ChannelId;
+use crate::remote::RemoteTarget;
 use crate::runtime::TaskId;
 use crate::runtime::{CallError, CommandId, HostApi, Instance, InstanceLimits, ModFiles, Runtime, SubscriptionId};
 use crate::types::{ApiError, CommandOutcome, CommandSender, CommandSpec, Event, EventKind, LogLevel, Mutation};
@@ -44,6 +45,8 @@ struct Shared {
     timed_out: Cell<bool>,
     /// Interrupts since the last clock read: `Instant::now` is a syscall on hosts without a vDSO clock (HPET).
     ticks: Cell<u32>,
+    /// True once the handler for `<mod-id>:service-result` is subscribed (the first `call_remote`).
+    remote_sub: Cell<bool>,
     files: ModFiles,
 }
 
@@ -166,6 +169,7 @@ const TASKS: &str = "bh.tasks";
 const LOADED: &str = "bh.loaded";
 const SERVICES: &str = "bh.services";
 const CHANNELS: &str = "bh.channels";
+const REMOTE: &str = "bh.remote";
 
 /// One Luau mod.
 pub struct LuaInstance {
@@ -369,6 +373,65 @@ fn call_service(
     let out = with_host(sh, |h| h.call_service(name, req, method, &bytes))?
         .map_err(|e| rt_err(format!("service {name}.{method}: {e}")))?;
     decode_cbor(lua, sh, &out)
+}
+
+fn remote_target(v: &Value) -> mlua::Result<RemoteTarget> {
+    if let Value::String(s) = v {
+        if &*s.to_str()? == "server" {
+            return Ok(RemoteTarget::Server);
+        }
+    }
+    let player = match v {
+        Value::UserData(u) => u.borrow::<LuaPlayer>().ok().map(|p| p.id.clone()),
+        _ => None,
+    };
+    player.map(RemoteTarget::Player).ok_or_else(|| rt_err("invalid argument: remote target is \"server\" or a player"))
+}
+
+/// Starts a remote call; `callback(ok, value_or_error)` runs when the `service-result` event arrives.
+fn call_remote(lua: &Lua, sh: &Rc<Shared>, a: RemoteArgs) -> mlua::Result<u32> {
+    let to = remote_target(&a.to)?;
+    let args = match &a.args {
+        Value::Nil => Vec::new(),
+        Value::Table(_) => match to_cbor(sh, &a.args, 1)? {
+            Cbor::List(items) => items,
+            _ => return Err(rt_err("invalid argument: remote call arguments must be a list")),
+        },
+        _ => return Err(rt_err("invalid argument: remote call arguments must be a list")),
+    };
+    if !sh.remote_sub.get() {
+        let name = with_host(sh, |h| format!("{}:service-result", h.mod_id()))?;
+        let id = with_host(sh, |h| h.subscribe_custom(&name, Priority::Monitor, false))?.map_err(api_err)?;
+        lua.named_registry_value::<Table>(HANDLERS)?.set(id, lua.create_function(on_service_result)?)?;
+        sh.remote_sub.set(true);
+    }
+    let bytes = Cbor::List(args).encode();
+    let id = with_host(sh, |h| h.call_remote(to, &a.name, &a.req, &a.method, &bytes, a.timeout.unwrap_or(0)))?
+        .map_err(api_err)?;
+    lua.named_registry_value::<Table>(REMOTE)?.set(id, a.callback)?;
+    Ok(id)
+}
+
+/// The handler of `<mod-id>:service-result`: runs the callback of the call the event answers (once).
+fn on_service_result(lua: &Lua, ev: Table) -> mlua::Result<()> {
+    let payload: Table = ev.get("payload")?;
+    let calls: Table = lua.named_registry_value(REMOTE)?;
+    let id: u32 = payload.get("id")?;
+    let Some(cb) = calls.get::<Option<Function>>(id)? else { return Ok(()) };
+    calls.set(id, Value::Nil)?;
+    let ok: bool = payload.get("ok")?;
+    cb.call::<()>((ok, payload.get::<Value>(if ok { "value" } else { "error" })?))
+}
+
+/// The arguments of `bh.services.call_remote`.
+struct RemoteArgs {
+    to: Value,
+    name: String,
+    req: String,
+    method: String,
+    args: Value,
+    callback: Function,
+    timeout: Option<u32>,
 }
 
 fn channel_target(v: Value) -> mlua::Result<ChannelTarget> {
@@ -635,13 +698,14 @@ impl LuaInstance {
             deadline: Cell::new(None),
             timed_out: Cell::new(false),
             ticks: Cell::new(0),
+            remote_sub: Cell::new(false),
             files,
         });
         let g = lua.globals();
         for name in ["debug", "loadstring", "getfenv", "setfenv"] {
             g.set(name, Value::Nil)?;
         }
-        for reg in [HANDLERS, COMMANDS, TASKS, LOADED, SERVICES, CHANNELS] {
+        for reg in [HANDLERS, COMMANDS, TASKS, LOADED, SERVICES, CHANNELS, REMOTE] {
             lua.set_named_registry_value(reg, lua.create_table()?)?;
         }
         let bh = Self::build_bh(&lua, &sh)?;
@@ -907,6 +971,38 @@ impl LuaInstance {
             meta.set("__index", lua.create_function(index)?)?;
             proxy.set_metatable(Some(meta))?;
             Ok(proxy)
+        });
+        let s = sh.clone();
+        b.func(
+            &services,
+            "call_remote",
+            move |lua,
+                  (to, name, req, method, args, callback, timeout): (
+                Value,
+                String,
+                String,
+                String,
+                Value,
+                Function,
+                Option<u32>,
+            )| { call_remote(lua, &s, RemoteArgs { to, name, req, method, args, callback, timeout }) },
+        );
+        let s = sh.clone();
+        b.func(&services, "cancel_remote", move |lua, id: u32| {
+            lua.named_registry_value::<Table>(REMOTE)?.set(id, Value::Nil)?;
+            with_host(&s, |h| h.cancel_remote(id))
+        });
+        let s = sh.clone();
+        b.func(&services, "caller", move |lua, ()| match with_host(&s, |h| h.remote_caller())? {
+            Some(c) => {
+                let t = lua.create_table()?;
+                t.set("mod", c.mod_id)?;
+                if let Some(p) = c.player {
+                    t.set("player", player(lua, &s, p)?)?;
+                }
+                Ok(Value::Table(t))
+            }
+            None => Ok(Value::Nil),
         });
         bh.set("services", services)?;
 

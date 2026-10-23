@@ -5,6 +5,7 @@ use crate::testutil::{content_package, package, package_files};
 use bhmod_client::cache::sha256;
 use bhmod_proto::{
     mods_hash, Channel, ChannelInfo, FileChunk, Message, ModInfo, ModList, ModPermissions, RejectText, ServerHello,
+    ServiceCall, ServiceResult,
 };
 use serde_json::Value;
 
@@ -201,6 +202,110 @@ fn modded_join_runs_the_mod_and_its_channel() {
     r.l.on_world(None);
     assert!(!r.l.running());
     assert!(r.dirs.cache.join(format!("{}.bhmod", bhmod_proto::hex(&demo.sha256))).is_file());
+}
+
+const CALLER: &str = r#"
+local mod = {}
+function mod.on_enable()
+    bh.services.provide("hud", "1.0.0", { title = function(n) return "title " .. n end })
+    local function ask(item)
+        bh.services.call_remote("server", "prices", "^1", "price", { item }, function(ok, v)
+            bh.log.info("answer " .. item .. " " .. tostring(ok) .. " " .. (ok and tostring(v) or v.kind))
+        end)
+    end
+    bh.events.on("tick", function(ev)
+        if ev.tick <= 3 then ask("t" .. ev.tick) end
+    end)
+end
+return mod
+"#;
+
+const HUD_PROVIDES: &str =
+    "\n[provides]\nservices = [{ name = \"hud\", version = \"1.0.0\", wit = \"wit/hud.wit\", remote = true }]\n";
+
+/// A joined, modded session whose world is open and whose client mod `demo` runs `src`.
+fn in_world(src: &str, perms: &str) -> Rig {
+    let mut r = rig();
+    let pkg = package("demo", "1.0.0", perms, "client/main.luau", src);
+    let demo = info("demo", &pkg);
+    let hash = mods_hash([(demo.id.as_str(), demo.version.as_str(), &demo.sha256)]);
+    r.l.on_contact("10.0.2.2:15151");
+    r.l.on_join_request();
+    r.l.on_packet(&server_hello(hash, 1));
+    let list = ModList { mods: vec![demo.clone()], channels: vec![], registry: Default::default() };
+    r.l.on_packet(&Message::ModList(list).encode());
+    r.l.on_ui(UiEvent::Decide(true));
+    r.p.now.set(50);
+    let chunk = Message::FileChunk(FileChunk { sha256: demo.sha256, offset: 0, total: demo.size, data: pkg });
+    r.l.on_packet(&chunk.encode());
+    r.l.on_world(Some("Sunny"));
+    r.p.msgs();
+    r
+}
+
+fn call(id: u32, service: &str, method: &str, args: Vec<u8>) -> Vec<u8> {
+    let (service, method) = (service.to_string(), method.to_string());
+    let call = ServiceCall { id, mod_id: "srv".into(), service, version_req: "^1".into(), method, args };
+    Message::ServiceCall(call).encode()
+}
+
+#[test]
+fn services_cross_the_wire_both_ways() {
+    let mut r = in_world(CALLER, HUD_PROVIDES);
+    assert!(r.p.logged("enabled"), "{:?}", r.p.logs.borrow());
+    // tick 1: the mod calls the server; the call leaves as SERVICE_CALL
+    r.p.now.set(400);
+    r.l.on_frame();
+    let m = r.p.msgs();
+    let [Message::ServiceCall(c)] = &m[..] else { panic!("{m:?}") };
+    assert_eq!((c.id, c.mod_id.as_str(), c.service.as_str(), c.method.as_str()), (1, "demo", "prices", "price"));
+    assert_eq!(c.args, bhmod_core::value::Value::List(vec![bhmod_core::value::Value::text("t1")]).encode());
+    // the server's answer reaches the callback
+    let ok = ServiceResult { id: 1, outcome: Ok(bhmod_core::value::Value::Int(3).encode()) };
+    r.l.on_net(NetEvent::Packet(Message::ServiceResult(ok).encode()));
+    r.p.now.set(500);
+    r.l.on_frame();
+    assert!(r.p.logged("answer t1 true 3"), "{:?}", r.p.logs.borrow());
+    // an answer for nothing is ignored
+    let stray = ServiceResult { id: 77, outcome: Err(ServiceFailure { code: 4, message: String::new() }) };
+    assert!(r.l.on_packet(&Message::ServiceResult(stray).encode()));
+
+    // the server calls the client's `hud` service (exposed with remote = true); a bad call fails typed
+    let args = bhmod_core::value::Value::List(vec![bhmod_core::value::Value::Int(7)]).encode();
+    assert!(r.l.on_packet(&call(9, "hud", "title", args.clone())));
+    assert!(r.l.on_packet(&call(10, "nothing", "x", args)));
+    let m = r.p.msgs();
+    let [Message::ServiceResult(a), Message::ServiceResult(b)] = &m[..] else { panic!("{m:?}") };
+    assert_eq!((a.id, a.outcome.clone()), (9, Ok(bhmod_core::value::Value::text("title 7").encode())));
+    assert_eq!((b.id, b.outcome.clone().unwrap_err().code), (10, bhmod_proto::service_error::NOT_FOUND));
+
+    // tick 2 calls again; the connection drops before the answer: `disconnected`; tick 3 has nobody to ask
+    r.p.now.set(600);
+    r.l.on_frame();
+    assert!(matches!(r.p.msgs()[..], [Message::ServiceCall(_)]));
+    r.l.on_disconnect();
+    assert!(r.p.logged("answer t2 false disconnected"), "{:?}", r.p.logs.borrow());
+    r.p.now.set(800);
+    r.l.on_frame();
+    assert!(r.p.logged("answer t3 false unavailable"), "{:?}", r.p.logs.borrow());
+    assert!(r.p.msgs().is_empty());
+}
+
+#[test]
+fn service_packets_without_mods_are_ignored() {
+    let mut r = rig();
+    r.l.on_contact("h:1");
+    // no host: the call is dropped, nothing is answered
+    r.l.handle(vec![Output::ServiceCall(ServiceCall {
+        id: 1,
+        mod_id: "srv".into(),
+        service: "s".into(),
+        version_req: "*".into(),
+        method: "m".into(),
+        args: vec![0x80],
+    })]);
+    r.l.handle(vec![Output::ServiceResult(ServiceResult { id: 1, outcome: Ok(vec![0xf6]) })]);
+    assert!(r.p.msgs().iter().all(|m| !matches!(m, Message::ServiceResult(_))));
 }
 
 #[test]

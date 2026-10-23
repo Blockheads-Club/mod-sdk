@@ -175,6 +175,10 @@ declare bh: {
 		provide: (name: string, version: string, methods: { [string]: (...any) -> any }) -> (),
 		call: (name: string, version_req: string, method: string, ...any) -> any,
 		get: (name: string, version_req: string) -> { [string]: (...any) -> any },
+		-- API 0.3.1: calls a service on the other side; the callback gets (true, value) or (false, { kind, message }) later.
+		call_remote: (to: "server" | Player, name: string, version_req: string, method: string, args: { any }?, callback: (ok: boolean, result: any) -> (), timeout_ms: number?) -> number,
+		cancel_remote: (id: number) -> boolean,
+		caller: () -> { mod: string, player: Player? }?,
 	},
 	channels: {
 		open: (name: string, handler: ((origin: ChannelOrigin, data: string) -> ())?) -> number,
