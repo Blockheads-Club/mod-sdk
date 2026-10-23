@@ -69,6 +69,10 @@ that behave exactly the same (a test checks it): [`hello-lua`](examples/hello-lu
 [`chat-filter-rust`](examples/chat-filter-rust) (cancel and rewrite chat), [`scheduler-lua`](examples/scheduler-lua) /
 [`scheduler-rust`](examples/scheduler-rust) (`/countdown`, `/remind`). Rust, C, Zig and Go: [`docs/wasm.md`](docs/wasm.md).
 
+A client mod can call a service of a server mod over the network (API 0.3.1, asynchronous):
+[`prices-lua`](examples/prices-lua) is a price check with a server half that provides `prices` (`remote = true`) and a client
+half (`/price <item>`), [`prices-rust`](examples/prices-rust) is the Rust twin of the client half.
+
 Content mods (API 0.3) declare textures in `[content]`: [`cosmetics-hats`](examples/cosmetics-hats) is a hat and hair
 set worn with `/hat` and `/hair` (see [`docs/content.md`](docs/content.md)).
 

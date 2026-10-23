@@ -145,7 +145,8 @@ device decides.
 ## Conformance suite
 
 `crates/bhmod-wasm/tests/conformance.rs` runs the same scenarios against the Luau and the WASM twin of each example
-(`hello-lua`/`hello-rust`, `chat-filter`/`chat-filter-rust`, `scheduler-lua`/`scheduler-rust`) through the real
+(`hello-lua`/`hello-rust`, `chat-filter`/`chat-filter-rust`, `scheduler-lua`/`scheduler-rust`, the client mods
+`hud-lua`/`hud-rust` and `prices-lua`/`prices-rust`) through the real
 `ModHost` and a fake game, and requires identical transcripts: command replies, event results, chat, broadcasts,
 kicks and log lines (mod id masked). A new runtime (JVM, a client loader) adds its twins to the same table.
 
