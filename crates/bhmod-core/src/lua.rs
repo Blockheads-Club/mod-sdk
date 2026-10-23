@@ -229,6 +229,15 @@ fn sender_table(lua: &Lua, sh: &Rc<Shared>, s: &CommandSender) -> mlua::Result<T
     Ok(t)
 }
 
+/// The id of a player argument.
+fn player_arg(v: &Value) -> mlua::Result<String> {
+    let id = match v {
+        Value::UserData(u) => u.borrow::<LuaPlayer>().ok().map(|p| p.id.clone()),
+        _ => None,
+    };
+    id.ok_or_else(|| rt_err("invalid argument: player"))
+}
+
 fn pos_table(lua: &Lua, p: Pos) -> mlua::Result<Table> {
     let t = lua.create_table()?;
     t.set("x", p.x)?;
@@ -698,8 +707,8 @@ impl LuaInstance {
             Ok(out)
         });
         let s = sh.clone();
-        b.func(&content, "equipped", move |lua, who: AnyUserData| {
-            let id = who.borrow::<LuaPlayer>().map_err(|_| rt_err("invalid argument: player"))?.id.clone();
+        b.func(&content, "equipped", move |lua, who: Value| {
+            let id = player_arg(&who)?;
             let pairs = with_host(&s, |h| h.content_equipped(&id))?.map_err(api_err)?;
             let out = lua.create_table()?;
             for (slot, key) in pairs {
@@ -708,13 +717,13 @@ impl LuaInstance {
             Ok(out)
         });
         let s = sh.clone();
-        b.func(&content, "equip", move |_, (who, key): (AnyUserData, String)| {
-            let id = who.borrow::<LuaPlayer>().map_err(|_| rt_err("invalid argument: player"))?.id.clone();
+        b.func(&content, "equip", move |_, (who, key): (Value, String)| {
+            let id = player_arg(&who)?;
             with_host(&s, |h| h.content_equip(&id, &key))?.map_err(api_err)
         });
         let s = sh.clone();
-        b.func(&content, "unequip", move |_, (who, slot): (AnyUserData, String)| {
-            let id = who.borrow::<LuaPlayer>().map_err(|_| rt_err("invalid argument: player"))?.id.clone();
+        b.func(&content, "unequip", move |_, (who, slot): (Value, String)| {
+            let id = player_arg(&who)?;
             with_host(&s, |h| h.content_unequip(&id, &slot))?.map_err(api_err)
         });
         bh.set("content", content)?;

@@ -11,9 +11,10 @@ const RUST_GITIGNORE: &str = include_str!("../templates/rust/gitignore");
 const RUST_README: &str = include_str!("../templates/rust/README.md");
 
 /// The `blockheads:api` WIT files, copied into Rust projects.
-pub const WIT: [(&str, &str); 12] = [
+pub const WIT: [(&str, &str); 13] = [
     ("channels.wit", include_str!("../../../wit/blockheads-api/channels.wit")),
     ("commands.wit", include_str!("../../../wit/blockheads-api/commands.wit")),
+    ("content.wit", include_str!("../../../wit/blockheads-api/content.wit")),
     ("events.wit", include_str!("../../../wit/blockheads-api/events.wit")),
     ("guest.wit", include_str!("../../../wit/blockheads-api/guest.wit")),
     ("host.wit", include_str!("../../../wit/blockheads-api/host.wit")),

@@ -381,6 +381,13 @@ fn trait_defaults_for_0_1_code() {
     assert_eq!(api.channel_open("a:b"), Err(ApiError::Unsupported));
     assert_eq!(api.channel_send(1 as ChannelId, ChannelTarget::Local, b""), Err(ApiError::Unsupported));
     assert!(!api.channel_close(1));
+    use bhmod_core::types::ContentKind;
+    assert_eq!(api.content_id(ContentKind::Cosmetic, "a:b"), None);
+    assert_eq!(api.content_key(ContentKind::Cosmetic, 1), None);
+    assert!(api.content_cosmetics().is_empty());
+    assert_eq!(api.content_equipped("p"), Err(ApiError::Unsupported));
+    assert_eq!(api.content_equip("p", "a:b"), Err(ApiError::Unsupported));
+    assert_eq!(api.content_unequip("p", "hat"), Err(ApiError::Unsupported));
     let mut p = Plain;
     assert!(
         matches!(p.call_service(&mut api, "s", "m", &[0x80]), Err(CallError::Failed(m)) if m.contains("does not implement"))

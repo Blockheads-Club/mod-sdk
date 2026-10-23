@@ -76,6 +76,8 @@ function mod.on_enable()
     fails(function() bh.content.equip(p, "other:thing") end, "invalid argument")
     fails(function() bh.content.equip(p, "rival:crown") end, "not permitted")
     fails(function() bh.content.unequip(p, "cape") end, "invalid argument")
+    fails(function() bh.content.equip("p1", "crowns:crown") end, "invalid argument: player")
+    fails(function() bh.content.equip(bh.value, "crowns:crown") end, "invalid argument: player")
     bh.content.equip(p, "crowns:crown")
     bh.players.get("p1") -- still online
     mod.p = p
