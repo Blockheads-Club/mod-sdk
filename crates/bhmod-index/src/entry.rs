@@ -77,11 +77,26 @@ pub struct Entry {
     /// Search tags.
     #[serde(default)]
     pub tags: Vec<String>,
+    /// Translations of `name` and `description` by language code; English is the main fields.
+    #[serde(default)]
+    pub i18n: BTreeMap<String, Localized>,
     /// Placeholder entry, never published.
     #[serde(default)]
     pub draft: bool,
     /// Every published version, oldest first.
     pub versions: Vec<VersionEntry>,
+}
+
+/// A translated name and description; a missing field falls back to English.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Localized {
+    /// Translated display name.
+    #[serde(default)]
+    pub name: Option<String>,
+    /// Translated description.
+    #[serde(default)]
+    pub description: Option<String>,
 }
 
 /// One published version.
