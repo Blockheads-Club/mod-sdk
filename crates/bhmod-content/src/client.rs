@@ -84,7 +84,6 @@ pub struct Content {
     /// Package of each mod id.
     packages: BTreeMap<String, PathBuf>,
     cache: BTreeMap<(u64, Part), Option<Arc<Gpu>>>,
-    atlases: BTreeMap<(u64, u32), Option<Arc<Gpu>>>,
     serial: u64,
 }
 
@@ -117,7 +116,6 @@ impl Content {
         self.table = table;
         self.packages = paths;
         self.cache.clear();
-        self.atlases.clear();
         self.serial += 1;
         problems
     }
@@ -168,26 +166,6 @@ impl Content {
         }
         look.hair = self.resolve(player, "hair", None).map(|r| r.def.id);
         look
-    }
-
-    /// A weapon cosmetic's picture as a whole item atlas with the picture in the cell `image` (the game's image index
-    /// of the item it re-skins), cached. Errors are returned once; later calls give `None`.
-    pub fn item_atlas(&mut self, id: u64, image: u32) -> Result<Option<Arc<Gpu>>, String> {
-        if let Some(t) = self.atlases.get(&(id, image)) {
-            return Ok(t.clone());
-        }
-        let Some(def) = self.table.get(id) else { return Ok(None) };
-        let path = def.texture.clone();
-        let loaded = self
-            .packages
-            .get(&def.mod_id)
-            .ok_or_else(|| format!("{}: the package is not loaded", def.mod_id))
-            .and_then(|p| open_package(p))
-            .and_then(|mut src| Texture::read(src.as_mut(), &path))
-            .and_then(|t| t.on_item_atlas(image).map_err(|e| format!("{path}: {e}")));
-        let gpu = loaded.as_ref().ok().map(|g| Arc::new(g.clone()));
-        self.atlases.insert((id, image), gpu.clone());
-        loaded.map(|_| gpu)
     }
 
     /// The pixels of a cosmetic's texture, prepared for the game and cached. `None` when the cosmetic has no such

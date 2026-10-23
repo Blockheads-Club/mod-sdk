@@ -4,7 +4,7 @@
 //! the same ones the Blockheads Server uses.
 
 /// Where a cosmetic is worn or used. `hat`, `shirt`, `pants` and `shoes` re-skin the vanilla item worn in that
-/// slot, `hair` re-skins the hair, `weapon` the weapon or tool in hand.
+/// slot, `hair` re-skins the hair, `weapon` the weapon in hand (declared, not drawn by clients).
 pub const SLOTS: [&str; 6] = ["hat", "shirt", "pants", "shoes", "hair", "weapon"];
 
 /// A vanilla item a cosmetic can be restricted to (`base` in `[[content.cosmetics]]`).
@@ -60,14 +60,7 @@ pub const BASE_ITEMS: &[BaseItem] = &[
     b!("shoes", "carbon-fiber-boots", 294),
     b!("shoes", "ice-boots", 198),
     b!("shoes", "south-pole-boots", 143),
-    b!("weapon", "flint-axe", 6),
-    b!("weapon", "flint-spear", 7),
-    b!("weapon", "flint-pickaxe", 8),
-    b!("weapon", "flint-spade", 16),
-    b!("weapon", "copper-spear", 39),
     b!("weapon", "bronze-sword", 50),
-    b!("weapon", "iron-pickaxe", 66),
-    b!("weapon", "iron-axe", 70),
     b!("weapon", "iron-sword", 68),
     b!("weapon", "titanium-sword", 286),
 ];
