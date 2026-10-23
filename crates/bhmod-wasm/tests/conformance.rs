@@ -83,3 +83,17 @@ fn hud_twins_cancelled() {
     assert!(has_ui(&out, "RemoveWidget { id: \"where\" }"));
     assert!(has_ui(&out, "closed: false"));
 }
+
+#[test]
+fn prices_twins() {
+    let out = conform_on("prices-lua", "prices-rust", &["channels"], Side::Client, wasm, prices);
+    assert!(has(&out, "state: Enabled"));
+    assert!(has(&out, "/price: Some([\"Usage: /price <item>\"])"));
+    assert!(has_ui(&out, "1 Server prices ^1 price List([Text(\"apple\")])"));
+    assert!(has_ui(&out, "4 Server prices ^1 price List([Text(\"bread\")])"));
+    assert!(has_ui(&out, "Toast { text: \"apple costs 3 coins.\" }"));
+    assert!(has_ui(&out, "Toast { text: \"ghost is not for sale.\" }"));
+    assert!(has_ui(&out, "Toast { text: \"Price check failed: not-permitted\" }"));
+    assert!(has_ui(&out, "Toast { text: \"The server did not answer.\" }"));
+    assert!(has(&out, "answers: (true, true, true, true, false)"));
+}

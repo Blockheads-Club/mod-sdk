@@ -30,7 +30,7 @@ WASM mods export `guest`; Luau mods pass functions:
 | `handle-event` | `bh.events.on(kind, fn(ev), opts?)`; `opts = { priority = "normal", ignore_cancelled = false }`. Returns the subscription id. The handler changes `ev.cancelled` / `ev.text` in place instead of returning an outcome. Custom events: `bh.events.on_custom(name, fn, opts?)` |
 | `run-command` | `bh.commands.register(spec, fn(sender, label, args) -> { handled, reply })`; `spec.min_role` defaults to `"player"`, `spec.console` to `true`, `aliases` to `{}` |
 | `run-task` | `bh.scheduler.run_later(delay, fn)`, `run_every(delay, period, fn)`, `run_next_poll(fn)` |
-| `call-service` | `bh.services.provide(name, version, { method = fn, ... })` |
+| `call-service` | `bh.services.provide(name, version, { method = fn, ... })` (also what remote callers reach) |
 | `on-channel-message` | `bh.channels.open(name, fn(origin, data))`; `origin` is `{ mod = "<id>" }`, `{ server = true }` or `{ player = <player> }` |
 
 `bh.log` additionally has the shortcuts `bh.log.info(msg)`, `warn`, `error`, `debug`, `trace`; `print(...)` logs at `info`.
@@ -98,6 +98,48 @@ local coins = eco.balance(player)                     -- or bh.services.call("ec
   (A -> B -> A), `bad-value`.
 - Only the first return value is passed back.
 
+### Remote services (API 0.3.1)
+
+A client mod can call a service a **server** mod provides, and a server mod one a **client** mod provides, over the
+network (0xBC `SERVICE_CALL` / `SERVICE_RESULT`, see [protocol-0xbc.md](protocol-0xbc.md)). The call is asynchronous:
+
+```lua
+-- provider (server mod; mod.toml: services = [{ name = "shop", version = "1.0.0", wit = "wit/shop.wit",
+--   remote = true, remote-methods = ["price", "buy"] }]); remote-methods is optional (empty = every method)
+bh.services.provide("shop", "1.0.0", {
+    price = function(item) return prices[item] end,
+    buy = function(item)
+        local c = bh.services.caller()            -- { mod = "shop-ui", player = <player> }
+        ...
+    end,
+})
+
+-- caller (client mod, permission `channels`)
+local id = bh.services.call_remote("server", "shop", "^1", "price", { "apple" }, function(ok, v)
+    if ok then bh.ui.toast("apple costs " .. v) else print("failed: " .. v.kind .. " " .. v.message) end
+end, 3000)                                          -- timeout in ms (default 5000, at most 30000)
+bh.services.cancel_remote(id)                       -- the callback never runs
+```
+
+- `bh.services.call_remote(target, name, version_req, method, args, callback, timeout_ms?) -> id`. `target` is
+  `"server"` (client mods) or a player (server mods); `args` is a list (or `nil`). The callback gets `(true, value)`
+  or `(false, { kind, message })` exactly once, **later**: never inside `call_remote` itself, also not when the failure
+  is known at once (`unavailable`). Errors the call itself can raise: `invalid argument` (names, requirement,
+  arguments, timeout, wrong target), `limit exceeded` (16 open calls per mod, arguments over 32 KiB),
+  `not permitted` (no `channels` permission), `stale handle` (the player left).
+- `kind` is `not-found`, `version-mismatch`, `not-permitted` (the service or method is not `remote`),
+  `busy` (rate limited), `provider-error` (`message` is the provider's `error("...", 0)` text, cut at 256 bytes and
+  without traceback), `trap` (the provider ran out of time or crashed), `bad-value`, `too-large`, `internal` (answers
+  of the other side) and `unavailable` (no modded server / player without the mod loader), `timeout`, `disconnected`
+  (the player quit or the server went away) decided locally.
+- The providing side decides what is reachable (`remote = true`, optionally `remote-methods`), limits each peer
+  (token bucket: bursts of 20, 10 calls per second) and runs the method under the provider's own time budget (a trap
+  counts as a fault of the provider, like any other call). A caller need not depend on the provider.
+- `bh.services.caller()` inside a provider method returns `{ mod = "<calling mod id>", player = <player> | nil }`
+  (`player` is set when a client called a server mod), or `nil` for a call from a mod on the same side. It also holds
+  in services the provider calls locally while serving the remote call.
+- Under the hood the answer is the custom event `<your-mod-id>:service-result`; Luau subscribes for you.
+
 ### Custom events
 
 `bh.events.on_custom("<mod-id>:<name>", fn, opts)` subscribes to any mod's custom event with the normal priority and
@@ -155,9 +197,12 @@ Content declared in `[content]` and cosmetics, see [content.md](content.md). `ki
 
 ## API versions
 
-The host implements `blockheads:api@0.3.0` (`bh.host.api_version()`) and also serves 0.2 and 0.1: in 0.x a new minor
-only adds events, functions and fields, so a mod with `api = "^0.1"` keeps loading and running unchanged. A mod that
-uses anything from 0.2 declares `api = "^0.2"`, one that uses `bh.ui` or `bh.content` declares `api = "^0.3"`. WASM hosts bind the
+The host implements `blockheads:api@0.3.1` (`bh.host.api_version()`) and also serves 0.3.0, 0.2 and 0.1: in 0.x a new
+minor only adds events, functions and fields, so a mod with `api = "^0.1"` keeps loading and running unchanged. A mod
+that uses anything from 0.2 declares `api = "^0.2"`, one that uses `bh.ui` or `bh.content` declares `api = "^0.3"`, one
+that uses remote services (`bh.services.call_remote`) or `remote = true` declares `api = "^0.3.1"`. 0.3.1 is a patch
+release because it only adds (a function group in `services`, no new export, no changed type): components built for
+0.3.0 link and run on a 0.3.1 host without a new binding, which wasmtime matches semver-compatibly. WASM hosts bind the
 frozen 0.2 and 0.1 WIT in [`../wit/compat/blockheads-api-0.2.0/`](../wit/compat/blockheads-api-0.2.0/) and
 [`../wit/compat/blockheads-api-0.1.0/`](../wit/compat/blockheads-api-0.1.0/) for components built against them.
 

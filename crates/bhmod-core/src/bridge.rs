@@ -3,6 +3,7 @@
 //! The bridge is the only way mod code reaches the game. Every method is called on the game's main thread while a
 //! mod call is running, so implementations must not call back into the [`crate::ModHost`].
 
+use crate::remote::{RemoteCall, RemoteError};
 use crate::types::{ApiError, ChannelTarget, ContentKind, LogLevel, Pos, Role, Side};
 use crate::ui::UiCommand;
 
@@ -50,6 +51,15 @@ pub trait GameBridge {
     fn channel_send(&self, mod_id: &str, name: &str, target: &ChannelTarget, data: &[u8]) -> Result<(), ApiError> {
         let _ = (mod_id, name, target, data);
         Err(ApiError::Unsupported)
+    }
+
+    /// Sends a remote service call to the other side (API 0.3.1, 0xBC `SERVICE_CALL`). The mod host has already
+    /// validated it and keeps it open until the answer arrives ([`crate::ModHost::remote_result`]) or it times out.
+    /// An error is delivered to the calling mod at once (`unavailable` when there is nobody to ask); the default,
+    /// for hosts without the 0xBC protocol, is [`RemoteError::Unavailable`].
+    fn service_send(&self, call: &RemoteCall) -> Result<(), RemoteError> {
+        let _ = call;
+        Err(RemoteError::Unavailable)
     }
 
     /// The numeric id this world gave a content key (API 0.3). `None` for an unknown key and on hosts that keep no

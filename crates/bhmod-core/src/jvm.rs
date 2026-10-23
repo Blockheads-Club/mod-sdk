@@ -35,6 +35,7 @@ use jni::{InitArgsBuilder, JNIVersion};
 use jni::{JNIEnv, JavaVM, NativeMethod};
 
 use crate::channels::ChannelId;
+use crate::remote::RemoteTarget;
 use crate::runtime::TaskId;
 use crate::runtime::{CallError, CommandId, HostApi, Instance, InstanceLimits, ModFiles, Runtime, SubscriptionId};
 use crate::types::{
@@ -548,6 +549,18 @@ fn target_of(v: &Value) -> Result<ChannelTarget, String> {
     }
 }
 
+fn remote_target_of(v: &Value) -> Result<RemoteTarget, String> {
+    let Value::Map(m) = v else { return Err("a remote target is a one-entry map".into()) };
+    match m.as_slice() {
+        [(tag, payload)] => match (tag.as_str(), payload) {
+            ("server", _) => Ok(RemoteTarget::Server),
+            ("player", Value::Text(id)) => Ok(RemoteTarget::Player(id.clone())),
+            _ => Err(format!("invalid remote target {tag:?}")),
+        },
+        _ => Err("a remote target is a one-entry map".into()),
+    }
+}
+
 fn spec_of(v: &Value) -> Result<CommandSpec, String> {
     let field = |k: &str| v.get(k).ok_or_else(|| format!("command spec has no {k}"));
     let as_text = |k: &str| match field(k)? {
@@ -695,6 +708,16 @@ fn call_host(h: &mut dyn HostApi, f: &str, a: &[Value]) -> Result<Value, String>
             Ok(v) => entry("ok", Value::Bytes(v)),
             Err(e) => entry("err", call_error(&e)),
         },
+
+        "services.call-remote" => {
+            let to = remote_target_of(arg(a, 0)?)?;
+            let id = h.call_remote(to, text(a, 1)?, text(a, 2)?, text(a, 3)?, bytes_arg(a, 4)?, unsigned(a, 5)?);
+            api_result(id, |id| Value::Int(id.into()))
+        }
+        "services.cancel-remote" => Value::Bool(h.cancel_remote(unsigned(a, 0)?)),
+        "services.caller" => h.remote_caller().map_or(Value::Null, |c| {
+            Value::Map(vec![("mod-id".into(), Value::Text(c.mod_id)), ("player".into(), opt_text(c.player))])
+        }),
 
         "channels.open" => api_result(h.channel_open(text(a, 0)?), |id| Value::Int(id.into())),
         "channels.send" => {
@@ -1132,6 +1155,7 @@ impl Instance for JvmInstance {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::remote::RemoteCaller;
     use crate::types::{BreakLayer, ObjectKind, SavePhase, Side};
 
     /// A host API that records what it is asked and fails on demand.
@@ -1140,6 +1164,7 @@ mod tests {
         calls: Vec<String>,
         err: Option<ApiError>,
         svc_err: Option<ServiceError>,
+        caller: Option<RemoteCaller>,
     }
 
     impl Fake {
@@ -1263,6 +1288,24 @@ mod tests {
         fn call_service(&mut self, name: &str, req: &str, method: &str, args: &[u8]) -> Result<Vec<u8>, ServiceError> {
             self.calls.push(format!("call {name} {req} {method} {args:?}"));
             self.svc_err.clone().map_or(Ok(vec![0xf5]), Err)
+        }
+        fn call_remote(
+            &mut self,
+            to: RemoteTarget,
+            name: &str,
+            req: &str,
+            method: &str,
+            args: &[u8],
+            timeout_ms: u32,
+        ) -> Result<u32, ApiError> {
+            self.res(&format!("remote {to:?} {name} {req} {method} {args:?} {timeout_ms}"), 11)
+        }
+        fn cancel_remote(&mut self, id: u32) -> bool {
+            id == 11
+        }
+        fn remote_caller(&mut self) -> Option<RemoteCaller> {
+            self.calls.push("caller".into());
+            self.caller.clone()
         }
         fn channel_open(&mut self, name: &str) -> Result<ChannelId, ApiError> {
             self.res(&format!("open {name}"), 5)
@@ -1532,6 +1575,28 @@ mod tests {
             assert_eq!(call(&mut h, "channels.send", &[Value::Int(5), target, Value::Bytes(vec![1])]), ok(Value::Null));
         }
         assert!(h.calls.contains(&"send 5 Player(\"p1\") [1]".to_string()));
+        // remote service calls
+        for (to, want) in [
+            (entry("server", Value::Null), "remote Server s ^1 m [128] 0"),
+            (entry("player", t("p1")), "remote Player(\"p1\") s ^1 m [128] 7000"),
+        ] {
+            let ms = if want.ends_with(" 0") { 0 } else { 7000 };
+            let args = [to, t("s"), t("^1"), t("m"), Value::Bytes(vec![0x80]), Value::Int(ms)];
+            assert_eq!(call(&mut h, "services.call-remote", &args), ok(Value::Int(11)));
+            assert!(h.calls.contains(&want.to_string()), "{want}");
+        }
+        for bad in [t("server"), Value::Map(vec![]), entry("player", Value::Int(1)), entry("moon", Value::Null)] {
+            let args = [bad, t("s"), t("^1"), t("m"), Value::Bytes(vec![0x80]), Value::Int(0)];
+            assert!(call_host(&mut h, "services.call-remote", &args).is_err());
+        }
+        assert_eq!(call(&mut h, "services.cancel-remote", &[Value::Int(11)]), Value::Bool(true));
+        assert_eq!(call(&mut h, "services.cancel-remote", &[Value::Int(12)]), Value::Bool(false));
+        assert_eq!(call(&mut h, "services.caller", &[]), Value::Null);
+        h.caller = Some(RemoteCaller { mod_id: "app".into(), player: Some("p1".into()) });
+        let c = call(&mut h, "services.caller", &[]);
+        assert_eq!((c.get("mod-id"), c.get("player")), (Some(&t("app")), Some(&t("p1"))));
+        h.caller = Some(RemoteCaller { mod_id: "app".into(), player: None });
+        assert_eq!(call(&mut h, "services.caller", &[]).get("player"), Some(&Value::Null));
         assert_eq!(call(&mut h, "channels.close", &[Value::Int(5)]), Value::Bool(true));
         for bad in [
             t("local"),

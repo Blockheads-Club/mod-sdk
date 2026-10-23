@@ -10,6 +10,7 @@ use std::collections::BTreeMap;
 use std::time::Instant;
 
 use crate::channels::ChannelId;
+use crate::remote::{RemoteCaller, RemoteTarget};
 use crate::types::{
     ApiError, ChannelSource, ChannelTarget, CommandOutcome, CommandSender, CommandSpec, ContentKind, CosmeticInfo,
     Event, EventKind, LogLevel, Outcome, Pos, Priority, ServiceError,
@@ -237,6 +238,30 @@ pub trait HostApi {
     ) -> Result<Vec<u8>, ServiceError> {
         let _ = (name, version_req, method, args);
         Err(ServiceError::NotFound)
+    }
+
+    /// `services.call-remote` (API 0.3.1): the id of the call. The answer arrives as the custom event
+    /// `<mod-id>:service-result`; see [`crate::remote`].
+    fn call_remote(
+        &mut self,
+        to: RemoteTarget,
+        name: &str,
+        version_req: &str,
+        method: &str,
+        args: &[u8],
+        timeout_ms: u32,
+    ) -> Result<u32, ApiError> {
+        let _ = (to, name, version_req, method, args, timeout_ms);
+        Err(ApiError::Unsupported)
+    }
+    /// `services.cancel-remote` (API 0.3.1).
+    fn cancel_remote(&mut self, id: u32) -> bool {
+        let _ = id;
+        false
+    }
+    /// `services.caller` (API 0.3.1).
+    fn remote_caller(&mut self) -> Option<RemoteCaller> {
+        None
     }
 
     /// `content.id-of` (API 0.3).

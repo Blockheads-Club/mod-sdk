@@ -22,6 +22,8 @@ import club.blockheads.api.players.PlayersImpl;
 import club.blockheads.api.players.Role;
 import club.blockheads.api.scheduler.Scheduler;
 import club.blockheads.api.scheduler.SchedulerImpl;
+import club.blockheads.api.services.RemoteCaller;
+import club.blockheads.api.services.RemoteTarget;
 import club.blockheads.api.services.Services;
 import club.blockheads.api.services.ServicesImpl;
 import club.blockheads.api.storage.Storage;
@@ -33,6 +35,7 @@ import club.blockheads.mod.rt.Bridge;
 
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -59,6 +62,8 @@ public final class Api implements EventHandlers {
     final Map<Long, Object[]> tasks = new HashMap<Long, Object[]>();
     final Map<String, Service> providers = new HashMap<String, Service>();
     final Map<Long, ChannelHandler> channelHandlers = new HashMap<Long, ChannelHandler>();
+    private final Map<Long, RemoteCallback> remoteCalls = new HashMap<Long, RemoteCallback>();
+    private boolean remoteSubscribed;
 
     /** Used by the runtime; mods receive their instance in {@link Mod#onEnable}. */
     public Api(Bridge b) {
@@ -235,6 +240,49 @@ public final class Api implements EventHandlers {
     /** A client for a service of another mod; {@code requirement} is a semver requirement such as {@code ^1}. */
     public ServiceClient service(String name, String requirement) {
         return new ServiceClient(services, name, requirement);
+    }
+
+    /**
+     * Calls a service on the other side (API 0.3.1): the server from a client mod, a player's client from a server
+     * mod. Returns the call id at once; {@code cb} runs later, never during this call, with the result or the
+     * failure. {@code timeoutMs} 0 means 5000, the largest is 30000. Needs the {@code channels} permission.
+     */
+    @SuppressWarnings("unchecked")
+    public long callRemote(RemoteTarget to, String name, String requirement, String method, List<?> args,
+            long timeoutMs, RemoteCallback cb) {
+        if (!remoteSubscribed) {
+            onCustom(host.modId() + ":service-result", Priority.MONITOR, false, new Handler<CustomEvent>() {
+                @Override
+                public void handle(CustomEvent ev) throws Exception {
+                    Map<String, Object> p = (Map<String, Object>) ev.payload;
+                    RemoteCallback done = remoteCalls.remove(((Number) p.get("id")).longValue());
+                    if (done == null) {
+                        return;
+                    }
+                    if (Boolean.TRUE.equals(p.get("ok"))) {
+                        done.ok(p.get("value"));
+                    } else {
+                        Map<String, Object> e = (Map<String, Object>) p.get("error");
+                        done.failed((String) e.get("kind"), (String) e.get("message"));
+                    }
+                }
+            });
+            remoteSubscribed = true;
+        }
+        long id = services.callRemote(to, name, requirement, method, args, timeoutMs);
+        remoteCalls.put(id, cb);
+        return id;
+    }
+
+    /** Forgets an open remote call: its callback never runs. False if it was not open. */
+    public boolean cancelRemote(long id) {
+        remoteCalls.remove(id);
+        return services.cancelRemote(id);
+    }
+
+    /** Who made the remote call the provider is serving, or null for a call from a mod on this side. */
+    public RemoteCaller caller() {
+        return services.caller();
     }
 
     // -- channels ----------------------------------------------------------------------------------------------

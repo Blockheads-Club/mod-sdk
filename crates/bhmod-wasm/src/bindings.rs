@@ -250,6 +250,7 @@ macro_rules! api_version {
             ) -> R<Result<Vec<u8>, services::CallError>> {
                 Ok(self.api()?.call_service(&name, &version_req, &method, &args).map_err(service_error))
             }
+            services_extra!();
         }
 
         impl channels::Host for State {
@@ -439,6 +440,10 @@ macro_rules! gameplay_api {
 pub mod v02 {
     pub use crate::wit::v02::ServerMod;
 
+    macro_rules! services_extra {
+        () => {};
+    }
+
     macro_rules! players_extra {
         () => {
             fn from_value_handle(&mut self, handle: u64) -> R<Option<Resource<PlayerRes>>> {
@@ -466,10 +471,39 @@ pub mod v02 {
     gameplay_api!();
 }
 
-/// `blockheads:api@0.3.0`: 0.2 plus the `ui` interface (only client mods import it) and the `content` interface. Components of either world
+/// `blockheads:api@0.3.1`: 0.2 plus the `ui` interface (only client mods import it) and the `content` interface. Components of either world
 /// are bound with the `client-mod` world (a superset of the imports, the same `guest` export).
 pub mod v03 {
     pub use crate::wit::ClientMod as ServerMod;
+
+    /// The remote service calls added in 0.3.1 (a 0.3.0 component never imports them).
+    macro_rules! services_extra {
+        () => {
+            fn call_remote(
+                &mut self,
+                to: services::RemoteTarget,
+                name: String,
+                version_req: String,
+                method: String,
+                args: Vec<u8>,
+                timeout_ms: u32,
+            ) -> R<Result<u32, types::ApiError>> {
+                let to = match to {
+                    services::RemoteTarget::Server => bhmod_core::RemoteTarget::Server,
+                    services::RemoteTarget::Player(p) => bhmod_core::RemoteTarget::Player(self.player_id(&p)?),
+                };
+                Ok(self.api()?.call_remote(to, &name, &version_req, &method, &args, timeout_ms).map_err(api_error))
+            }
+            fn cancel_remote(&mut self, id: u32) -> R<bool> {
+                Ok(self.api()?.cancel_remote(id))
+            }
+            fn caller(&mut self) -> R<Option<services::RemoteCaller>> {
+                let Some(c) = self.api()?.remote_caller() else { return Ok(None) };
+                let player = c.player.map(|id| self.new_player(id)).transpose()?;
+                Ok(Some(services::RemoteCaller { mod_id: c.mod_id, player }))
+            }
+        };
+    }
 
     macro_rules! players_extra {
         () => {
@@ -590,6 +624,10 @@ pub mod v03 {
 /// subscribe to them).
 pub mod v01 {
     pub use crate::wit::v01::ServerMod;
+
+    macro_rules! services_extra {
+        () => {};
+    }
 
     macro_rules! players_extra {
         () => {};

@@ -1,0 +1,20 @@
+[package]
+name = "prices-rust"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+blockheads-mod = { path = "../../sdk/rust/blockheads-mod" }
+
+[profile.release]
+opt-level = "s"
+lto = true
+strip = true
+
+# Keep this example out of the SDK workspace: it only builds for wasm32-wasip2.
+[workspace]

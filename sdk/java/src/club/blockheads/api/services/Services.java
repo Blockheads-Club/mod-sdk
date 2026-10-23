@@ -3,7 +3,7 @@
 package club.blockheads.api.services;
 
 /**
- * Cross-mod services (shape only in 0.1; implemented since 0.2).
+ * Cross-mod services (shape only in 0.1; implemented since 0.2; across the network since 0.3.1).
  * 
  * A provider declares the service in `mod.toml` `[provides]` and registers it with `provide`. Consumers call it by
  * name and a semver requirement; the host picks the highest compatible provider, converts values and calls the
@@ -13,6 +13,21 @@ package club.blockheads.api.services;
  * Rules: a consumer may only call providers it depends or soft-depends on. Calls are synchronous; a call that
  * would re-enter a mod already on the call stack (A -&gt; B -&gt; A) fails with `reentrant`. Players inside values are
  * host handles `{"$h": n}`; a handle of a player who left is stale.
+ * 
+ * (0.3.1) Remote calls: a client mod can call a service a server mod provides, and a server mod one a client mod
+ * provides, over the 0xBC `SERVICE_CALL` / `SERVICE_RESULT` ops. They are asynchronous: `call-remote` returns a
+ * call id at once and the answer arrives later as the custom event `&lt;mod-id&gt;:service-result` to the calling mod
+ * (subscribe with `events.subscribe-custom`). The payload is a canonical CBOR map
+ * `{"id": call-id, "ok": true, "value": &lt;result&gt;}` or
+ * `{"id": call-id, "ok": false, "error": {"kind": &lt;kind&gt;, "message": &lt;text&gt;}}`. The kinds are `not-found`,
+ * `version-mismatch`, `not-permitted`, `busy`, `provider-error`, `trap`, `bad-value`, `too-large`, `internal`
+ * (the other side's answer) and `unavailable`, `timeout`, `disconnected` (decided locally). The event reaches
+ * exactly one handler call per remote call, also for failures that are known at once (`unavailable`), and never
+ * during the `call-remote` that caused it. Calling needs the `channels` permission.
+ * 
+ * The providing side decides what may be called: only services declared with `remote = true` in `mod.toml`
+ * `[provides]` (optionally limited to `remote-methods`) are reachable, every caller peer has a rate limit, and the
+ * provider runs under its normal time budget. Inside the provider, `caller` tells who called.
  */
 public interface Services {
     /**
@@ -25,4 +40,24 @@ public interface Services {
      * `args` is a canonical CBOR array of the method's parameters.
      */
     Object call(String name, String versionReq, String method, Object args);
+
+    /**
+     * (0.3.1) Calls `method` of the best provider matching `version-req` on the other side. `args` is a canonical
+     * CBOR array of at most 32 KiB. `timeout-ms` is how long to wait for the answer: 0 means 5000, the largest is
+     * 30000. Fails at once with `invalid-argument` (bad names, requirement, arguments or timeout),
+     * `limit-exceeded` (too many open calls, arguments too large), `not-permitted` (no `channels` permission),
+     * `stale-handle` (the player left); everything else comes back as the `service-result` event.
+     */
+    long callRemote(club.blockheads.api.services.RemoteTarget to, String name, String versionReq, String method, Object args, long timeoutMs);
+
+    /**
+     * (0.3.1) Forgets an open remote call: no event is delivered for it. False if it was not open.
+     */
+    boolean cancelRemote(long id);
+
+    /**
+     * (0.3.1) The caller of the remote call being served right now (also inside services that provider calls),
+     * or none when `call-service` was reached from a local call.
+     */
+    club.blockheads.api.services.RemoteCaller caller();
 }

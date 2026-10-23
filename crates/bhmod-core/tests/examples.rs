@@ -298,3 +298,48 @@ fn cosmetics_hats() {
     assert_eq!(worn(&b), vec![("p1".into(), "hair".into(), 3)]);
     h.disable_all();
 }
+
+/// The price check mod end to end without a network: the client half's call goes to the server half through
+/// `remote_call_in`, the answer comes back through `remote_result`.
+#[test]
+fn prices_lua_round_trip() {
+    use bhmod_core::remote::RemoteTarget;
+    let grants = "[prices-lua]\ngrant = [\"channels\"]\n";
+    let load = |side: Side| {
+        let tmp = tempfile::tempdir().unwrap();
+        copy_dir(&examples().join("prices-lua"), &tmp.path().join("prices-lua"));
+        fs::write(tmp.path().join("mods.toml"), grants).unwrap();
+        let b = FakeBridge::new();
+        let mut h = ModHost::load(HostOptions::new(tmp.path(), side), b.clone());
+        h.enable("World", "wid");
+        assert_eq!(h.mods()[0].state, ModState::Enabled, "{}", b.log_text());
+        (tmp, b, h)
+    };
+    let (_s, sb, mut server) = load(Side::Server);
+    let (_c, cb, mut client) = load(Side::Client);
+    let p1 = RemoteTarget::Player("p1".into());
+    for (item, toast) in
+        [("apple", "apple costs 3 coins."), ("ghost", "ghost is not for sale."), ("sword", "sword costs 120 coins.")]
+    {
+        client.command(CommandSender::Console, &format!("/price {item}")).unwrap();
+        let call = cb.remote_calls.borrow_mut().remove(0);
+        // What the network layer does: the server answers the call, the client gets the result.
+        let out = server.remote_call_in(&p1, &call.mod_id, &call.service, &call.version_req, &call.method, &call.args);
+        assert!(client.remote_result(&RemoteTarget::Server, call.id, out));
+        let ui = cb.take_ui();
+        assert!(
+            ui.iter().any(|(_, c)| format!("{c:?}").contains(&format!("Toast {{ text: \"{toast}\" }}"))),
+            "{toast}: {ui:?}\n{}",
+            cb.log_text()
+        );
+    }
+    // `update` and anything else is not exposed to clients.
+    let args =
+        bhmod_core::value::Value::List(vec![bhmod_core::value::Value::text("apple"), bhmod_core::value::Value::Int(1)])
+            .encode();
+    assert_eq!(
+        server.remote_call_in(&p1, "prices-lua", "prices", "^1", "update", &args),
+        Err(bhmod_core::RemoteError::NotPermitted)
+    );
+    let _ = sb;
+}

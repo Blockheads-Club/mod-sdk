@@ -14,7 +14,9 @@
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
+
+use semver::VersionReq;
 
 use crate::bridge::GameBridge;
 use crate::budget::{Budgets, Clock, Strikes, SystemClock};
@@ -24,6 +26,7 @@ use crate::commands::CommandRegistry;
 use crate::config::{required_permissions, ModsConfig, FILE_NAME};
 use crate::discover::discover;
 use crate::handles::Handles;
+use crate::remote::{self, Remote, RemoteCall, RemoteCaller, RemoteError, RemoteLimits, RemoteTarget};
 use crate::resolve::resolve;
 use crate::runtime::{CallError, CommandId, HostApi, Instance, InstanceLimits, Runtime, SubscriptionId, TaskId};
 use crate::scheduler::Scheduler;
@@ -56,6 +59,8 @@ pub struct HostOptions {
     pub storage: Box<dyn StorageProvider>,
     /// The clock used for budgets and strikes.
     pub clock: Box<dyn Clock>,
+    /// Rate and count limits of cross-side service calls.
+    pub remote: RemoteLimits,
 }
 
 impl HostOptions {
@@ -68,6 +73,7 @@ impl HostOptions {
             runtimes: crate::default_runtimes(),
             storage: Box::new(MemoryStorage::new()),
             clock: Box::new(SystemClock),
+            remote: RemoteLimits::default(),
         }
     }
 }
@@ -107,6 +113,8 @@ struct Slot {
     provides: Vec<(String, String)>,
     /// `[content] cosmetics` as `(key, slot)`.
     cosmetics: Vec<(String, String)>,
+    /// The `[provides]` services that are `remote = true`, as `(name, allowed methods)`; no methods = all.
+    remote: Vec<(String, Vec<String>)>,
     instance: Option<Box<dyn Instance>>,
     store: Option<Store>,
     strikes: Strikes,
@@ -122,6 +130,7 @@ pub struct ModHost {
     channels: Channels,
     handles: Handles,
     ui: UiState,
+    remote: Remote,
     /// Mods whose code is running, outermost first, with the deadline of each call.
     stack: Vec<(usize, Instant)>,
     /// Event deliveries to mods that were on the stack when the event fired.
@@ -155,7 +164,7 @@ impl ModHost {
     /// Discovers, resolves and instantiates the mods in `options.mods_dir`. Problems are logged through the bridge;
     /// a mods directory that does not exist gives an empty host and logs nothing.
     pub fn load(options: HostOptions, bridge: Rc<dyn GameBridge>) -> ModHost {
-        let HostOptions { mods_dir, side, budgets, runtimes, storage, clock } = options;
+        let HostOptions { mods_dir, side, budgets, runtimes, storage, clock, remote } = options;
         let mut host = ModHost {
             slots: Vec::new(),
             bus: EventBus::default(),
@@ -165,6 +174,7 @@ impl ModHost {
             channels: Channels::default(),
             handles: Handles::default(),
             ui: UiState::default(),
+            remote: Remote::new(remote),
             stack: Vec::new(),
             deferred: Vec::new(),
             draining: false,
@@ -224,6 +234,14 @@ impl ModHost {
                         .map(|s| (s.name.clone(), s.version.clone()))
                         .collect(),
                     cosmetics: pkg.manifest.content.cosmetics.iter().map(|c| (c.key.clone(), c.slot.clone())).collect(),
+                    remote: pkg
+                        .manifest
+                        .provides
+                        .services
+                        .iter()
+                        .filter(|s| s.remote)
+                        .map(|s| (s.name.clone(), s.remote_methods.clone()))
+                        .collect(),
                     instance: Some(instance),
                     store: None,
                     strikes: Strikes::default(),
@@ -355,6 +373,7 @@ impl ModHost {
         self.scheduler.remove_owner(owner);
         self.services.remove_owner(owner);
         self.channels.remove_owner(owner);
+        self.remote.remove_owner(owner);
         if self.ui.clear_owner(owner) {
             let id = self.slots[owner].info.id.clone();
             // The loader drops the mod's widgets and dialogs; a bridge without UI has nothing to drop.
@@ -453,8 +472,117 @@ impl ModHost {
         }
         if let Event::PlayerQuit { player, .. } = &ev {
             self.handles.invalidate(player);
+            self.remote_peer_gone(&RemoteTarget::Player(player.clone()));
         }
         ev
+    }
+
+    /// Delivers the answer of a remote call to the mod that made it: the custom event `<mod-id>:service-result`
+    /// (see `services.wit`). A mod disabled meanwhile gets nothing; a mod on the call stack gets it once its call
+    /// has returned.
+    fn deliver_remote(&mut self, owner: usize, id: u32, outcome: Result<Vec<u8>, RemoteError>) {
+        if self.slots[owner].info.state != ModState::Enabled {
+            return;
+        }
+        let source = self.slots[owner].info.id.clone();
+        let payload = remote::result_payload(id, &outcome).encode();
+        let ev = Event::Custom { name: format!("{source}:service-result"), source, payload, cancelled: false };
+        self.fire_filtered(ev, Some(owner));
+    }
+
+    /// Fails the calls that time out now with `timeout`.
+    fn expire_remote(&mut self) {
+        let now = self.clock.now();
+        for (id, p) in self.remote.expired(now) {
+            self.deliver_remote(p.owner, id, Err(RemoteError::Timeout));
+        }
+    }
+
+    /// The answer to a remote call this side made (0xBC `SERVICE_RESULT`) arrived from `from`. Delivered to the
+    /// calling mod as the `service-result` event. False when no such call is open for that peer (late answer after a
+    /// timeout, a cancelled call, or a peer answering a call that was sent to someone else).
+    pub fn remote_result(&mut self, from: &RemoteTarget, id: u32, outcome: Result<Vec<u8>, RemoteError>) -> bool {
+        let Some(p) = self.remote.answer(id, from) else { return false };
+        let outcome = outcome.and_then(|bytes| {
+            if bytes.len() > remote::MAX_PAYLOAD {
+                return Err(RemoteError::TooLarge);
+            }
+            Value::decode(&bytes).map(|_| bytes).map_err(|e| RemoteError::BadValue(format!("result: {e}")))
+        });
+        self.deliver_remote(p.owner, id, outcome);
+        true
+    }
+
+    /// The peer is gone (the player quit, or the client lost the server): its open calls fail with `disconnected`.
+    /// A `player-quit` event does this by itself.
+    pub fn remote_peer_gone(&mut self, peer: &RemoteTarget) {
+        for (id, p) in self.remote.gone(peer) {
+            self.deliver_remote(p.owner, id, Err(RemoteError::Disconnected));
+        }
+    }
+
+    /// A remote call from the other side arrived (0xBC `SERVICE_CALL`, `from` is the player or the server and
+    /// `caller_mod` the calling mod). Runs the provider's `call-service` under the provider's time budget and returns
+    /// the result for the host program to send back as `SERVICE_RESULT`. Only services declared `remote = true` in
+    /// the provider's `mod.toml` are reachable (and only the listed `remote-methods`), and every peer has a rate
+    /// limit ([`RemoteLimits`]); the failures are those of the protocol's `service_error` codes.
+    pub fn remote_call_in(
+        &mut self,
+        from: &RemoteTarget,
+        caller_mod: &str,
+        name: &str,
+        version_req: &str,
+        method: &str,
+        args: &[u8],
+    ) -> Result<Vec<u8>, RemoteError> {
+        if !self.enabled || !self.stack.is_empty() {
+            return Err(RemoteError::Busy);
+        }
+        let now = self.clock.now();
+        if !self.remote.allow(from, now) {
+            return Err(RemoteError::Busy);
+        }
+        if args.len() > remote::MAX_PAYLOAD {
+            return Err(RemoteError::TooLarge);
+        }
+        if !bhmod_manifest::rules::is_mod_id(caller_mod) || method.len() > remote::MAX_NAME {
+            return Err(RemoteError::BadValue("caller mod or method name".into()));
+        }
+        match Value::decode(args) {
+            Ok(Value::List(_)) => {}
+            Ok(_) => return Err(RemoteError::BadValue("arguments must be a list".into())),
+            Err(e) => return Err(RemoteError::BadValue(format!("arguments: {e}"))),
+        }
+        let provider = self.services.lookup(name, version_req)?.owner;
+        let exposed = self.slots[provider]
+            .remote
+            .iter()
+            .any(|(n, methods)| n == name && (methods.is_empty() || methods.iter().any(|m| m == method)));
+        if !exposed {
+            return Err(RemoteError::NotPermitted);
+        }
+        let player = match from {
+            RemoteTarget::Player(p) => Some(p.clone()),
+            RemoteTarget::Server => None,
+        };
+        self.remote.caller = Some(RemoteCaller { mod_id: caller_mod.to_string(), player });
+        let what = format!("remote service {name}.{method}");
+        let out = self.call(provider, &what, |i, h| i.call_service(h, name, method, args));
+        self.remote.caller = None;
+        match out {
+            Some(Ok(bytes)) if bytes.len() > remote::MAX_PAYLOAD => Err(RemoteError::TooLarge),
+            Some(Ok(bytes)) => match Value::decode(&bytes) {
+                Ok(_) => Ok(bytes),
+                Err(e) => Err(RemoteError::BadValue(format!("result: {e}"))),
+            },
+            // The error text goes to another machine: no stack traceback (script paths), at most 256 bytes.
+            Some(Err(CallError::Failed(m))) => {
+                let first = m.split("\nstack traceback:").next().unwrap_or_default();
+                Err(RemoteError::ProviderError(truncate(first, remote::MAX_ERROR).to_string()))
+            }
+            // `None` cannot happen: the provider is enabled (it is registered) and not on the stack.
+            _ => Err(RemoteError::Trap),
+        }
     }
 
     /// The loader's answer to a dialog (API 0.3): `button` counts from 0 ([`crate::ui::CLOSED`] when the dialog went away
@@ -574,6 +702,9 @@ impl ModHost {
         if self.channels.has_queued() {
             self.deliver_channels();
         }
+        if self.remote.has_pending() {
+            self.expire_remote();
+        }
     }
 
     /// One network poll: runs next-poll tasks and delivers channel messages.
@@ -587,6 +718,9 @@ impl ModHost {
         }
         if self.channels.has_queued() {
             self.deliver_channels();
+        }
+        if self.remote.has_pending() {
+            self.expire_remote();
         }
     }
 
@@ -890,6 +1024,73 @@ impl HostApi for Ctx<'_> {
             // `None` cannot happen: the provider is enabled (it is registered) and not on the stack.
             _ => Err(ServiceError::Trap),
         }
+    }
+
+    fn call_remote(
+        &mut self,
+        to: RemoteTarget,
+        name: &str,
+        version_req: &str,
+        method: &str,
+        args: &[u8],
+        timeout_ms: u32,
+    ) -> Result<u32, ApiError> {
+        self.require("channels")?;
+        match (&to, self.host.side) {
+            (RemoteTarget::Server, Side::Client) => {}
+            (RemoteTarget::Player(p), Side::Server) => {
+                self.host.bridge.player_alias(p).ok_or(ApiError::StaleHandle)?;
+            }
+            (RemoteTarget::Server, Side::Server) => {
+                return Err(ApiError::InvalidArgument("a server mod calls players, not the server".into()))
+            }
+            (RemoteTarget::Player(_), Side::Client) => {
+                return Err(ApiError::InvalidArgument("a client mod calls the server, not players".into()))
+            }
+        }
+        for (what, v) in [("service", name), ("method", method)] {
+            if v.is_empty() || v.len() > remote::MAX_NAME {
+                return Err(ApiError::InvalidArgument(format!("{what} name must be 1 to {} bytes", remote::MAX_NAME)));
+            }
+        }
+        VersionReq::parse(version_req)
+            .map_err(|_| ApiError::InvalidArgument(format!("{version_req:?} is not a semver requirement")))?;
+        if args.len() > remote::MAX_PAYLOAD {
+            return Err(limit("remote call arguments"));
+        }
+        match Value::decode(args) {
+            Ok(Value::List(_)) => {}
+            Ok(_) => return Err(ApiError::InvalidArgument("arguments must be a list".into())),
+            Err(e) => return Err(ApiError::InvalidArgument(format!("arguments: {e}"))),
+        }
+        let timeout = match timeout_ms {
+            0 => remote::DEFAULT_TIMEOUT_MS,
+            t if t <= remote::MAX_TIMEOUT_MS => t,
+            _ => return Err(ApiError::InvalidArgument(format!("timeout is at most {} ms", remote::MAX_TIMEOUT_MS))),
+        };
+        let deadline = self.host.clock.now() + Duration::from_millis(u64::from(timeout));
+        let id = self.host.remote.begin(self.owner, to.clone(), deadline)?;
+        let call = RemoteCall {
+            id,
+            target: to.clone(),
+            mod_id: self.slot().info.id.clone(),
+            service: name.to_string(),
+            version_req: version_req.to_string(),
+            method: method.to_string(),
+            args: args.to_vec(),
+        };
+        if let Err(e) = self.host.bridge.service_send(&call) {
+            // The caller is on the call stack, so the event reaches it once this call has returned.
+            self.host.remote.answer(id, &to);
+            self.host.deliver_remote(self.owner, id, Err(e));
+        }
+        Ok(id)
+    }
+    fn cancel_remote(&mut self, id: u32) -> bool {
+        self.host.remote.cancel(self.owner, id)
+    }
+    fn remote_caller(&mut self) -> Option<RemoteCaller> {
+        self.host.remote.caller.clone()
     }
 
     fn channel_open(&mut self, name: &str) -> Result<ChannelId, ApiError> {
