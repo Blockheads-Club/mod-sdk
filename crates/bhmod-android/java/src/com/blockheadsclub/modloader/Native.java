@@ -8,6 +8,8 @@ final class Native {
     static native void decide(boolean accept);
     static native void cancel();
     static native String version();
+    static native byte[] font(int id);
+    static native void setModsLabel(String label);
     static native String listInstalled();
     static native String inspect(String path, String sha256);
     static native String install(String path, String sha256, String source);

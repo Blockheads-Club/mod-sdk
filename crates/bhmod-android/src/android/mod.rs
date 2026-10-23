@@ -12,6 +12,7 @@
 //!   then sent with `bhcModLoader` added to a copy of `myPlayerInfo`.
 //! - `-[BHNetClientMatch disconnect]`: the session ends.
 
+pub mod menus;
 pub mod objc;
 
 use std::cell::RefCell;
@@ -120,7 +121,7 @@ fn data_dir() -> PathBuf {
 }
 
 /// Calls `Bridge.<name>(String)` on the Java side.
-fn java_post(json: &str) {
+pub(crate) fn java_post(json: &str) {
     let (Some(vm), Some(cls)) = (VM.get(), BRIDGE_CLASS.get()) else { return };
     let Ok(mut env) = vm.attach_current_thread_permanently() else { return };
     let Ok(s) = env.new_string(json) else { return };
@@ -243,7 +244,7 @@ fn abort() {
     }
 }
 
-fn guard(what: &str, f: impl FnOnce()) {
+pub(crate) fn guard(what: &str, f: impl FnOnce()) {
     if catch_unwind(AssertUnwindSafe(f)).is_err() {
         log(LogLevel::Error, &format!("panic in {what}; the loader keeps going"));
     }
@@ -384,6 +385,7 @@ fn install_hooks() -> bool {
     let send_info = objc::swizzle("BHNetClientMatch", "sendPlayerInformationToServer:password:", hook_send_info as Imp);
     let disconnect = objc::swizzle("BHNetClientMatch", "disconnect", hook_disconnect as Imp);
     let ok = [draw_frame, receive, send_info, disconnect].iter().all(|p| !p.is_null());
+    menus::install();
     let _ = ORIG.set(Originals { draw_frame, receive, send_info, disconnect });
     if !ok {
         log(LogLevel::Error, "a game method was not found; this game version is not supported, mods may not work");
@@ -466,6 +468,29 @@ pub extern "system" fn Java_com_blockheadsclub_modloader_Native_decide(_env: JNI
 pub extern "system" fn Java_com_blockheadsclub_modloader_Native_cancel(_env: JNIEnv, _c: JClass) {
     if let Ok(mut e) = EVENTS.lock() {
         e.push(UiEvent::Cancel);
+    }
+}
+
+/// `Native.font(id)`: the bytes of an embedded font ([`crate::fonts`]), empty for an unknown id.
+#[no_mangle]
+pub extern "system" fn Java_com_blockheadsclub_modloader_Native_font(
+    env: JNIEnv,
+    _c: JClass,
+    id: jint,
+) -> jni::sys::jbyteArray {
+    let bytes = crate::fonts::get(id).unwrap_or(&[]);
+    env.byte_array_from_slice(bytes).map(|a| a.into_raw()).unwrap_or(std::ptr::null_mut())
+}
+
+/// `Native.setModsLabel(text)`: the label of the Mods buttons in the game's menus.
+#[no_mangle]
+pub extern "system" fn Java_com_blockheadsclub_modloader_Native_setModsLabel(
+    mut env: JNIEnv,
+    _c: JClass,
+    text: JString,
+) {
+    if let Some(s) = jstr(&mut env, &text) {
+        menus::set_label(&s);
     }
 }
 

@@ -20,6 +20,7 @@ const RTLD_NOW: i32 = 2;
 const RTLD_NOLOAD: i32 = 4;
 
 struct Rt {
+    add_method: unsafe extern "C" fn(Id, Sel, Imp, *const c_char) -> i8,
     get_class: unsafe extern "C" fn(*const c_char) -> Id,
     sel_register: unsafe extern "C" fn(*const c_char) -> Sel,
     instance_method: unsafe extern "C" fn(Id, Sel) -> *mut c_void,
@@ -46,17 +47,19 @@ fn rt() -> Option<&'static Rt> {
             return None;
         }
         let f = |n| sym(sys, n);
-        let (a, b, c, d, e) = (
+        let (a, b, c, d, e, g) = (
             f("objc_getClass"),
             f("sel_registerName"),
             f("class_getInstanceMethod"),
             f("method_setImplementation"),
             f("objc_msgSend"),
+            f("class_addMethod"),
         );
-        if [a, b, c, d, e].iter().any(|p| p.is_null()) {
+        if [a, b, c, d, e, g].iter().any(|p| p.is_null()) {
             return None;
         }
         Some(Rt {
+            add_method: std::mem::transmute::<*mut c_void, unsafe extern "C" fn(Id, Sel, Imp, *const c_char) -> i8>(g),
             get_class: std::mem::transmute::<*mut c_void, unsafe extern "C" fn(*const c_char) -> Id>(a),
             sel_register: std::mem::transmute::<*mut c_void, unsafe extern "C" fn(*const c_char) -> Sel>(b),
             instance_method: std::mem::transmute::<*mut c_void, unsafe extern "C" fn(Id, Sel) -> *mut c_void>(c),
@@ -101,6 +104,17 @@ pub fn swizzle(class_name: &str, selector: &str, imp: Imp) -> Imp {
         }
         (r.set_imp)(m, imp)
     }
+}
+
+/// Adds `-[class selector]` (type encoding `types`) unless the class already has it. True when added.
+pub fn add_method(class_name: &str, selector: &str, imp: Imp, types: &str) -> bool {
+    let Some(r) = rt() else { return false };
+    let cls = class(class_name);
+    if cls.is_null() {
+        return false;
+    }
+    let t = CString::new(types).expect("no NUL");
+    unsafe { (r.add_method)(cls, sel(selector), imp, t.as_ptr()) != 0 }
 }
 
 /// `objc_msgSend` as a function of the given type.
