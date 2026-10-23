@@ -2,8 +2,8 @@
 """Draws the example textures (original art, CC0). Needs Pillow: python3 art/make_art.py
 
 The game maps these onto the blockhead's head cube, so every texture is a pattern that looks right on any face.
-Hat textures are 32x16 (the linen cap) and 32x32 (the santa hat); hair is 32x16. The game multiplies a hat by the
-colour of the item it re-skins and hair by the hair colour, so light textures keep their colour best."""
+Hat textures are 32x16 (the linen cap) and 32x32 (the santa hat). A hair texture is a 32x16 mask of the hair (see
+ember())."""
 from PIL import Image
 
 OUT = "assets"
@@ -40,11 +40,19 @@ def party():
 
 
 def ember():
-    img = Image.new("RGBA", (32, 16))
-    for y in range(16):
-        for x in range(32):
-            heat = (x * 5 + y * 11) % 7
-            img.putpixel((x, y), (255, 150 + heat * 14, 40 + heat * 20, 255))
+    """Hair is a mask: the game draws the player's own hair colour where the red channel is dark and the skin
+    (face) where it is light. Black = hair. This one paints the top and a flame-shaped fringe on the four sides of
+    the 32x16 head net (top face x 8..15 y 0..7; front x 8..15, right x 0..7, left x 16..23, back x 24..31, all
+    y 8..15)."""
+    img = Image.new("RGBA", (32, 16), (255, 255, 255, 255))
+    for x in range(8, 16):
+        for y in range(0, 8):
+            img.putpixel((x, y), (0, 0, 0, 255))
+    for face_x in (0, 8, 16, 24):
+        for dx in range(8):
+            depth = 3 + (2 if dx % 2 == 0 else 0) + (1 if dx % 4 == 0 else 0)
+            for dy in range(depth):
+                img.putpixel((face_x + dx, 8 + dy), (0, 0, 0, 255))
     return img
 
 

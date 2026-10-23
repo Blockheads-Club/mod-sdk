@@ -65,27 +65,14 @@ fn reads_from_a_package() {
 
 #[test]
 fn gpu_form_pads_to_powers_of_two() {
-    // Two opaque pixels (red, 0x80 grey) and one half-transparent white in a 3x2 picture.
-    let t = Texture {
-        width: 3,
-        height: 2,
-        rgba: [255, 0, 0, 255, 128, 128, 128, 255, 255, 255, 255, 128, 0, 0, 0, 0, 0, 0, 255, 255, 16, 32, 48, 255]
-            .to_vec(),
-    };
+    let t = Texture { width: 3, height: 2, rgba: (0..24).map(|i| if i % 4 == 3 { 255 } else { i as u8 }).collect() };
     let g = t.for_gpu();
     assert_eq!((g.wide, g.high, g.content_wide, g.content_high), (4, 2, 3, 2));
-    assert_eq!(g.pixels.len(), 4 * 2 * 2);
-    let px = |x: usize, y: usize| u16::from_le_bytes([g.pixels[(y * 4 + x) * 2], g.pixels[(y * 4 + x) * 2 + 1]]);
-    assert_eq!(px(0, 0), 0xF00F);
-    assert_eq!(px(1, 0), 0x888F);
-    // Half-transparent white, premultiplied: 128 -> 0x8, alpha 128 -> 0x8.
-    assert_eq!(px(2, 0), 0x8888);
-    // The padding is transparent.
-    assert_eq!((px(3, 0), px(3, 1)), (0, 0));
-    assert_eq!(px(0, 1), 0x0000);
-    assert_eq!(px(1, 1), 0x00FF);
-    assert_eq!(px(2, 1), 0x123F);
-    // Already a power of two: no padding.
+    assert_eq!(g.pixels.len(), 4 * 2 * 4);
+    assert_eq!(&g.pixels[..12], &t.rgba[..12]);
+    assert_eq!(&g.pixels[12..16], [0, 0, 0, 0]);
+    assert_eq!(&g.pixels[16..28], &t.rgba[12..24]);
+    // Premultiplied, and already a power of two: no padding.
     let one = Texture { width: 1, height: 1, rgba: vec![255, 0, 0, 128] };
-    assert_eq!(one.for_gpu().pixels, 0x8008u16.to_le_bytes());
+    assert_eq!(one.for_gpu().pixels, [128, 0, 0, 128]);
 }

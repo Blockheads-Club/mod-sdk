@@ -3,7 +3,8 @@
 //! same hooks and the same rules as the PC port (`bhpc-run/src/cosmetics.rs`); what a blockhead shows is decided by
 //! `bhmod_content`.
 //!
-//! - `-[Blockhead updateClothingCubes]` (the game's own, for this client's blockheads): runs the original, then
+//! - `-[Blockhead updateClothingCubes]` (the game's own, for this client's blockheads): lends plain vanilla items to
+//!   empty slots a cosmetic needs a shape for (auto-wear), runs the original, then
 //!   replaces `hatTexture`, `shirtBodyTexture`, `shirtArmTexture`, `pantsTexture`, `shoesTexture`. While it runs,
 //! - `-[Blockhead updateSkin]`: replaces `headHairTexture`.
 //! - `-[Blockhead setupFromNetCreationData:]` (other players' blockheads): replaces clothing and hair textures.
@@ -11,7 +12,7 @@
 //!   whenever the cosmetics changed.
 //!
 //! Textures are made with `-[CPTexture2D initWithData:pixelFormat:pixelsWide:pixelsHigh:contentSize:mipmap:]`, the
-//! initializer the game's own loader uses (pixel format 1, RGBA4444; 0 makes it return nil), from the mod's decoded PNG.
+//! initializer the game's own loader uses (pixel format 1, premultiplied RGBA bytes; 0 makes it return nil), from the mod's decoded PNG.
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -42,6 +43,8 @@ struct State {
     textures: HashMap<(u64, u8), usize>,
     /// The game's own texture of every ivar a cosmetic replaced (retained), by blockhead and ivar.
     originals: HashMap<(usize, &'static str), usize>,
+    /// Vanilla `InventoryItem`s lent to empty slots, by item type.
+    items: HashMap<u16, usize>,
 }
 
 thread_local! {
@@ -163,7 +166,7 @@ fn make_texture(g: &Gpu) -> Id {
         }
         std::ptr::copy_nonoverlapping(g.pixels.as_ptr(), ptr, g.pixels.len());
         let tex = objc::send0(objc::class("CPTexture2D"), "alloc");
-        // The game's own pixel format (1, RGBA4444), contentSize as two floats (softfp: the same words as two u32), no mipmaps.
+        // The game's own pixel format (1: premultiplied RGBA bytes), contentSize as two floats (softfp: the same words as two u32), no mipmaps.
         let init = objc::msg::<unsafe extern "C" fn(Id, Sel, *const u8, i32, u32, u32, u32, u32, i8) -> Id>();
         let tex = init(
             tex,
@@ -179,6 +182,64 @@ fn make_texture(g: &Gpu) -> Id {
         objc::send0(data, "release");
         tex
     }
+}
+
+/// A vanilla `InventoryItem` of `item_type` (made once) to put in an empty clothing slot.
+fn item(item_type: u16) -> Id {
+    if let Some(i) = STATE.with(|s| s.borrow().items.get(&item_type).copied()) {
+        return i as Id;
+    }
+    let alloc = objc::send0(objc::class("InventoryItem"), "alloc");
+    let it = unsafe {
+        objc::msg::<unsafe extern "C" fn(Id, Sel, i32, u16, u16, Id, Id) -> Id>()(
+            alloc,
+            objc::sel("initWithType:dataA:dataB:subItems:dynamicObjectSaveDict:"),
+            i32::from(item_type),
+            0,
+            0,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+        )
+    };
+    STATE.with(|s| s.borrow_mut().items.insert(item_type, it as usize));
+    it
+}
+
+/// Lends plain vanilla items to the empty clothing slots a cosmetic needs a shape for (auto-wear). The game reads
+/// `inventoryItems[0]` (the clothing group item) `.subItems[slot][0]`; the item is put into that slot's array for the
+/// duration of `updateClothingCubes`, and the item type ivar is set so the cube is built. Returns the arrays to
+/// empty again afterwards.
+fn lend_items(bh: Id, player: &str) -> Vec<Id> {
+    let inv = objc::ivar(bh, "Blockhead", "inventoryItems");
+    if inv.is_null() {
+        return Vec::new();
+    }
+    let at = |o: Id, i: usize| objc::send1(o, "objectAtIndex:", i as *const std::ffi::c_void);
+    let count = |o: Id| objc::send0(o, "count") as usize;
+    let group_slot = at(inv, 0);
+    if group_slot.is_null() || count(group_slot) == 0 {
+        return Vec::new();
+    }
+    let subs = objc::send0(at(group_slot, 0), "subItems");
+    let n = count(subs);
+    let mut lent = Vec::new();
+    for (i, slot) in CLOTHING.iter().enumerate().take(n) {
+        let Some(wear) = with_loader(|l| l.content().resolve(player, slot, None).and_then(|r| r.wear)).flatten() else {
+            continue;
+        };
+        let arr = at(subs, i);
+        if arr.is_null() || count(arr) != 0 {
+            continue;
+        }
+        objc::send1(arr, "addObject:", item(wear) as *const std::ffi::c_void);
+        let names = ["shoesItemType", "pantsItemType", "shirtItemType", "hatItemType"];
+        let p = objc::ivar_ptr(bh, "Blockhead", names[i]) as *mut u16;
+        if !p.is_null() {
+            unsafe { *p = wear };
+        }
+        lent.push(arr);
+    }
+    lent
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -224,8 +285,13 @@ fn apply_to(bh: Id, which: Which) {
 
 extern "C" fn hook_update_cubes(this: Id, cmd: Sel) {
     let orig = ORIG.get().expect("hooks").update_cubes;
+    let on = active();
+    let lent = if on { lend_items(this, &player_of(this)) } else { Vec::new() };
     unsafe { std::mem::transmute::<Imp, unsafe extern "C" fn(Id, Sel)>(orig)(this, cmd) };
-    if active() {
+    for arr in lent {
+        objc::send0(arr, "removeAllObjects");
+    }
+    if on {
         apply_to(this, Which::Clothing);
     }
 }

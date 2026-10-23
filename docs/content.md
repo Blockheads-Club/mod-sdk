@@ -29,23 +29,29 @@ cosmetics = [
 | `slot` | `hat`, `shirt`, `pants`, `shoes`, `hair`, `weapon`. |
 | `texture` | PNG under `assets/`, up to 1024 x 1024. Laid out like the vanilla texture of the item it re-skins. |
 | `texture-arm` | `shirt` only: the arms. Without it the vanilla arms stay. |
-| `base` | The vanilla item it re-skins ([`bhmod_manifest::content::BASE_ITEMS`](../crates/bhmod-manifest/src/content.rs): `linen-cap`, `santa-hat`, `leather-boots`, ...). It shows only while that item is worn. Without `base` it shows on every vanilla item worn in the slot. `hair` has no base. A `weapon` needs one. |
+| `base` | The vanilla item it re-skins ([`bhmod_manifest::content::BASE_ITEMS`](../crates/bhmod-manifest/src/content.rs): `linen-cap`, `santa-hat`, `leather-boots`, ...). It shows while that item is worn or the slot is empty. Without `base` it shows on every vanilla item worn in the slot and on an empty slot. `hair` has no base. A `weapon` needs one. |
 | `name` | Display name per language (used by the mod's own UI and commands). |
 
 ## What the player sees
 
-- A cosmetic **re-skins what the player wears**. The player puts on the vanilla item in the game as usual (a linen cap
-  for `base = "linen-cap"`); the modded clients draw the mod's texture instead of the vanilla one, with the vanilla
-  item's shape and colour tint. `hair` re-skins the hair of the blockhead whatever the style.
+- A cosmetic **re-skins the vanilla item in its slot**: the modded clients draw the mod's texture instead of the
+  vanilla one, on the vanilla item's shape. If the slot is empty the blockhead puts on a plain vanilla item for it (the
+  cosmetic's `base`, else a linen cap / linen shirt / linen pants / leather boots), so a cosmetic works without owning
+  anything; with a vanilla item worn and a `base` that does not match, it stays hidden. That item's type goes out in
+  the blockhead's creation data like any worn item, so everybody sees the shape (players without the mod loader see
+  the plain item).
+- **Textures.** Clothing and hat textures are drawn as they are (the clothing shader does not tint them): paint the
+  colours you want, on the layout of the vanilla texture (hats 32x16 / santa hat 32x32 head net, clothing 16x16).
+  **Hair is a mask**, not a picture: the game draws the player's own hair colour where the red channel is dark and
+  the skin where it is light, so paint it black and white (32x16 head net: top x 8..15 y 0..7; front, right, left,
+  back faces at x 8, 0, 16, 24, y 8..15). The hair geometry of the chosen style stays; the mask changes the hair on
+  the head cube.
 - The cosmetic is chosen by the **server mod**: `bh.content.equip(player, "crowns:gold")` (Luau) or
   `content.equip` (WIT, `blockheads:api` 0.3). The server tells every modded client; all of a player's blockheads
   show it. Vanilla clients cannot join a server with content mods (client-required); on a server where the mod is
   optional on the client side they see the plain vanilla look.
 - Cosmetics are not saved by the server. A mod keeps who owns/wears what in its own storage and re-equips on
   `player-join`.
-- Clothing cosmetics need the vanilla item worn (an empty slot shows nothing yet); hair works on any head. The game
-  tints hats and clothing with the item's colour and hair with the hair colour, so light textures keep their colour
-  best, and the hair texture works as a mask for the hair shape: check it in the game.
 - `weapon` is part of the format but the clients do not draw it yet.
 
 ## API (blockheads:api 0.3)

@@ -132,7 +132,7 @@ impl Wearing {
 }
 
 /// The vanilla item a blockhead would wear for a cosmetic that has no `base` while the slot is empty: plain items
-/// with no armour value. Planned ("auto-wear"): the clients do not use it yet, an empty slot shows nothing.
+/// with no armour value. The clients lend it to the empty slot while the game builds the blockhead (auto-wear).
 pub const DEFAULT_WEAR: [(&str, u16); 4] = [("hat", 115), ("shirt", 85), ("pants", 84), ("shoes", 124)];
 
 /// What a blockhead shows in a slot.
