@@ -226,6 +226,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "bhmod-native"
+version = "0.2.0"
+dependencies = [
+ "tempfile",
+]
+
+[[package]]
 name = "bhmod-proto"
 version = "0.2.0"
 dependencies = [

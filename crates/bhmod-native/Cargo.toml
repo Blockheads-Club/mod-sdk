@@ -1,0 +1,14 @@
+[package]
+name = "bhmod-native"
+description = "Native tier of the Blockheads mod system: the libbhmod C ABI, the armv7 inline-hook primitive (trampoline and relocation), GOT redirects and the host-independent hook engine"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+
+[dev-dependencies]
+tempfile.workspace = true
