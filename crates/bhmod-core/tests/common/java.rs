@@ -1,6 +1,5 @@
 //! Compiles the Java fixtures (`tests/jvm-fixtures`) against the embedded SDK and packs them as mod jars.
 #![allow(dead_code)]
-#![cfg(feature = "jvm")]
 
 use std::fs;
 use std::io::Write;

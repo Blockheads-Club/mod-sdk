@@ -3,12 +3,14 @@
 #![cfg(feature = "jvm")]
 
 mod common;
+#[path = "common/java.rs"]
+mod java;
 
 use bhmod_core::jvm::{attach_existing, JvmConfig, JvmRuntime, SDK_JAR};
 use bhmod_core::types::{Event, Side};
 use bhmod_core::{HostOptions, ModHost, ModState};
-use common::java::*;
 use common::*;
+use java::*;
 use jni::objects::JValue;
 use jni::{InitArgsBuilder, JNIVersion, JavaVM};
 

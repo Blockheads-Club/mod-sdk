@@ -5,6 +5,8 @@
 #![cfg(feature = "jvm")]
 
 mod common;
+#[path = "common/java.rs"]
+mod java;
 
 use std::rc::Rc;
 use std::time::Duration;
@@ -13,8 +15,8 @@ use bhmod_core::jvm::{JvmConfig, JvmRuntime};
 use bhmod_core::runtime::{InstanceLimits, ModFiles, Runtime};
 use bhmod_core::types::*;
 use bhmod_core::{HostOptions, ModHost, ModState};
-use common::java::*;
 use common::*;
+use java::*;
 
 struct T {
     _tmp: tempfile::TempDir,

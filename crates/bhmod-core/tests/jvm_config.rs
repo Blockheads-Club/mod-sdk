@@ -3,12 +3,14 @@
 #![cfg(feature = "jvm")]
 
 mod common;
+#[path = "common/java.rs"]
+mod java;
 
 use bhmod_core::jvm::{JvmConfig, JvmRuntime};
 use bhmod_core::types::Side;
 use bhmod_core::{HostOptions, ModHost, ModState};
-use common::java::*;
 use common::*;
+use java::*;
 
 #[test]
 fn options_reach_the_jvm_and_the_bridge_reports_bad_calls() {

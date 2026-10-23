@@ -2,7 +2,6 @@
 #![allow(dead_code)]
 
 pub mod conformance;
-pub mod java;
 
 use std::cell::{Cell, RefCell};
 use std::fs;
