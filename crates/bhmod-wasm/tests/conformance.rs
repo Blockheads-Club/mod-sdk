@@ -26,18 +26,19 @@ struct Run {
 }
 
 impl Run {
-    fn new(example: &str, grants: &[&str]) -> Run {
+    fn with_side(example: &str, grants: &[&str], side: Side) -> Run {
         let dir = examples().join(example);
+        let code = if side == Side::Client { "client" } else { "server" };
         assert!(
-            dir.join("server").read_dir().unwrap().next().is_some(),
-            "{example} has no server code (run scripts/build-wasm.sh)"
+            dir.join(code).read_dir().unwrap().next().is_some(),
+            "{example} has no {code} code (run scripts/build-wasm.sh)"
         );
         let tmp = tempfile::tempdir().unwrap();
         copy_dir(&dir, &tmp.path().join(example));
         let grants: Vec<String> = grants.iter().map(|g| format!("\"{g}\"")).collect();
         fs::write(tmp.path().join("mods.toml"), format!("[{example}]\ngrant = [{}]\n", grants.join(", "))).unwrap();
         let b = FakeBridge::new();
-        let mut opts = HostOptions::new(tmp.path(), Side::Server);
+        let mut opts = HostOptions::new(tmp.path(), side);
         opts.runtimes.push(Box::new(WasmRuntime::new(WasmConfig::default()).unwrap()));
         // Behaviour, not speed: emulated 32-bit runs (qemu) and coverage builds are slow.
         opts.budgets.hard = std::time::Duration::from_secs(5);
@@ -78,6 +79,8 @@ impl Run {
         self.note("broadcasts", casts);
         self.note("kicks", kicks);
         self.note("logs", logs);
+        let ui: Vec<String> = self.b.take_ui().into_iter().map(|(m, c)| format!("{}: {c:?}", m == self.id)).collect();
+        self.note("ui", ui);
     }
 
     fn state(&self) -> ModState {
@@ -91,7 +94,11 @@ fn player(id: &str) -> CommandSender {
 
 /// Runs `scenario` on both twins and compares the transcripts; returns one of them.
 fn conform(lua: &str, wasm: &str, grants: &[&str], scenario: fn(&mut Run)) -> Vec<String> {
-    let mut runs = [Run::new(lua, grants), Run::new(wasm, grants)];
+    conform_on(lua, wasm, grants, Side::Server, scenario)
+}
+
+fn conform_on(lua: &str, wasm: &str, grants: &[&str], side: Side, scenario: fn(&mut Run)) -> Vec<String> {
+    let mut runs = [Run::with_side(lua, grants, side), Run::with_side(wasm, grants, side)];
     for r in &mut runs {
         scenario(r);
         r.flush();
@@ -106,6 +113,11 @@ fn conform(lua: &str, wasm: &str, grants: &[&str], scenario: fn(&mut Run)) -> Ve
 
 fn has(out: &[String], needle: &str) -> bool {
     out.iter().any(|l| l.contains(needle))
+}
+
+/// Like [`has`], for transcript lines that hold Debug text of strings (quotes escaped twice).
+fn has_ui(out: &[String], needle: &str) -> bool {
+    out.iter().any(|l| l.replace("\\\"", "\"").contains(needle))
 }
 
 fn hello(r: &mut Run) {
@@ -225,4 +237,58 @@ fn scheduler_twins() {
     assert!(has(&out, "Reminder: drink water"));
     assert!(has(&out, "Usage: /remind <seconds> <text>"));
     assert!(has(&out, "Tip: type /remind 30 drink water"));
+}
+
+fn hud(r: &mut Run) {
+    r.h.enable("World", "wid");
+    r.note("state", r.state());
+    r.flush();
+    // The tick handler updates the position text every fifth step.
+    ticks(r, 10);
+    r.flush();
+    // The player answers the dialog: send 25 coins.
+    let v = r.h.ui_result(1, 1, Some("25".into()));
+    r.note("answer", v);
+    r.flush();
+    // A second answer to the same dialog is refused; the loader never saw one.
+    let v = r.h.ui_result(1, 0, None);
+    r.note("again", v);
+    r.flush();
+    r.h.disable_all();
+    r.note("state", r.state());
+    r.flush();
+}
+
+fn hud_cancel(r: &mut Run) {
+    r.h.enable("World", "wid");
+    r.flush();
+    let v = r.h.ui_result(1, 0, None);
+    r.note("answer", v);
+    let v = r.h.ui_result(2, bhmod_core::ui::CLOSED, None);
+    r.note("closed", v);
+    r.flush();
+}
+
+#[test]
+fn hud_twins() {
+    let out = conform_on("hud-lua", "hud-rust", &[], Side::Client, hud);
+    assert!(has_ui(&out, "state: Enabled"));
+    assert!(has_ui(&out, "SetWidget { id: \"coins\", widget: Widget { slot: TopRight, kind: Counter, icon: Some(\"coin\"), title: None, text: \"1250\""));
+    assert!(has_ui(&out, "Notice { text: \"HUD demo is on.\", level: Success }"));
+    assert!(has_ui(&out, "ShowDialog { id: 1"));
+    assert!(has_ui(&out, "text: \"tick 5\"") && has_ui(&out, "text: \"tick 10\""));
+    assert!(has_ui(&out, "answer: true"));
+    assert!(has_ui(&out, "text: \"1225\""), "the counter follows the answer: {out:#?}");
+    assert!(has_ui(&out, "Toast { text: \"You sent 25 coins.\" }"));
+    assert!(has_ui(&out, "CloseDialog { id: 2 }"));
+    assert!(has_ui(&out, "again: false"));
+    assert!(has_ui(&out, "ClearMod"));
+}
+
+#[test]
+fn hud_twins_cancelled() {
+    let out = conform_on("hud-lua", "hud-rust", &[], Side::Client, hud_cancel);
+    assert!(has_ui(&out, "Toast { text: \"Nothing was sent.\" }"));
+    assert!(has_ui(&out, "RemoveWidget { id: \"where\" }"));
+    assert!(has_ui(&out, "closed: false"));
 }

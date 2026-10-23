@@ -7,6 +7,8 @@ final class Native {
 
     static native void decide(boolean accept);
     static native void cancel();
+    /** A mod dialog was answered: `button` from 0 (-1 when it went away), `text` null without a field. */
+    static native void dialogAnswer(int dialog, int button, String text);
     static native String version();
     static native byte[] font(int id);
     static native void setModsLabel(String label);

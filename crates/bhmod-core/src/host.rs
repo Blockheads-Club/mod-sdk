@@ -33,6 +33,7 @@ use crate::types::{
     ApiError, ChannelSource, ChannelTarget, CommandOutcome, CommandSender, CommandSpec, Event, EventKind, LogLevel,
     Pos, Priority, Role, SavePhase, ServiceError, Side,
 };
+use crate::ui::{Dialog, NoticeLevel, UiCommand, UiState, Widget};
 use crate::value::Value;
 use crate::API_VERSION;
 
@@ -118,6 +119,7 @@ pub struct ModHost {
     services: ServiceRegistry,
     channels: Channels,
     handles: Handles,
+    ui: UiState,
     /// Mods whose code is running, outermost first, with the deadline of each call.
     stack: Vec<(usize, Instant)>,
     /// Event deliveries to mods that were on the stack when the event fired.
@@ -160,6 +162,7 @@ impl ModHost {
             services: ServiceRegistry::default(),
             channels: Channels::default(),
             handles: Handles::default(),
+            ui: UiState::default(),
             stack: Vec::new(),
             deferred: Vec::new(),
             draining: false,
@@ -349,6 +352,11 @@ impl ModHost {
         self.scheduler.remove_owner(owner);
         self.services.remove_owner(owner);
         self.channels.remove_owner(owner);
+        if self.ui.clear_owner(owner) {
+            let id = self.slots[owner].info.id.clone();
+            // The loader drops the mod's widgets and dialogs; a bridge without UI has nothing to drop.
+            let _ = self.bridge.ui(&id, &UiCommand::ClearMod);
+        }
         let slot = &mut self.slots[owner];
         slot.instance = None;
         let id = slot.info.id.clone();
@@ -404,13 +412,21 @@ impl ModHost {
     /// Delivers an event to every subscriber and returns it with the handlers' changes applied. Handlers of mods
     /// that are on the call stack get the event later (see the module docs). After a `player-quit`, the player's
     /// handle becomes stale.
-    pub fn fire(&mut self, mut ev: Event) -> Event {
+    pub fn fire(&mut self, ev: Event) -> Event {
+        self.fire_filtered(ev, None)
+    }
+
+    /// [`ModHost::fire`] for the handlers of one mod (`only`: its slot index) instead of every subscriber.
+    fn fire_filtered(&mut self, mut ev: Event, only: Option<usize>) -> Event {
         let kind = ev.kind();
         let custom = match &ev {
             Event::Custom { name, .. } => Some(name.clone()),
             _ => None,
         };
         for sub in self.bus.plan(kind, custom.as_deref()) {
+            if only.is_some_and(|o| o != sub.owner) {
+                continue;
+            }
             if self.slots[sub.owner].info.state != ModState::Enabled || (sub.ignore_cancelled && ev.cancelled()) {
                 continue;
             }
@@ -436,6 +452,24 @@ impl ModHost {
             self.handles.invalidate(player);
         }
         ev
+    }
+
+    /// The loader's answer to a dialog (API 0.3): `button` counts from 0 ([`crate::ui::CLOSED`] when the dialog went away
+    /// without an answer), `text` is the field's text. Delivered as the custom event `<mod-id>:ui-action` with the
+    /// payload `{"dialog", "button", "text"}`, to the mod that opened the dialog only. False for an unknown or
+    /// already answered dialog.
+    pub fn ui_result(&mut self, dialog: u32, button: u32, text: Option<String>) -> bool {
+        let Some(owner) = self.ui.answered(dialog) else { return false };
+        let id = self.slots[owner].info.id.clone();
+        let payload = Value::Map(vec![
+            ("dialog".into(), Value::Int(i64::from(dialog))),
+            ("button".into(), Value::Int(i64::from(button))),
+            ("text".into(), text.map_or(Value::Null, Value::Text)),
+        ]);
+        let ev =
+            Event::Custom { name: format!("{id}:ui-action"), source: id, payload: payload.encode(), cancelled: false };
+        self.fire_filtered(ev, Some(owner));
+        true
     }
 
     /// A channel message arrived from the network (milestone M5: 0xBC `CHANNEL`). It is delivered with the next
@@ -820,5 +854,48 @@ impl HostApi for Ctx<'_> {
     }
     fn channel_close(&mut self, channel: ChannelId) -> bool {
         self.host.channels.close(self.owner, channel)
+    }
+
+    fn ui_set_widget(&mut self, id: &str, widget: Widget) -> Result<(), ApiError> {
+        self.host.ui.check_set(self.owner, id, &widget)?;
+        let mod_id = self.slot().info.id.clone();
+        self.host.bridge.ui(&mod_id, &UiCommand::SetWidget { id: id.to_string(), widget })?;
+        self.host.ui.added(self.owner, id);
+        Ok(())
+    }
+    fn ui_remove_widget(&mut self, id: &str) -> bool {
+        if !self.host.ui.removed(self.owner, id) {
+            return false;
+        }
+        let mod_id = self.slot().info.id.clone();
+        let _ = self.host.bridge.ui(&mod_id, &UiCommand::RemoveWidget { id: id.to_string() });
+        true
+    }
+    fn ui_toast(&mut self, text: &str) -> Result<(), ApiError> {
+        crate::ui::check_notice(text)?;
+        let mod_id = self.slot().info.id.clone();
+        self.host.bridge.ui(&mod_id, &UiCommand::Toast { text: text.to_string() })
+    }
+    fn ui_notice(&mut self, text: &str, level: NoticeLevel) -> Result<(), ApiError> {
+        crate::ui::check_notice(text)?;
+        let mod_id = self.slot().info.id.clone();
+        self.host.bridge.ui(&mod_id, &UiCommand::Notice { text: text.to_string(), level })
+    }
+    fn ui_show_dialog(&mut self, dialog: Dialog) -> Result<u32, ApiError> {
+        let id = self.host.ui.open_dialog(self.owner, &dialog)?;
+        let mod_id = self.slot().info.id.clone();
+        if let Err(e) = self.host.bridge.ui(&mod_id, &UiCommand::ShowDialog { id, dialog }) {
+            self.host.ui.close_dialog(self.owner, id);
+            return Err(e);
+        }
+        Ok(id)
+    }
+    fn ui_close_dialog(&mut self, id: u32) -> bool {
+        if !self.host.ui.close_dialog(self.owner, id) {
+            return false;
+        }
+        let mod_id = self.slot().info.id.clone();
+        let _ = self.host.bridge.ui(&mod_id, &UiCommand::CloseDialog { id });
+        true
     }
 }

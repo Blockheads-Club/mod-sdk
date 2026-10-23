@@ -233,9 +233,20 @@ fn send_held_join(key: Option<Hash>) {
     }
 }
 
-/// Lets the game reject the connection as for a vanilla 0x26 (reason 3), so it leaves its join screen.
+/// The game's `GameView`, seen by the drawFrame hook (the game's own "cancel" for a pending join lives there).
+static GAME_VIEW: Mutex<usize> = Mutex::new(0);
+
+/// Leaves the game's join screen the way its own Cancel button does (`-[GameView
+/// cancelSelectedWhileAttemptingToConnect]`: exit the pending world, back to the menu selection), so the player sees
+/// only the loader's message and not a vanilla "rejected" alert. Falls back to feeding the game a vanilla 0x26
+/// (reason 3) when the view is not known.
 fn abort() {
     HELD.with(|h| h.borrow_mut().take());
+    let gv = *GAME_VIEW.lock().unwrap_or_else(|e| e.into_inner());
+    if gv != 0 {
+        objc::send0(gv as Id, "cancelSelectedWhileAttemptingToConnect");
+        return;
+    }
     let Some(c) = conn() else { return };
     let orig = ORIG.get().expect("hooks").receive;
     unsafe {
@@ -261,6 +272,7 @@ extern "C" fn hook_draw_frame(this: Id, cmd: Sel) {
         }
         let events: Vec<UiEvent> = EVENTS.lock().map(|mut e| e.drain(..).collect()).unwrap_or_default();
         let gv = objc::ivar(this, "EvolutionViewController", "gameView");
+        *GAME_VIEW.lock().unwrap_or_else(|e| e.into_inner()) = gv as usize;
         let world = objc::ivar(gv, "GameView", "world");
         let changed = WORLD.with(|w| std::mem::replace(&mut *w.borrow_mut(), world as usize) != world as usize);
         with_loader(|l| {
@@ -460,6 +472,21 @@ fn installed_dir() -> PathBuf {
 pub extern "system" fn Java_com_blockheadsclub_modloader_Native_decide(_env: JNIEnv, _c: JClass, accept: jboolean) {
     if let Ok(mut e) = EVENTS.lock() {
         e.push(UiEvent::Decide(accept != JNI_FALSE));
+    }
+}
+
+/// `Native.dialogAnswer(dialog, button, text)`: a mod dialog was answered (`text` null without a field).
+#[no_mangle]
+pub extern "system" fn Java_com_blockheadsclub_modloader_Native_dialogAnswer(
+    mut env: JNIEnv,
+    _c: JClass,
+    dialog: jint,
+    button: jint,
+    text: JString,
+) {
+    let text = jstr(&mut env, &text);
+    if let Ok(mut e) = EVENTS.lock() {
+        e.push(UiEvent::Dialog { dialog: dialog as u32, button: button as u32, text });
     }
 }
 

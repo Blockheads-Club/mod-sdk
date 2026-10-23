@@ -1,4 +1,4 @@
--- Type declarations of the `bh` global for Luau mods (blockheads:api@0.2.0). Hand-written from the WIT in
+-- Type declarations of the `bh` global for Luau mods (blockheads:api@0.3.0). Hand-written from the WIT in
 -- ../wit/blockheads-api; see luau-api.md for the mapping rules. Use with luau-lsp ("definitions" setting).
 
 export type Role = "player" | "moderator" | "admin" | "owner"
@@ -95,6 +95,23 @@ export type SubscribeOpts = { priority: Priority?, ignore_cancelled: boolean? }
 export type ChannelOrigin = { mod: string?, server: boolean?, player: Player? }
 export type ChannelTarget = "local" | "server" | "all-players" | Player
 
+export type UiWidget = {
+	slot: ("top-left" | "top-right")?,
+	kind: ("text" | "counter" | "panel")?,
+	icon: string?,
+	title: string?,
+	text: string?,
+}
+export type UiDialogButton = { label: string, kind: ("primary" | "secondary" | "danger")? }
+export type UiDialog = {
+	title: string,
+	text: string?,
+	field: { placeholder: string?, initial: string?, max_length: number? }?,
+	buttons: { UiDialogButton },
+}
+-- The payload of the custom event "<mod-id>:ui-action" (button is 4294967295 when the dialog went away).
+export type UiAnswer = { dialog: number, button: number, text: string? }
+
 declare bh: {
 	host: {
 		api_version: () -> string,
@@ -152,6 +169,14 @@ declare bh: {
 		open: (name: string, handler: ((origin: ChannelOrigin, data: string) -> ())?) -> number,
 		send: (id: number, to: ChannelTarget, data: string) -> (),
 		close: (id: number) -> boolean,
+	},
+	ui: {
+		set_widget: (id: string, widget: UiWidget) -> (),
+		remove_widget: (id: string) -> boolean,
+		toast: (text: string) -> (),
+		notice: (text: string, level: ("info" | "warning" | "success" | "error")?) -> (),
+		show_dialog: (dialog: UiDialog) -> number,
+		close_dialog: (id: number) -> boolean,
 	},
 	value: {
 		encode: (value: any) -> string,

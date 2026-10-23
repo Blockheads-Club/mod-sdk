@@ -349,9 +349,127 @@ macro_rules! common_event_to {
     }};
 }
 
+/// What API 0.2 and 0.3 add to 0.1: the gameplay events and their reject, layer and object enums.
+macro_rules! gameplay_api {
+    () => {
+        enum_fn!(reject_to: core::RejectReason => events::RejectReason { ClientTooOld, ServerFull, Blacklisted,
+            NotWhitelisted, IncorrectPassword, Kicked, Banned, InvalidUsername, StillLoading });
+        enum_fn!(reject_from: events::RejectReason => core::RejectReason { ClientTooOld, ServerFull, Blacklisted,
+            NotWhitelisted, IncorrectPassword, Kicked, Banned, InvalidUsername, StillLoading });
+        enum_fn!(layer_to: core::BreakLayer => events::BreakLayer { Block, BackWall });
+        enum_fn!(object_to: core::ObjectKind => events::ObjectKind { Workbench, InteractionObject });
+
+        fn pos_to(p: core::Pos) -> types::Pos {
+            types::Pos { x: p.x, y: p.y }
+        }
+
+        /// WIT handler outcome to core.
+        pub fn outcome_from(o: events::Outcome) -> core::Outcome {
+            #[rustfmt::skip]
+            let mutation = o.mutation.map(|m| match m { events::Mutation::ChatText(t) => core::Mutation::ChatText(t), events::Mutation::CustomPayload(p) => core::Mutation::CustomPayload(p), events::Mutation::RejectReason(r) => core::Mutation::RejectReason(reject_from(r)), events::Mutation::DamageAmount(a) => core::Mutation::DamageAmount(a) });
+            core::Outcome { cancelled: o.cancelled, mutation }
+        }
+
+        /// Core event to WIT; players are lent for the call.
+        pub fn event_to(ev: &core::Event, lend: Lend<'_>) -> Option<events::Event> {
+            use events as e;
+            Some(match ev.clone() {
+                core::Event::PlayerPreLogin { player, alias, cancelled, reason } => {
+                    e::Event::PlayerPreLogin(e::PlayerPreLoginEvent {
+                        player_id: player,
+                        alias,
+                        cancelled,
+                        reason: reject_to(reason),
+                    })
+                }
+                core::Event::BlockPlace { player, pos, item, data_a, data_b, cancelled } => {
+                    e::Event::BlockPlace(e::BlockPlaceEvent {
+                        player: lend(&player),
+                        at: pos_to(pos),
+                        item,
+                        data_a,
+                        data_b,
+                        cancelled,
+                    })
+                }
+                core::Event::BlockBreak { player, pos, layer, tile, cancelled } => {
+                    e::Event::BlockBreak(e::BlockBreakEvent {
+                        player: lend(&player),
+                        at: pos_to(pos),
+                        layer: layer_to(layer),
+                        tile,
+                        cancelled,
+                    })
+                }
+                core::Event::BlockChanged { pos, tile, player } => {
+                    e::Event::BlockChanged(e::BlockChangedEvent { at: pos_to(pos), tile, player: player.map(|p| lend(&p)) })
+                }
+                core::Event::ObjectPlace { player, pos, object, item, cancelled } => {
+                    e::Event::ObjectPlace(e::ObjectPlaceEvent {
+                        player: lend(&player),
+                        at: pos_to(pos),
+                        object: object_to(object),
+                        item,
+                        cancelled,
+                    })
+                }
+                core::Event::Damage { player, blockhead, amount, attacker, cancelled } => {
+                    let player = player.map(|p| lend(&p));
+                    e::Event::Damage(e::DamageEvent {
+                        player,
+                        blockhead,
+                        amount,
+                        attacker: attacker.map(|p| lend(&p)),
+                        cancelled,
+                    })
+                }
+                core::Event::Death { player, blockhead } => {
+                    e::Event::Death(e::DeathEvent { player: player.map(|p| lend(&p)), blockhead })
+                }
+                core::Event::PlayerMove { player, from, to } => {
+                    e::Event::PlayerMove(e::PlayerMoveEvent { player: lend(&player), from: pos_to(from), to: pos_to(to) })
+                }
+                other => return common_event_to!(other, lend),
+            })
+        }
+    };
+}
+
 /// `blockheads:api@0.2.0`.
 pub mod v02 {
-    pub use crate::wit::ServerMod;
+    pub use crate::wit::v02::ServerMod;
+
+    macro_rules! players_extra {
+        () => {
+            fn from_value_handle(&mut self, handle: u64) -> R<Option<Resource<PlayerRes>>> {
+                let found = self.api()?.player_of_handle(handle).ok();
+                found.map(|id| self.new_player(id)).transpose()
+            }
+        };
+    }
+
+    api_version!(crate::wit::v02::blockheads::api;
+    kinds { PlayerJoin, PlayerQuit, Chat, Command, Tick, WorldLoaded, WorldSave, PlayerPreLogin, BlockPlace,
+        BlockBreak, BlockChanged, ObjectPlace, Damage, Death, PlayerMove };
+    extra {
+        fn pos(&mut self, p: Resource<PlayerRes>) -> R<Option<types::Pos>> {
+            let id = self.player_id(&p)?;
+            let pos = self.api()?.player_pos(&id).ok().flatten();
+            Ok(pos.map(|p| types::Pos { x: p.x, y: p.y }))
+        }
+        fn value_handle(&mut self, p: Resource<PlayerRes>) -> R<u64> {
+            let id = self.player_id(&p)?;
+            Ok(self.api()?.handle_of_player(&id))
+        }
+    });
+
+    gameplay_api!();
+}
+
+/// `blockheads:api@0.3.0`: 0.2 plus the `ui` interface, which only client mods import. Components of either world
+/// are bound with the `client-mod` world (a superset of the imports, the same `guest` export).
+pub mod v03 {
+    pub use crate::wit::ClientMod as ServerMod;
 
     macro_rules! players_extra {
         () => {
@@ -377,85 +495,56 @@ pub mod v02 {
         }
     });
 
-    enum_fn!(reject_to: core::RejectReason => events::RejectReason { ClientTooOld, ServerFull, Blacklisted,
-        NotWhitelisted, IncorrectPassword, Kicked, Banned, InvalidUsername, StillLoading });
-    enum_fn!(reject_from: events::RejectReason => core::RejectReason { ClientTooOld, ServerFull, Blacklisted,
-        NotWhitelisted, IncorrectPassword, Kicked, Banned, InvalidUsername, StillLoading });
-    enum_fn!(layer_to: core::BreakLayer => events::BreakLayer { Block, BackWall });
-    enum_fn!(object_to: core::ObjectKind => events::ObjectKind { Workbench, InteractionObject });
+    gameplay_api!();
 
-    fn pos_to(p: core::Pos) -> types::Pos {
-        types::Pos { x: p.x, y: p.y }
-    }
+    use crate::wit::blockheads::api::ui;
+    use bhmod_core::ui as core_ui;
 
-    /// WIT handler outcome to core.
-    pub fn outcome_from(o: events::Outcome) -> core::Outcome {
-        #[rustfmt::skip]
-        let mutation = o.mutation.map(|m| match m { events::Mutation::ChatText(t) => core::Mutation::ChatText(t), events::Mutation::CustomPayload(p) => core::Mutation::CustomPayload(p), events::Mutation::RejectReason(r) => core::Mutation::RejectReason(reject_from(r)), events::Mutation::DamageAmount(a) => core::Mutation::DamageAmount(a) });
-        core::Outcome { cancelled: o.cancelled, mutation }
-    }
+    enum_fn!(slot_from: ui::Slot => core_ui::Slot { TopLeft, TopRight });
+    enum_fn!(widget_kind_from: ui::WidgetKind => core_ui::WidgetKind { Text, Counter, Panel });
+    enum_fn!(notice_level_from: ui::NoticeLevel => core_ui::NoticeLevel { Info, Warning, Success, Error });
+    enum_fn!(button_kind_from: ui::ButtonKind => core_ui::ButtonKind { Primary, Secondary, Danger });
 
-    /// Core event to WIT; players are lent for the call.
-    pub fn event_to(ev: &core::Event, lend: Lend<'_>) -> Option<events::Event> {
-        use events as e;
-        Some(match ev.clone() {
-            core::Event::PlayerPreLogin { player, alias, cancelled, reason } => {
-                e::Event::PlayerPreLogin(e::PlayerPreLoginEvent {
-                    player_id: player,
-                    alias,
-                    cancelled,
-                    reason: reject_to(reason),
-                })
-            }
-            core::Event::BlockPlace { player, pos, item, data_a, data_b, cancelled } => {
-                e::Event::BlockPlace(e::BlockPlaceEvent {
-                    player: lend(&player),
-                    at: pos_to(pos),
-                    item,
-                    data_a,
-                    data_b,
-                    cancelled,
-                })
-            }
-            core::Event::BlockBreak { player, pos, layer, tile, cancelled } => {
-                e::Event::BlockBreak(e::BlockBreakEvent {
-                    player: lend(&player),
-                    at: pos_to(pos),
-                    layer: layer_to(layer),
-                    tile,
-                    cancelled,
-                })
-            }
-            core::Event::BlockChanged { pos, tile, player } => {
-                e::Event::BlockChanged(e::BlockChangedEvent { at: pos_to(pos), tile, player: player.map(|p| lend(&p)) })
-            }
-            core::Event::ObjectPlace { player, pos, object, item, cancelled } => {
-                e::Event::ObjectPlace(e::ObjectPlaceEvent {
-                    player: lend(&player),
-                    at: pos_to(pos),
-                    object: object_to(object),
-                    item,
-                    cancelled,
-                })
-            }
-            core::Event::Damage { player, blockhead, amount, attacker, cancelled } => {
-                let player = player.map(|p| lend(&p));
-                e::Event::Damage(e::DamageEvent {
-                    player,
-                    blockhead,
-                    amount,
-                    attacker: attacker.map(|p| lend(&p)),
-                    cancelled,
-                })
-            }
-            core::Event::Death { player, blockhead } => {
-                e::Event::Death(e::DeathEvent { player: player.map(|p| lend(&p)), blockhead })
-            }
-            core::Event::PlayerMove { player, from, to } => {
-                e::Event::PlayerMove(e::PlayerMoveEvent { player: lend(&player), from: pos_to(from), to: pos_to(to) })
-            }
-            other => return common_event_to!(other, lend),
-        })
+    impl ui::Host for State {
+        fn set_widget(&mut self, id: String, w: ui::Widget) -> R<Result<(), types::ApiError>> {
+            let w = core_ui::Widget {
+                slot: slot_from(w.slot),
+                kind: widget_kind_from(w.kind),
+                icon: w.icon,
+                title: w.title,
+                text: w.text,
+            };
+            Ok(self.api()?.ui_set_widget(&id, w).map_err(api_error))
+        }
+        fn remove_widget(&mut self, id: String) -> R<bool> {
+            Ok(self.api()?.ui_remove_widget(&id))
+        }
+        fn toast(&mut self, text: String) -> R<Result<(), types::ApiError>> {
+            Ok(self.api()?.ui_toast(&text).map_err(api_error))
+        }
+        fn notice(&mut self, text: String, level: ui::NoticeLevel) -> R<Result<(), types::ApiError>> {
+            Ok(self.api()?.ui_notice(&text, notice_level_from(level)).map_err(api_error))
+        }
+        fn show_dialog(&mut self, d: ui::Dialog) -> R<Result<u32, types::ApiError>> {
+            let d = core_ui::Dialog {
+                title: d.title,
+                text: d.text,
+                field: d.field.map(|f| core_ui::Field {
+                    placeholder: f.placeholder,
+                    initial: f.initial,
+                    max_length: f.max_length,
+                }),
+                buttons: d
+                    .buttons
+                    .into_iter()
+                    .map(|b| core_ui::DialogButton { label: b.label, kind: button_kind_from(b.kind) })
+                    .collect(),
+            };
+            Ok(self.api()?.ui_show_dialog(d).map_err(api_error))
+        }
+        fn close_dialog(&mut self, id: u32) -> R<bool> {
+            Ok(self.api()?.ui_close_dialog(id))
+        }
     }
 }
 

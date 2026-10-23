@@ -3,6 +3,7 @@
 
 use bhmod_client::session::{Failure, Offer};
 use bhmod_client::Refusal;
+use bhmod_core::ui::UiCommand;
 use bhmod_proto::{hex, RejectText};
 use serde_json::{json, Value};
 
@@ -85,6 +86,28 @@ pub fn reject(server: &str, r: &RejectText) -> String {
     json!({"t": "reject", "server": server, "reason": r.reason_code, "text": r.text, "url": r.url}).to_string()
 }
 
+/// A mod's UI command (API 0.3 `ui`, already validated by the host) for the Java HUD and dialogs.
+pub fn mod_ui(mod_id: &str, c: &UiCommand) -> String {
+    let mut v = match c {
+        UiCommand::SetWidget { id, widget } => json!({
+            "t": "ui-set", "id": id, "slot": widget.slot.name(), "kind": widget.kind.name(),
+            "icon": widget.icon, "title": widget.title, "text": widget.text,
+        }),
+        UiCommand::RemoveWidget { id } => json!({"t": "ui-remove", "id": id}),
+        UiCommand::Toast { text } => json!({"t": "ui-toast", "text": text}),
+        UiCommand::Notice { text, level } => json!({"t": "ui-notice", "text": text, "level": level.name()}),
+        UiCommand::ShowDialog { id, dialog } => json!({
+            "t": "ui-dialog", "id": id, "title": dialog.title, "text": dialog.text,
+            "field": dialog.field.as_ref().map(|f| json!({"placeholder": f.placeholder, "initial": f.initial, "max": f.max_length})),
+            "buttons": dialog.buttons.iter().map(|b| json!({"label": b.label, "kind": b.kind.name()})).collect::<Vec<_>>(),
+        }),
+        UiCommand::CloseDialog { id } => json!({"t": "ui-close", "id": id}),
+        UiCommand::ClearMod => json!({"t": "ui-clear"}),
+    };
+    v["mod"] = json!(mod_id);
+    v.to_string()
+}
+
 /// A world opened or closed (`mods`: mods running).
 pub fn world(open: bool, mods: usize) -> String {
     json!({"t": "world", "open": open, "mods": mods}).to_string()
@@ -135,5 +158,25 @@ mod tests {
         assert_eq!(f(Failure::Download { id: "a".into(), code: 1 })["fileError"], 1);
         assert_eq!(f(Failure::HashMismatch("a".into()))["id"], "a");
         assert!(f(Failure::Declined).get("id").is_none());
+    }
+
+    #[test]
+    fn mod_ui_shapes() {
+        use bhmod_core::ui::{ButtonKind, Dialog, DialogButton, UiCommand};
+        let close = v(mod_ui("m", &UiCommand::CloseDialog { id: 3 }));
+        assert_eq!(
+            (close["t"].as_str(), close["id"].as_u64(), close["mod"].as_str()),
+            (Some("ui-close"), Some(3), Some("m"))
+        );
+        assert_eq!(v(mod_ui("m", &UiCommand::ClearMod))["t"], "ui-clear");
+        let d = Dialog {
+            title: "T".into(),
+            text: "x".into(),
+            field: None,
+            buttons: vec![DialogButton { label: "L".into(), kind: ButtonKind::Danger }],
+        };
+        let dlg = v(mod_ui("m", &UiCommand::ShowDialog { id: 1, dialog: d }));
+        assert!(dlg["field"].is_null());
+        assert_eq!(dlg["buttons"][0]["kind"], "danger");
     }
 }

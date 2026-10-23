@@ -6,7 +6,7 @@ description = { en = "Adds /countdown and /remind and a periodic tip. Example WA
 authors = ["Blockheads Club"]
 license = "MIT OR Apache-2.0"
 homepage = "https://github.com/Blockheads-Club/mod-sdk"
-api = "^0.2"
+api = "^0.3"
 
 [sides]
 server = true

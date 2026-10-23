@@ -174,7 +174,8 @@ final class Overlay {
                 raise();
                 break;
             default:
-                JoinFlow.command(t, c);
+                if (ModUi.handles(t)) ModUi.command(t, c);
+                else JoinFlow.command(t, c);
         }
     }
 

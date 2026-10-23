@@ -307,6 +307,48 @@ fn bridge_answers() {
     assert!(!b.is_builtin_command("help"));
     assert_eq!(b.channel_send("m", "m:c", &ChannelTarget::AllPlayers, b"x"), Err(ApiError::Unsupported));
     assert_eq!(b.channel_send("m", "m:c", &ChannelTarget::Server, b"x"), Ok(()));
+    assert_eq!(b.ui("m", &bhmod_core::ui::UiCommand::Toast { text: "t".into() }), Ok(()));
+    assert_eq!(p.ui.borrow()[0]["t"], "ui-toast");
+}
+
+#[test]
+fn mod_ui_reaches_java_and_dialog_answers_come_back() {
+    let mut r = rig();
+    let src = r#"
+local mod = {}
+function mod.on_enable()
+    bh.ui.set_widget("coins", { slot = "top-right", kind = "counter", icon = "coin", text = "5" })
+    bh.ui.remove_widget("coins")
+    bh.ui.notice("hello", "success")
+    bh.ui.show_dialog({ title = "Q", text = "?", field = { initial = "1" }, buttons = { { label = "OK", kind = "primary" } } })
+    bh.events.on_custom("ui:ui-action", function(ev)
+        bh.ui.toast("answered " .. ev.payload.button .. " " .. tostring(ev.payload.text))
+    end)
+end
+return mod
+"#;
+    r.l.installed().install(&package("ui", "1.0.0", "", "client/main.luau", src), None).unwrap();
+    r.l.on_world(Some("Solo"));
+    assert!(r.l.running());
+    assert_eq!(r.p.ui_types(), ["ui-set", "ui-remove", "ui-notice", "ui-dialog", "world"]);
+    let ui = r.p.ui.borrow().clone();
+    assert_eq!(ui[0]["mod"], "ui");
+    assert_eq!(ui[0]["slot"], "top-right");
+    assert_eq!(ui[0]["kind"], "counter");
+    assert_eq!(ui[0]["icon"], "coin");
+    assert_eq!(ui[1]["id"], "coins");
+    assert_eq!(ui[2]["level"], "success");
+    assert_eq!(ui[3]["field"]["initial"], "1");
+    assert_eq!(ui[3]["buttons"][0]["kind"], "primary");
+    r.p.ui.borrow_mut().clear();
+    // the answer is delivered to the mod, which answers with a toast
+    r.l.on_ui(UiEvent::Dialog { dialog: 1, button: 0, text: Some("7".into()) });
+    assert_eq!(r.p.ui.borrow()[0]["t"], "ui-toast");
+    assert_eq!(r.p.ui.borrow()[0]["text"], "answered 0 7");
+    // nothing of the mod is left on screen, so leaving the world sends no clear; an answer with no mods is ignored
+    r.l.on_world(None);
+    assert!(r.p.ui.borrow().iter().all(|v| v["t"] != "ui-clear"));
+    r.l.on_ui(UiEvent::Dialog { dialog: 1, button: 0, text: None });
 }
 
 #[test]
