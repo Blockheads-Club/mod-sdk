@@ -42,8 +42,13 @@ struct Shared {
     host: Cell<Option<HostPtr>>,
     deadline: Cell<Option<Instant>>,
     timed_out: Cell<bool>,
+    /// Interrupts since the last clock read: `Instant::now` is a syscall on hosts without a vDSO clock (HPET).
+    ticks: Cell<u32>,
     files: ModFiles,
 }
+
+/// The deadline is compared with the clock on every n-th interrupt (loop back-edges and calls), not on each one.
+const INTERRUPT_CHECK_EVERY: u32 = 64;
 
 fn rt_err(msg: impl std::fmt::Display) -> mlua::Error {
     mlua::Error::runtime(msg)
@@ -350,6 +355,8 @@ fn call_service(
 ) -> mlua::Result<Value> {
     let args = args.iter().map(|a| to_cbor(sh, a, 1)).collect::<mlua::Result<Vec<_>>>()?;
     let bytes = Cbor::List(args).encode();
+    // The service runs another mod and may use up this call's time: the next interrupt reads the clock.
+    sh.ticks.set(INTERRUPT_CHECK_EVERY - 1);
     let out = with_host(sh, |h| h.call_service(name, req, method, &bytes))?
         .map_err(|e| rt_err(format!("service {name}.{method}: {e}")))?;
     decode_cbor(lua, sh, &out)
@@ -614,8 +621,13 @@ impl LuaInstance {
             return Err(rt_err(format!("{mod_id}: entry point {} is missing", files.entry)));
         }
         let lua = Lua::new();
-        let sh =
-            Rc::new(Shared { host: Cell::new(None), deadline: Cell::new(None), timed_out: Cell::new(false), files });
+        let sh = Rc::new(Shared {
+            host: Cell::new(None),
+            deadline: Cell::new(None),
+            timed_out: Cell::new(false),
+            ticks: Cell::new(0),
+            files,
+        });
         let g = lua.globals();
         for name in ["debug", "loadstring", "getfenv", "setfenv"] {
             g.set(name, Value::Nil)?;
@@ -650,7 +662,9 @@ impl LuaInstance {
         lua.sandbox(true)?;
         let s = sh.clone();
         lua.set_interrupt(move |_| {
-            if s.deadline.get().is_some_and(|d| Instant::now() >= d) {
+            let ticks = s.ticks.get().wrapping_add(1);
+            s.ticks.set(ticks);
+            if ticks % INTERRUPT_CHECK_EVERY == 0 && s.deadline.get().is_some_and(|d| Instant::now() >= d) {
                 s.timed_out.set(true);
                 return Err(rt_err("time budget exceeded"));
             }
