@@ -50,6 +50,31 @@ fn size_limits() {
     let mut big = vec![PACKET_TYPE, 0x02];
     big.extend(vec![0u8; MAX_BODY + 1]);
     assert_eq!(err(&big), Error::TooLarge("body"));
+
+    let call = |args: Vec<u8>| {
+        packet(
+            0x13,
+            map(vec![
+                ("id", Value::Uint(1)),
+                ("mod", Value::text("a")),
+                ("service", Value::text("s")),
+                ("req", Value::text("*")),
+                ("method", Value::text("m")),
+                ("args", Value::Bytes(args)),
+            ]),
+        )
+    };
+    assert!(Message::decode(&call(vec![0x80; MAX_SERVICE_PAYLOAD])).is_ok());
+    assert_eq!(err(&call(vec![0x80; MAX_SERVICE_PAYLOAD + 1])), Error::TooLarge("service payload"));
+    let result = packet(
+        0x14,
+        map(vec![
+            ("id", Value::Uint(1)),
+            ("ok", Value::Bool(true)),
+            ("value", Value::Bytes(vec![0; MAX_SERVICE_PAYLOAD + 1])),
+        ]),
+    );
+    assert_eq!(err(&result), Error::TooLarge("service payload"));
 }
 
 #[test]
@@ -113,5 +138,18 @@ fn constants() {
     assert_eq!(PLIST_KEY, "bhcModLoader");
     assert_eq!(HELLO_TIMEOUT_MS, 1500);
     assert_eq!(MAX_IN_FLIGHT, 8);
+    assert_eq!(
+        service_error::NOT_FOUND
+            + service_error::VERSION_MISMATCH
+            + service_error::NOT_PERMITTED
+            + service_error::BUSY
+            + service_error::PROVIDER_ERROR
+            + service_error::TRAP
+            + service_error::BAD_VALUE
+            + service_error::TOO_LARGE
+            + service_error::INTERNAL,
+        45
+    );
+    assert_eq!(MAX_SERVICE_PAYLOAD, 32 * 1024);
     assert_eq!(file_error::BAD_OFFSET + file_error::BUSY + file_error::INTERNAL, 9);
 }
