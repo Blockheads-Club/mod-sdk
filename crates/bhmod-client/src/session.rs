@@ -45,6 +45,9 @@ pub struct Options {
     /// Accept packages with native code (the host checked the public index and the player confirmed). Off by
     /// default: the server can never push native code on its own.
     pub allow_native: bool,
+    /// Packages (by SHA-256) the host trusts to carry native code: the player installed exactly this file from the
+    /// public index and confirmed the red warning. A server listing native code with another hash is refused.
+    pub native_trusted: Vec<Hash>,
 }
 
 impl Options {
@@ -60,6 +63,7 @@ impl Options {
             stall_timeout_ms: 30_000,
             busy_retry_ms: 1_000,
             allow_native: false,
+            native_trusted: Vec::new(),
         }
     }
 }
@@ -456,7 +460,11 @@ impl Session {
             return self.modded(hello.mods_hash);
         }
         if !self.opts.allow_native {
-            if let Some(m) = selected.iter().map(|&i| &list.mods[i]).find(|m| m.permissions.native) {
+            if let Some(m) = selected
+                .iter()
+                .map(|&i| &list.mods[i])
+                .find(|m| m.permissions.native && !self.native_trusted(&m.sha256))
+            {
                 return self.fail(Failure::Refused { id: m.id.clone(), refusal: Refusal::Native });
             }
         }
@@ -538,6 +546,10 @@ impl Session {
         self.fail(Failure::Download { id, code })
     }
 
+    fn native_trusted(&self, hash: &Hash) -> bool {
+        self.opts.native_trusted.contains(hash)
+    }
+
     fn check_all(&mut self, hello: ServerHello, list: ModList, selected: &[usize]) -> Vec<Output> {
         let mut ok = Vec::new();
         for m in selected.iter().map(|&i| &list.mods[i]) {
@@ -546,7 +558,13 @@ impl Session {
                 Ok(b) => b,
                 Err(e) => return self.fail(Failure::Disk(e.to_string())),
             };
-            match check_offered_with(&bytes, &m.id, &m.version, &self.caps, self.opts.allow_native) {
+            match check_offered_with(
+                &bytes,
+                &m.id,
+                &m.version,
+                &self.caps,
+                self.opts.allow_native || self.native_trusted(&m.sha256),
+            ) {
                 Ok(manifest) => ok.push(Accepted { info: m.clone(), path, manifest }),
                 Err(refusal) => {
                     if !m.client_required {

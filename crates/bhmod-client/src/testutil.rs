@@ -16,6 +16,15 @@ pub fn caps() -> Caps {
 /// A `.bhmod` with a Luau client half. `perms` is appended to `[permissions]`; `variant` changes the shape:
 /// `server-only`, `api9`, `loader9`, `loader0`, `wasm`, `invalid`.
 pub fn package(id: &str, version: &str, perms: &str, variant: &str) -> Vec<u8> {
+    build(id, version, perms, variant, &[])
+}
+
+/// A version 1.0.0 Luau client mod with extra files (`path`, bytes) under `perms`.
+pub fn package_files(id: &str, perms: &str, files: &[(&str, &[u8])]) -> Vec<u8> {
+    build(id, "1.0.0", perms, "", files)
+}
+
+fn build(id: &str, version: &str, perms: &str, variant: &str, files: &[(&str, &[u8])]) -> Vec<u8> {
     let t = tempfile::tempdir().unwrap();
     let api = if variant == "api9" { "^9.0" } else { "^0.2" };
     let loader = match variant {
@@ -39,6 +48,11 @@ pub fn package(id: &str, version: &str, perms: &str, variant: &str) -> Vec<u8> {
         fs::write(t.path().join("client/main.luau"), "return {}").unwrap();
         fs::write(t.path().join("server/main.luau"), "return {}").unwrap();
         fs::write(t.path().join("client/main.wasm"), b"\0asm\x0d\0\x01\0").unwrap();
+    }
+    for (path, bytes) in files {
+        let p = t.path().join(path);
+        fs::create_dir_all(p.parent().unwrap()).unwrap();
+        fs::write(p, bytes).unwrap();
     }
     let mut src = DirSource::open(t.path()).unwrap();
     write_zip(&mut src, std::io::Cursor::new(Vec::new())).unwrap().into_inner()

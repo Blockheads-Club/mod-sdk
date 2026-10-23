@@ -7,6 +7,7 @@
 
 pub mod cache;
 pub mod installed;
+pub mod native;
 pub mod session;
 pub mod verify;
 

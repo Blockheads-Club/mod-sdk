@@ -37,6 +37,8 @@ pub enum Refusal {
     NoClientHalf,
     /// Asks for native access.
     Native,
+    /// Native code that was not installed from the public index with the player's confirmation.
+    NativeUnconfirmed,
     /// Needs a newer `blockheads:api` (the requirement).
     NeedsNewerApi(String),
     /// Needs another loader version (the requirement).
@@ -54,6 +56,7 @@ impl Refusal {
             Refusal::WrongMod { .. } => "wrong-mod",
             Refusal::NoClientHalf => "no-client-half",
             Refusal::Native => "native",
+            Refusal::NativeUnconfirmed => "native-unconfirmed",
             Refusal::NeedsNewerApi(_) => "needs-newer-api",
             Refusal::NeedsNewerLoader(_) => "needs-newer-loader",
             Refusal::MissingRuntime(_) => "missing-runtime",
@@ -69,6 +72,9 @@ impl fmt::Display for Refusal {
             Refusal::WrongMod { expected, found } => write!(f, "expected {expected}, the file is {found}"),
             Refusal::NoClientHalf => write!(f, "the mod has no client part"),
             Refusal::Native => write!(f, "native mods are not loaded from servers or links"),
+            Refusal::NativeUnconfirmed => {
+                write!(f, "native mods come from the public mod list and need the player's confirmation")
+            }
             Refusal::NeedsNewerApi(r) => write!(f, "the mod needs API {r}; update the mod loader"),
             Refusal::NeedsNewerLoader(r) => write!(f, "the mod needs mod loader {r}; update the mod loader"),
             Refusal::MissingRuntime(r) => write!(f, "this mod loader cannot run {r} mods"),
@@ -187,6 +193,7 @@ mod tests {
             Refusal::WrongMod { expected: "a".into(), found: "b".into() },
             Refusal::NoClientHalf,
             Refusal::Native,
+            Refusal::NativeUnconfirmed,
             Refusal::NeedsNewerApi("^9".into()),
             Refusal::NeedsNewerLoader("^9".into()),
             Refusal::MissingRuntime("jvm".into()),

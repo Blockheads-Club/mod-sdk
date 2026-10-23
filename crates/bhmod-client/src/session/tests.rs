@@ -469,3 +469,29 @@ fn native_mods_need_the_host_to_allow_them() {
     let out = r.s.decide(true, 0);
     assert!(matches!(&out[..], [Output::Load(v)] if v.len() == 1 && v[0].manifest.permissions.native), "{out:?}");
 }
+
+#[test]
+fn native_mods_with_a_trusted_hash_load_and_others_do_not() {
+    let p = package("nat", "1.0.0", "native = true\n", "");
+    let mut m = info("nat", &p, true, &["client"]);
+    m.permissions.native = true;
+    let hash = hash_of(&[&m]);
+    for (trusted, loads) in [(true, true), (false, false)] {
+        let mut r = rig();
+        if trusted {
+            r.s.opts.native_trusted.push(m.sha256);
+        } else {
+            r.s.opts.native_trusted.push([7; 32]);
+        }
+        r.cache.put(&p).unwrap();
+        r.s.contact(0);
+        r.s.receive(&hello_pkt(hash, true, 1), 0);
+        r.s.receive(&list_pkt(vec![m.clone()]), 0);
+        let out = r.s.decide(true, 0);
+        if loads {
+            assert!(matches!(&out[..], [Output::Load(v)] if v.len() == 1), "{out:?}");
+        } else {
+            assert!(matches!(&out[..], [Output::Failed(Failure::Refused { refusal: Refusal::Native, .. })]), "{out:?}");
+        }
+    }
+}

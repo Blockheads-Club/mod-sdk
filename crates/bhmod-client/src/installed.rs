@@ -1,6 +1,8 @@
 //! Mods the player installed (from the public index, a link or a zip): `<id>.bhmod` files in one directory plus
 //! `installed.toml` with the on/off switch and where each came from. Packages are checked on install like a
-//! server's, so the same rules apply (no native code, a client half, a runtime this loader has).
+//! server's, so the same rules apply (a client half, a runtime this loader has). Native code is the exception that
+//! needs two things: the package came from the public index (`source` starts with [`INDEX_SOURCE`]) and the player
+//! confirmed the red warning; the SHA-256 of the confirmed file is stored, so a replaced file is not loaded.
 
 use std::fs;
 use std::io;
@@ -9,10 +11,15 @@ use std::path::{Path, PathBuf};
 use bhmod_manifest::Manifest;
 
 use crate::cache::sha256;
-use crate::verify::{check_package, Caps, Refusal};
+use crate::verify::{check_package_with, Caps, Refusal};
 
 /// The state file.
 pub const STATE_FILE: &str = "installed.toml";
+/// Prefix of `source` for packages downloaded from the public index (the only way to install native code).
+pub const INDEX_SOURCE: &str = "index:";
+
+/// State key: the SHA-256 of the native package the player confirmed.
+const NATIVE_KEY: &str = "native-sha256";
 
 /// One installed mod.
 #[derive(Debug, Clone)]
@@ -74,9 +81,28 @@ impl Installed {
         fs::write(self.dir.join(STATE_FILE), t.to_string())
     }
 
-    /// Checks and installs a package (replacing another version of the same mod). New mods start enabled.
+    /// Checks and installs a package (replacing another version of the same mod). New mods start enabled. Native
+    /// packages are refused: see [`Installed::install_with`].
     pub fn install(&self, bytes: &[u8], source: Option<&str>) -> Result<InstalledMod, InstallError> {
-        let manifest = check_package(bytes, &self.caps).map_err(InstallError::Refused)?;
+        self.install_with(bytes, source, false)
+    }
+
+    /// Like [`Installed::install`]; `native_confirmed` says the player confirmed the native-code warning for this
+    /// file. A native package is installed only when it is confirmed and `source` is an [`INDEX_SOURCE`].
+    pub fn install_with(
+        &self,
+        bytes: &[u8],
+        source: Option<&str>,
+        native_confirmed: bool,
+    ) -> Result<InstalledMod, InstallError> {
+        let manifest = check_package_with(bytes, &self.caps, true).map_err(InstallError::Refused)?;
+        let native = manifest.permissions.native;
+        if native && !source.is_some_and(|s| s.starts_with(INDEX_SOURCE)) {
+            return Err(InstallError::Refused(Refusal::Native));
+        }
+        if native && !native_confirmed {
+            return Err(InstallError::Refused(Refusal::NativeUnconfirmed));
+        }
         fs::create_dir_all(&self.dir).map_err(InstallError::Io)?;
         let path = self.dir.join(format!("{}.bhmod", manifest.id));
         fs::write(&path, bytes).map_err(InstallError::Io)?;
@@ -88,9 +114,14 @@ impl Installed {
             None => entry.remove("source"),
         };
         let enabled = entry["enabled"].as_bool().unwrap_or(true);
+        let sha = bhmod_proto::hex(&sha256(bytes));
+        if native {
+            entry.insert(NATIVE_KEY.into(), toml::Value::String(sha.clone()));
+        } else {
+            entry.remove(NATIVE_KEY);
+        }
         t.insert(manifest.id.clone(), toml::Value::Table(entry));
         self.save(&t).map_err(InstallError::Io)?;
-        let sha = bhmod_proto::hex(&sha256(bytes));
         Ok(InstalledMod { path, manifest, sha256: sha, enabled, source: source.map(str::to_string) })
     }
 
@@ -105,11 +136,16 @@ impl Installed {
             .filter(|p| p.extension().is_some_and(|x| x == "bhmod"))
             .filter_map(|path| {
                 let bytes = fs::read(&path).ok()?;
-                let manifest = check_package(&bytes, &self.caps).ok()?;
+                let manifest = check_package_with(&bytes, &self.caps, true).ok()?;
                 let entry = t.get(&manifest.id).and_then(|v| v.as_table());
+                let sha256 = bhmod_proto::hex(&sha256(&bytes));
+                let confirmed = entry.and_then(|e| e.get(NATIVE_KEY)).and_then(|v| v.as_str()) == Some(sha256.as_str());
+                if manifest.permissions.native && !confirmed {
+                    return None;
+                }
                 let enabled = entry.and_then(|e| e.get("enabled")).and_then(|v| v.as_bool()).unwrap_or(true);
                 let source = entry.and_then(|e| e.get("source")).and_then(|v| v.as_str()).map(str::to_string);
-                Some(InstalledMod { path, manifest, sha256: bhmod_proto::hex(&sha256(&bytes)), enabled, source })
+                Some(InstalledMod { path, manifest, sha256, enabled, source })
             })
             .collect();
         out.sort_by(|a, b| a.manifest.id.cmp(&b.manifest.id));
@@ -177,6 +213,35 @@ mod tests {
         assert!(i.remove("alpha").unwrap());
         assert!(!i.remove("alpha").unwrap());
         assert_eq!(i.list().len(), 1);
+    }
+
+    #[test]
+    fn native_code_needs_the_index_and_a_confirmation() {
+        use crate::testutil::package_files;
+        let t = tempfile::tempdir().unwrap();
+        let i = Installed::new(t.path(), caps());
+        let nat = package_files("nat", "native = true\n", &[("client/native/armeabi-v7a/libn.so", b"ELF")]);
+        let index = Some("index:https://x/nat.bhmod");
+        // not from the index, or not confirmed: refused, nothing written
+        let e = i.install_with(&nat, Some("https://x/nat.bhmod"), true).unwrap_err();
+        assert!(matches!(e, InstallError::Refused(Refusal::Native)), "{e}");
+        let e = i.install_with(&nat, index, false).unwrap_err();
+        assert!(matches!(e, InstallError::Refused(Refusal::NativeUnconfirmed)));
+        assert!(e.to_string().contains("confirmation"));
+        assert!(i.list().is_empty());
+        // confirmed from the index: installed and listed
+        let m = i.install_with(&nat, index, true).unwrap();
+        assert!(m.manifest.permissions.native);
+        assert_eq!(i.list().len(), 1);
+        // a replaced file is not the confirmed one: skipped
+        let other = package_files("nat", "native = true\n", &[("client/native/armeabi-v7a/libn.so", b"EVIL")]);
+        fs::write(&m.path, other).unwrap();
+        assert!(i.list().is_empty());
+        // an update without native code drops the confirmation
+        i.install(&package("nat", "1.1.0", "", ""), None).unwrap();
+        assert_eq!(i.list().len(), 1);
+        fs::write(&m.path, &nat).unwrap();
+        assert!(i.list().is_empty());
     }
 
     #[test]
