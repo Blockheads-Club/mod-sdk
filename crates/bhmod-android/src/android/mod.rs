@@ -397,6 +397,40 @@ fn java_data_dir(env: &mut JNIEnv, cls: &JClass) -> Option<PathBuf> {
     Some(PathBuf::from(s))
 }
 
+/// The class loader of the loader's own dex (it holds the Java UI and, in a `--jvm` build, the SDK classes).
+#[cfg(feature = "jvm")]
+static DEX_LOADER: OnceLock<GlobalRef> = OnceLock::new();
+
+#[cfg(feature = "jvm")]
+fn keep_loader(env: &mut JNIEnv, bridge: &JClass) {
+    let loader = env.call_method(bridge, "getClassLoader", "()Ljava/lang/ClassLoader;", &[]).and_then(|v| v.l());
+    match loader.and_then(|l| env.new_global_ref(l)) {
+        Ok(g) => {
+            let _ = DEX_LOADER.set(g);
+        }
+        Err(_) => {
+            let _ = env.exception_clear();
+        }
+    }
+}
+
+/// The JVM runtime on ART: the VM already runs in this process, the SDK classes come from the loader's dex and every
+/// mod brings its own `classes.dex` (see bhmod-core `jvm::attach_existing`).
+#[cfg(feature = "jvm")]
+fn jvm_factory() -> Result<Box<dyn bhmod_core::runtime::Runtime>, String> {
+    let fail = |m: &str| {
+        log(LogLevel::Error, &format!("JVM mods are on but unavailable: {m}"));
+        m.to_string()
+    };
+    let vm = VM.get().ok_or_else(|| fail("no JavaVM"))?;
+    let loader = DEX_LOADER.get().ok_or_else(|| fail("no class loader for the SDK"))?.clone();
+    // SAFETY: the pointer belongs to the process' JavaVM (valid for the life of the process) and `loader` is a global
+    // reference to a class loader of that VM.
+    let rt = unsafe { bhmod_core::jvm::attach_existing(vm.get_java_vm_pointer(), loader, &Default::default()) }
+        .map_err(|e| fail(&e))?;
+    Ok(Box::new(rt))
+}
+
 /// Entry point: the game loads the library on its main thread, after `libApplication.so`.
 #[no_mangle]
 pub extern "system" fn JNI_OnLoad(vm: JavaVM, _reserved: *mut c_void) -> jint {
@@ -408,6 +442,8 @@ pub extern "system" fn JNI_OnLoad(vm: JavaVM, _reserved: *mut c_void) -> jint {
                     if let Some(d) = java_data_dir(&mut env, &cls) {
                         let _ = DATA_DIR.set(d);
                     }
+                    #[cfg(feature = "jvm")]
+                    keep_loader(&mut env, &cls);
                     if let Ok(g) = env.new_global_ref(cls) {
                         let _ = BRIDGE_CLASS.set(g);
                     }
@@ -419,6 +455,11 @@ pub extern "system" fn JNI_OnLoad(vm: JavaVM, _reserved: *mut c_void) -> jint {
             }
         }
         let _ = VM.set(vm);
+        #[cfg(feature = "jvm")]
+        if data_dir().join("jvm-enabled").exists() {
+            crate::set_jvm(Some(jvm_factory));
+            log(LogLevel::Warn, "JVM mods are on (jvm-enabled): they run unsandboxed");
+        }
         let hooks = install_hooks();
         log(
             LogLevel::Info,

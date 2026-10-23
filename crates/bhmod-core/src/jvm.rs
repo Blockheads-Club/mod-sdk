@@ -18,15 +18,21 @@
 #![allow(unsafe_code)]
 
 use std::cell::RefCell;
-use std::ffi::{c_void, OsString};
+use std::ffi::c_void;
+#[cfg(not(target_os = "android"))]
+use std::ffi::OsString;
 use std::panic::{catch_unwind, AssertUnwindSafe};
-use std::path::{Path, PathBuf};
+#[cfg(not(target_os = "android"))]
+use std::path::Path;
+use std::path::PathBuf;
 use std::sync::{Arc, Condvar, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use jni::objects::{GlobalRef, JByteArray, JClass, JObject, JString, JValue};
 use jni::sys::{jbyteArray, jint};
-use jni::{InitArgsBuilder, JNIEnv, JNIVersion, JavaVM, NativeMethod};
+#[cfg(not(target_os = "android"))]
+use jni::{InitArgsBuilder, JNIVersion};
+use jni::{JNIEnv, JavaVM, NativeMethod};
 
 use crate::channels::ChannelId;
 use crate::runtime::TaskId;
@@ -38,6 +44,7 @@ use crate::types::{
 use crate::value::Value;
 
 /// The Java SDK (generated bindings and runtime glue), compiled by `build.rs`.
+#[cfg(not(target_os = "android"))]
 pub const SDK_JAR: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/bhmod-sdk.jar"));
 
 const GLUE: &str = "club/blockheads/mod/rt/Glue";
@@ -80,6 +87,7 @@ impl Default for JvmConfig {
 // -- locating the JRE ---------------------------------------------------------------------------------------------
 
 /// The file name of the JVM library on this platform.
+#[cfg(not(target_os = "android"))]
 const LIBJVM: &str = if cfg!(windows) {
     "jvm.dll"
 } else if cfg!(target_os = "macos") {
@@ -89,6 +97,7 @@ const LIBJVM: &str = if cfg!(windows) {
 };
 
 /// The `libjvm` file inside a JRE or JDK directory.
+#[cfg(not(target_os = "android"))]
 pub fn libjvm_in(home: &Path) -> Option<PathBuf> {
     let name = LIBJVM;
     let mut dirs = vec![home.join("lib/server"), home.join("bin/server"), home.join("jre/bin/server")];
@@ -100,6 +109,7 @@ pub fn libjvm_in(home: &Path) -> Option<PathBuf> {
 }
 
 /// The Java home behind a `java` executable on the `PATH` (symlinks resolved).
+#[cfg(not(target_os = "android"))]
 fn home_of_path(paths: Option<OsString>) -> Option<PathBuf> {
     let exe = if cfg!(windows) { "java.exe" } else { "java" };
     std::env::split_paths(&paths?)
@@ -110,10 +120,12 @@ fn home_of_path(paths: Option<OsString>) -> Option<PathBuf> {
 
 /// Finds `libjvm`: the configured home, `BHMOD_JAVA_HOME`, `JAVA_HOME`, the bundled runtime, then `java` on the
 /// `PATH`. The error lists what was tried.
+#[cfg(not(target_os = "android"))]
 pub fn locate(cfg: &JvmConfig) -> Result<PathBuf, String> {
     locate_in(cfg, &|key| std::env::var_os(key))
 }
 
+#[cfg(not(target_os = "android"))]
 fn locate_in(cfg: &JvmConfig, var: &dyn Fn(&str) -> Option<OsString>) -> Result<PathBuf, String> {
     let from_env = ["BHMOD_JAVA_HOME", "JAVA_HOME"].into_iter().filter_map(var).filter(|v| !v.is_empty());
     let homes: Vec<PathBuf> = (cfg.java_home.iter().cloned())
@@ -146,6 +158,7 @@ fn jerr(e: impl std::fmt::Display) -> String {
 }
 
 /// Writes the embedded SDK jar where the JVM can read it and returns its path.
+#[cfg(not(target_os = "android"))]
 fn write_sdk(dir: &Path) -> Result<PathBuf, String> {
     use std::hash::{Hash, Hasher};
     let mut h = std::collections::hash_map::DefaultHasher::new();
@@ -164,6 +177,7 @@ fn write_sdk(dir: &Path) -> Result<PathBuf, String> {
 }
 
 /// Starts the JVM from `libjvm` with the SDK on the class path.
+#[cfg(not(target_os = "android"))]
 fn start(cfg: &JvmConfig) -> Result<Vm, String> {
     let lib = locate(cfg)?;
     let dir = cfg.work_dir.clone().unwrap_or_else(|| std::env::temp_dir().join("bhmod-jvm"));
@@ -187,6 +201,7 @@ fn start(cfg: &JvmConfig) -> Result<Vm, String> {
 /// The JVM calls `setlocale(LC_ALL, "")` while it starts, which would make the C library of the whole process parse
 /// and print numbers the user's way (`0,2` in Turkish or German): Luau's `tonumber("0.2")` would fail. Put the numeric
 /// category back to `"C"`, as the process had it.
+#[cfg(not(target_os = "android"))]
 fn restore_numeric_locale() {
     #[cfg(any(target_os = "linux", target_os = "android"))]
     const LC_NUMERIC: std::ffi::c_int = 1;
@@ -313,7 +328,8 @@ impl Watchdog {
 
 /// Runs for the life of the process (the JVM does too): waits for the earliest arm, interrupts its call.
 fn watchdog_loop(vm: Arc<Vm>) -> ! {
-    let mut env = vm.jvm.attach_current_thread_permanently().expect("attach the JVM watchdog thread");
+    // A daemon: a JVM that wants to exit (app_process after main returns) must not wait for this thread.
+    let mut env = vm.jvm.attach_current_thread_as_daemon().expect("attach the JVM watchdog thread");
     loop {
         let inst = {
             let mut s = vm.watchdog.state.lock().expect("watchdog lock");
@@ -788,13 +804,16 @@ pub struct JvmRuntime {
 }
 
 impl JvmRuntime {
-    /// Starts (or joins) the process' JVM. Fails with a readable message when no Java runtime is found.
+    /// Starts (or joins) the process' JVM. Fails with a readable message when no Java runtime is found. (Not on
+    /// Android, where the JVM is ART: use [`attach_existing`].)
+    #[cfg(not(target_os = "android"))]
     pub fn new(cfg: JvmConfig) -> Result<JvmRuntime, String> {
         let vm = vm_with(&cfg, start)?;
         Ok(JvmRuntime { vm, cfg })
     }
 
     /// The `libjvm` that [`JvmRuntime::new`] would load with this configuration, without starting anything.
+    #[cfg(not(target_os = "android"))]
     pub fn find_jvm(cfg: &JvmConfig) -> Result<PathBuf, String> {
         locate(cfg)
     }

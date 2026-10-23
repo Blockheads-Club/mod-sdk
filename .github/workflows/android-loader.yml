@@ -57,6 +57,30 @@ jobs:
             target/android-loader/loader.json
           if-no-files-found: error
 
+  # The JVM-enabled loader (Java/Kotlin mods on ART) is not shipped; this only proves it still builds.
+  build-jvm:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: armv7-linux-androideabi
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: android-armv7-jvm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - name: Android SDK parts (NDK, build tools, platform)
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "ndk;$NDK_VERSION" "build-tools;35.0.0" "platforms;android-35" > /dev/null
+      - name: Build the loader with --jvm
+        run: |
+          set -o pipefail
+          export ANDROID_NDK_HOME="$ANDROID_HOME/ndk/$NDK_VERSION"
+          scripts/build-android-loader.sh --jvm
+
   release:
     if: startsWith(github.ref, 'refs/tags/v')
     needs: build
