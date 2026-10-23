@@ -76,6 +76,10 @@ Java and Kotlin (milestone M9) are unsandboxed, so they need the `native` permis
 turned on: `bhmod new my-mod --lang java`, the examples ending in `-java` (`shop-java` calls the Lua `economy`
 service) and [`docs/jvm.md`](docs/jvm.md).
 
+Native mods (milestone M10) hook the game itself through a small C ABI (`libbhmod`: Objective-C swizzles, inline hooks
+on exported functions or addresses, import redirects) and are loaded only from the reviewed index, after the player
+confirmed a red warning: [`docs/native.md`](docs/native.md), example [`sdk/native/hello-c`](sdk/native/hello-c).
+
 ---
 
 ## 📚 What's inside
@@ -86,12 +90,14 @@ service) and [`docs/jvm.md`](docs/jvm.md).
 | [`docs/wasm.md`](docs/wasm.md) | WASM mods: Rust SDK, C/Zig/TinyGo, how the host runs them, the conformance suite |
 | [`docs/jvm.md`](docs/jvm.md) | JVM mods: Java/Kotlin SDK (generated from the WIT), how the host runs them, Android (ART) |
 | [`sdk/rust/blockheads-mod`](sdk/rust/blockheads-mod) | The Rust SDK (bindings + closures for events, commands, tasks) |
+| [`docs/native.md`](docs/native.md) | Native mods: the `libbhmod` C ABI and header, hook kinds, who may load native code, weapon skins |
 | [`docs/package.md`](docs/package.md) | The `.bhmod` package and its rules |
 | [`schema/`](schema/) | JSON Schemas for `mod.toml`, index entries and the published `index.json` |
 | [`docs/protocol-0xbc.md`](docs/protocol-0xbc.md), [`vectors/`](vectors/) | Client ⇄ server mod protocol and its byte-exact test vectors |
 | `crates/bhmod-manifest` | Reads and checks `mod.toml` and packages |
 | `crates/bhmod-proto` | Encodes and decodes the 0xBC protocol |
 | `crates/bhmod-cli` | The `bhmod` tool (`check`, `pack`, `new`, `index`) |
+| `crates/bhmod-native` | The `libbhmod` ABI, the armv7 inline-hook relocator and the hook engine both clients share |
 | `crates/bhmod-index` | Checks, builds and signs the public mod index ([`docs/index.md`](docs/index.md)) |
 | `crates/bhmod-core` | The shared mod host (GPL, built from M1 on) |
 | `crates/bhmod-wasm` | The WASM runtime of the host: wasmtime, Cranelift / Pulley, deadlines, memory limits, compile cache (GPL) |

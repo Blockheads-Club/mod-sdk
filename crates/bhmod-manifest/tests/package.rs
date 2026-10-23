@@ -159,6 +159,28 @@ fn entry_points() {
 }
 
 #[test]
+fn native_libraries_for_a_game_that_runs_armv7_only() {
+    let native = MANIFEST.to_string() + "\n[permissions]\nnative = true\n";
+    // only an x86 library: nothing of the mod would ever load
+    let d = mod_dir(&native, &[("server/main.luau", b"x"), ("client/native/x86/libdemo.so", b"\x7fELF")]);
+    let r = check_dir(d.path(), false);
+    assert!(r.is_ok(), "{:?}", r.errors);
+    has(&r.warnings, "armeabi-v7a code only");
+    // with the armeabi-v7a library (and one for another ABI) no warning; a mod without libraries has none either
+    let d = mod_dir(
+        &native,
+        &[
+            ("server/main.luau", b"x"),
+            ("client/native/armeabi-v7a/libdemo.so", b"\x7fELF"),
+            ("client/native/arm64-v8a/libdemo.so", b"\x7fELF"),
+        ],
+    );
+    assert!(!check_dir(d.path(), false).warnings.iter().any(|w| w.message.contains("armeabi-v7a")));
+    let d = mod_dir(&native, &[("server/main.luau", b"x")]);
+    assert!(!check_dir(d.path(), false).warnings.iter().any(|w| w.message.contains("armeabi-v7a")));
+}
+
+#[test]
 fn unused_side_native_services_content() {
     let d = mod_dir(
         MANIFEST,

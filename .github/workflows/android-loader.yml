@@ -7,7 +7,7 @@ on:
     branches: [main, dev, "feat/android-loader"]
     tags: ["v*"]
   pull_request:
-    paths: ["crates/**", "scripts/build-android-loader.sh", ".github/workflows/android-loader.yml", "Cargo.*"]
+    paths: ["crates/**", "sdk/native/**", "scripts/build-android-loader.sh", "scripts/build-native-example.sh", ".github/workflows/android-loader.yml", "Cargo.*"]
   workflow_dispatch:
 
 concurrency:
@@ -45,6 +45,10 @@ jobs:
           set -o pipefail
           export ANDROID_NDK_HOME="$ANDROID_HOME/ndk/$NDK_VERSION"
           scripts/build-android-loader.sh | tee "$RUNNER_TEMP/out.txt"
+      - name: Build the native example mod (C, NDK)
+        run: |
+          export ANDROID_NDK_HOME="$ANDROID_HOME/ndk/$NDK_VERSION"
+          scripts/build-native-example.sh
       - name: Summary
         run: |
           cat target/android-loader/loader.json

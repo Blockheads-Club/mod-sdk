@@ -52,11 +52,10 @@ cosmetics = [
   optional on the client side they see the plain vanilla look.
 - Cosmetics are not saved by the server. A mod keeps who owns/wears what in its own storage and re-equips on
   `player-join`.
-- `weapon` is part of the format but the clients do not draw it yet. Evidence (PC, 1.7.6): the game draws a held
-  sprite item with `renderSpriteItem(cache, ...)`, which asks the shared `CPCache` for `Items.png` by name; there is
-  no per-blockhead item texture. Swapping the cache entry for a mod atlas while a blockhead is drawn (a hook on
-  `-[Blockhead draw:...]`) made the whole blockhead disappear, and a held tool is only drawn while it is used, so it
-  could not be checked headlessly. A per-player skin needs a different hook point (the sprite renderer itself).
+- `weapon` re-skins the **held tool or item** (the item in the blockhead's hand while it is used, and the portrait in
+  the HUD) when the player wears it and holds the cosmetic's `base`. The PC client draws it with an inline hook on the
+  game's sprite code ([native.md](native.md#weapon-skins)); the texture is the whole picture of the item (any size up
+  to 1024 x 1024), not a cell of the vanilla atlas. The Android client does not draw weapons yet.
 
 ## API (blockheads:api 0.3)
 

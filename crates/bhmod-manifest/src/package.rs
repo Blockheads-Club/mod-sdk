@@ -288,6 +288,17 @@ fn check_against_manifest(src: &mut dyn Source, m: &Manifest, sizes: &BTreeMap<&
             r.errors.push(Issue::new(*p, "native libraries need permissions.native = true"));
         }
     }
+    // The game is 32-bit ARM only: libraries for other ABIs are never loaded.
+    let natives: Vec<&&str> = sizes.keys().filter(|p| is_native(p)).collect();
+    if m.permissions.native
+        && !natives.is_empty()
+        && !natives.iter().any(|p| p.starts_with("client/native/armeabi-v7a/"))
+    {
+        r.warnings.push(Issue::new(
+            "client/native",
+            "the game runs armeabi-v7a code only: without client/native/armeabi-v7a/*.so no library of this mod loads",
+        ));
+    }
     for s in &m.provides.services {
         if !sizes.contains_key(s.wit.as_str()) {
             r.errors.push(Issue::new("provides", format!("{} is not in the package", s.wit)));
