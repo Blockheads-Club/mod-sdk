@@ -133,7 +133,7 @@ bh.services.cancel_remote(id)                       -- the callback never runs
   of the other side) and `unavailable` (no modded server / player without the mod loader), `timeout`, `disconnected`
   (the player quit or the server went away) decided locally.
 - The providing side decides what is reachable (`remote = true`, optionally `remote-methods`), limits each peer
-  (token bucket: bursts of 20, 10 calls per second) and runs the method under the provider's own time budget (a trap
+  (token bucket: bursts of 20, 10 calls per second) and all peers together (200, 100 per second), and runs the method under the provider's own time budget (a trap
   counts as a fault of the provider, like any other call). A caller need not depend on the provider.
 - `bh.services.caller()` inside a provider method returns `{ mod = "<calling mod id>", player = <player> | nil }`
   (`player` is set when a client called a server mod), or `nil` for a call from a mod on the same side. It also holds

@@ -250,8 +250,8 @@ Rules:
   decode (malformed packets are dropped), so a caller always needs its own timeout.
 - Only services the provider declared `remote = true` in its `mod.toml` `[provides]` (optionally only the methods in
   `remote-methods`) can be reached; everything else answers NOT_PERMITTED. Exposure is the provider's decision alone.
-- The answering side limits each peer (reference server: a burst of 20 calls, then 10 per second per player); more
-  gets BUSY.
+- The answering side limits each peer (reference server: a burst of 20 calls, then 10 per second per player, and 200 / 100 per second for
+  all players together); more gets BUSY.
 - The caller times out locally (default 5 s, at most 30 s; the call then fails with `timeout`, a late answer is
   dropped) and fails open calls with `disconnected` when the peer leaves. The ids, the timeout and the `unavailable`
   failure (no modded peer) are not on the wire.

@@ -50,7 +50,7 @@ fn one(id: &str, extra: &str, grants: &str) -> (tempfile::TempDir, Rc<FakeBridge
     (tmp, b, h)
 }
 
-const TOUR_TOML: &str = "[permissions]\nplayers = [\"chat\", \"kick\"]\nchannels = true\n[provides]\nservices = [{ name = \"tour\", version = \"1.0.0\", wit = \"wit/tour.wit\", remote = true, remote-methods = [\"whoami\"] }]\n";
+const TOUR_TOML: &str = "[permissions]\nplayers = [\"chat\", \"kick\"]\nchannels = true\n[provides]\nservices = [{ name = \"tour\", version = \"1.0.0\", wit = \"wit/tour.wit\", remote = true, remote-methods = [\"whoami\", \"garbage\"] }]\n";
 const TOUR_GRANTS: &str = "[tour]\ngrant = [\"players:chat\", \"players:kick\", \"channels\"]\n";
 
 #[test]
@@ -116,6 +116,8 @@ fn tour_calls_every_import() {
         "cancel-remote-unknown = false",
         "call-remote-server = Err(\"invalid argument: a server mod calls players",
         "caller = None",
+        "call-remote-garbage = Err(\"invalid argument: arguments:",
+        "call-remote-scalar = Err(\"invalid argument: arguments must be a list",
         "send-local = Ok(())",
         "send-server = Err(\"unsupported\")",
         "send-player = Ok(())",
@@ -142,6 +144,11 @@ fn tour_calls_every_import() {
     assert_eq!(who.get("mod"), Some(&bhmod_core::value::Value::text("app")));
     assert_eq!(who.get("player"), Some(&bhmod_core::value::Value::text("p1")));
     assert_eq!(h.remote_call_in(&p1, "app", "tour", "^1", "echo", &args), Err(bhmod_core::RemoteError::NotPermitted));
+    // A provider that returns bytes that are no value is the provider's bug, not a value for the caller.
+    assert!(matches!(
+        h.remote_call_in(&p1, "app", "tour", "^1", "garbage", &args),
+        Err(bhmod_core::RemoteError::BadValue(m)) if m.starts_with("result:")
+    ));
     assert_eq!(b.take_chats(), vec![("p1".to_string(), "hi p1".to_string())]);
     assert_eq!(b.take_broadcasts(), vec!["to all"]);
     assert_eq!(b.kicks.borrow().clone(), vec![("p2".to_string(), "bye".to_string())]);

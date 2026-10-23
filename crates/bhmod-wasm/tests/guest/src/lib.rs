@@ -162,6 +162,20 @@ fn tour() -> Result<(), String> {
         services::call_remote(&services::Target::Server, "hud", "^1", "title", &[], 0, |_| {}).map_err(String::from),
     );
     show("caller", services::caller().map(|c| c.mod_id));
+    // The raw import checks what the SDK helper cannot get wrong: arguments must be a canonical CBOR list.
+    let raw = |args: &[u8]| {
+        blockheads_mod::bindings::blockheads::api::services::call_remote(
+            &services::Target::Player(&p),
+            "hud",
+            "^1",
+            "title",
+            args,
+            0,
+        )
+        .map_err(String::from)
+    };
+    show("call-remote-garbage", raw(&[0xff]));
+    show("call-remote-scalar", raw(&[0x01]));
     let c = channels::open("tour:c").map_err(String::from)?;
     show("send-local", channels::send(c, &channels::Target::Local, &[1]));
     show("send-server", channels::send(c, &channels::Target::Server, &[2]).map_err(String::from));
@@ -223,6 +237,8 @@ impl Mod for Guest {
     fn call_service(name: String, method: String, args: Vec<u8>) -> Result<Vec<u8>, String> {
         match method.as_str() {
             "echo" => Ok(args),
+            // Not a value: the host refuses to pass it on.
+            "garbage" => Ok(vec![0xff]),
             "whoami" => {
                 let c = services::caller().ok_or("not a remote call")?;
                 let player = c.player.map(|p| p.id());

@@ -85,6 +85,8 @@ function mod.on_enable()
     bh.services.call_remote("server", "bank", "*", "echo", {}, show("echo0"))
     local slow = bh.services.call_remote("server", "economy", "^1", "balance", { "x" }, show("slow"), 2000)
     local gone = bh.services.call_remote("server", "economy", "^1", "balance", { "x" }, show("gone"))
+    -- an answer for a call nobody waits for (cancelled, or made up) is ignored
+    bh.events.fire_custom("shopui:service-result", { id = 4242, ok = true })
     assert(bh.services.cancel_remote(gone) == true)
     assert(bh.services.cancel_remote(gone) == false)
     -- invalid calls fail at once, nothing is sent
@@ -94,6 +96,7 @@ function mod.on_enable()
     print(bad("server", "", "^1", "m", {}, f))
     print(bad("server", "a", "nonsense", "m", {}, f))
     print(bad("server", "a", "^1", "m", "text", f))
+    print(bad("server", "a", "^1", "m", { a = 1 }, f))
     print(bad("server", "a", "^1", "m", { 1 }, f, 30001))
     print(bad("server", "a", "^1", "m", { string.rep("x", 40000) }, f))
     print(bad("server", "a", "^1", string.rep("m", 65), {}, f))
@@ -151,6 +154,11 @@ fn server(limits: RemoteLimits, manual_clock: bool) -> World {
 }
 
 fn client(main: &str, extra: &str, grant: bool, limits: RemoteLimits) -> World {
+    client_with(main, extra, grant, limits, &[])
+}
+
+/// A client whose game lists `players` when the mod starts.
+fn client_with(main: &str, extra: &str, grant: bool, limits: RemoteLimits, players: &[&str]) -> World {
     let tmp = tempfile::tempdir().unwrap();
     let mods = tmp.path().join("mods");
     client_mod(&mods, "shopui", extra, main);
@@ -159,6 +167,9 @@ fn client(main: &str, extra: &str, grant: bool, limits: RemoteLimits) -> World {
         fs::write(mods.join("mods.toml"), "[shopui]\ngrant = [\"channels\"]\n").unwrap();
     }
     let b = FakeBridge::new();
+    for p in players {
+        b.join(p, p, Role::Player);
+    }
     let clock = FakeClock::ahead();
     let mut opts = HostOptions::new(&mods, Side::Client);
     opts.clock = Box::new(clock.clone());
@@ -252,7 +263,7 @@ fn rules_of_the_answering_side() {
 
 #[test]
 fn rate_limit_per_peer() {
-    let mut w = server(RemoteLimits { burst: 3, per_second: 2, max_pending: 4 }, true);
+    let mut w = server(RemoteLimits { burst: 3, per_second: 2, max_pending: 4, ..RemoteLimits::default() }, true);
     let none = args(vec![]);
     for _ in 0..3 {
         assert!(call(&mut w, &p1(), "bank", "*", "echo", &none).is_ok());
@@ -263,6 +274,19 @@ fn rate_limit_per_peer() {
     w.clock.advance(Duration::from_millis(500));
     assert!(call(&mut w, &p1(), "bank", "*", "echo", &none).is_ok());
     assert_eq!(call(&mut w, &p1(), "bank", "*", "echo", &none), Err(RemoteError::Busy));
+}
+
+#[test]
+fn all_peers_together_have_a_limit_too() {
+    let mut w = server(RemoteLimits { total_burst: 3, total_per_second: 1, ..RemoteLimits::default() }, true);
+    let none = args(vec![]);
+    for peer in ["a", "b", "c"] {
+        assert!(call(&mut w, &RemoteTarget::Player(peer.into()), "bank", "*", "echo", &none).is_ok());
+    }
+    // A fourth player is refused although their own bucket is full.
+    assert_eq!(call(&mut w, &RemoteTarget::Player("d".into()), "bank", "*", "echo", &none), Err(RemoteError::Busy));
+    w.clock.advance(Duration::from_secs(1));
+    assert!(call(&mut w, &RemoteTarget::Player("d".into()), "bank", "*", "echo", &none).is_ok());
 }
 
 #[test]
@@ -288,7 +312,7 @@ fn nothing_is_answered_before_the_world_loads_or_after_the_mods_stop() {
 fn a_client_mod_calls_the_server_asynchronously() {
     let mut w = client(CLIENT, "[permissions]\nchannels = true\n", true, RemoteLimits::default());
     assert_eq!(w.h.mods()[0].state, ModState::Enabled, "{}", w.b.log_text());
-    // the eight bad calls were refused at once and nothing was sent for them
+    // the nine bad calls were refused at once and nothing was sent for them
     let sent = w.b.remote_calls.borrow().clone();
     assert_eq!(sent.len(), 6, "{}", w.b.log_text());
     assert_eq!(sent[0].id, 1);
@@ -420,16 +444,13 @@ fn rules_of_the_calling_side() {
     assert!(w.b.has_log("limit exceeded: open remote calls"), "{}", w.b.log_text());
     assert_eq!(w.b.remote_calls.borrow().len(), 2);
     // a client does not call players, a server does not call itself
-    let w = client(
-        r#"local mod = {} function mod.on_enable()
-            bh.commands.register({ name = "x" }, function(s) end)
+    let main = r#"local mod = {} function mod.on_enable()
             print(select(2, pcall(bh.services.call_remote, bh.players.get("p1") or 5, "s", "*", "m", {}, function() end)))
-        end return mod"#,
-        "[permissions]\nchannels = true\n",
-        true,
-        RemoteLimits::default(),
-    );
+        end return mod"#;
+    let w = client(main, "[permissions]\nchannels = true\n", true, RemoteLimits::default());
     assert!(w.b.has_log("remote target is"), "{}", w.b.log_text());
+    let w = client_with(main, "[permissions]\nchannels = true\n", true, RemoteLimits::default(), &["p1"]);
+    assert!(w.b.has_log("a client mod calls the server, not players"), "{}", w.b.log_text());
 }
 
 const SERVER_CALLER: &str = r#"

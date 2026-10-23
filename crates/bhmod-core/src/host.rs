@@ -478,12 +478,9 @@ impl ModHost {
     }
 
     /// Delivers the answer of a remote call to the mod that made it: the custom event `<mod-id>:service-result`
-    /// (see `services.wit`). A mod disabled meanwhile gets nothing; a mod on the call stack gets it once its call
-    /// has returned.
+    /// (see `services.wit`). A mod that is not enabled gets nothing (`fire_filtered` skips it, and a mod
+    /// disabled meanwhile has no open calls left); a mod on the call stack gets it once its call has returned.
     fn deliver_remote(&mut self, owner: usize, id: u32, outcome: Result<Vec<u8>, RemoteError>) {
-        if self.slots[owner].info.state != ModState::Enabled {
-            return;
-        }
         let source = self.slots[owner].info.id.clone();
         let payload = remote::result_payload(id, &outcome).encode();
         let ev = Event::Custom { name: format!("{source}:service-result"), source, payload, cancelled: false };

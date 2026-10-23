@@ -220,11 +220,16 @@ pub struct RemoteLimits {
     pub per_second: u32,
     /// Most open outgoing calls per mod.
     pub max_pending: usize,
+    /// Calls all peers together may make in a burst: one peer's allowance cannot add up to more than the main thread
+    /// can run (a provider may use its whole time budget per call).
+    pub total_burst: u32,
+    /// Calls per second all peers together may keep up.
+    pub total_per_second: u32,
 }
 
 impl Default for RemoteLimits {
     fn default() -> Self {
-        RemoteLimits { burst: 20, per_second: 10, max_pending: 16 }
+        RemoteLimits { burst: 20, per_second: 10, max_pending: 16, total_burst: 200, total_per_second: 100 }
     }
 }
 
@@ -252,6 +257,8 @@ pub struct Remote {
     next_id: u32,
     pending: BTreeMap<u32, Pending>,
     buckets: HashMap<RemoteTarget, Bucket>,
+    /// All peers together.
+    total: Option<Bucket>,
     /// The caller of the outermost incoming call that is still running.
     pub caller: Option<RemoteCaller>,
 }
@@ -324,23 +331,33 @@ impl Remote {
         ids.into_iter().filter_map(|id| self.pending.remove(&id).map(|p| (id, p))).collect()
     }
 
-    /// Rate limit for incoming calls: takes a token of `from`'s bucket. False when it is empty.
+    /// Rate limit for incoming calls: takes a token of `from`'s bucket and one of the bucket of all peers. False when
+    /// either is empty (nothing is taken then).
     pub fn allow(&mut self, from: &RemoteTarget, now: Instant) -> bool {
         if self.buckets.len() > PRUNE_ABOVE {
             self.buckets.retain(|_, b| now.saturating_duration_since(b.last) < IDLE);
         }
-        let burst = f64::from(self.limits.burst);
-        let rate = f64::from(self.limits.per_second);
-        let b = self.buckets.entry(from.clone()).or_insert(Bucket { tokens: burst, last: now });
-        let dt = now.saturating_duration_since(b.last).as_secs_f64();
-        b.tokens = (b.tokens + dt * rate).min(burst);
-        b.last = now;
-        if b.tokens >= 1.0 {
-            b.tokens -= 1.0;
+        let (burst, rate) = (f64::from(self.limits.burst), f64::from(self.limits.per_second));
+        let (total_burst, total_rate) = (f64::from(self.limits.total_burst), f64::from(self.limits.total_per_second));
+        let peer = self.buckets.entry(from.clone()).or_insert(Bucket { tokens: burst, last: now });
+        peer.refill(now, burst, rate);
+        let total = self.total.get_or_insert(Bucket { tokens: total_burst, last: now });
+        total.refill(now, total_burst, total_rate);
+        if peer.tokens >= 1.0 && total.tokens >= 1.0 {
+            peer.tokens -= 1.0;
+            total.tokens -= 1.0;
             true
         } else {
             false
         }
+    }
+}
+
+impl Bucket {
+    fn refill(&mut self, now: Instant, burst: f64, rate: f64) {
+        let dt = now.saturating_duration_since(self.last).as_secs_f64();
+        self.tokens = (self.tokens + dt * rate).min(burst);
+        self.last = now;
     }
 }
 
@@ -483,7 +500,7 @@ mod tests {
     #[test]
     fn token_bucket() {
         let now = t0();
-        let mut r = Remote::new(RemoteLimits { burst: 3, per_second: 2, max_pending: 1 });
+        let mut r = Remote::new(RemoteLimits { burst: 3, per_second: 2, max_pending: 1, ..RemoteLimits::default() });
         let a = RemoteTarget::Player("a".into());
         let b = RemoteTarget::Player("b".into());
         assert!((0..3).all(|_| r.allow(&a, now)));
@@ -500,9 +517,25 @@ mod tests {
     }
 
     #[test]
+    fn all_peers_share_a_total() {
+        let now = t0();
+        let mut r =
+            Remote::new(RemoteLimits { burst: 5, per_second: 5, total_burst: 4, total_per_second: 2, max_pending: 1 });
+        let peer = |i: u32| RemoteTarget::Player(format!("p{i}"));
+        // Four calls from four peers use up the total; a fifth peer (with a full bucket) is refused ...
+        assert!((0..4).all(|i| r.allow(&peer(i), now)));
+        assert!(!r.allow(&peer(4), now));
+        // ... without costing the peer a token: when the total refills (2 per second) it can call five times.
+        let later = now + Duration::from_secs(1);
+        assert!(r.allow(&peer(4), later) && r.allow(&peer(4), later));
+        assert!(!r.allow(&peer(4), later));
+        assert_eq!(r.buckets[&peer(4)].tokens, 3.0);
+    }
+
+    #[test]
     fn idle_buckets_are_pruned() {
         let now = t0();
-        let mut r = Remote::new(RemoteLimits { burst: 1, per_second: 1, max_pending: 1 });
+        let mut r = Remote::new(RemoteLimits { burst: 1, per_second: 1, max_pending: 1, ..RemoteLimits::default() });
         for i in 0..=PRUNE_ABOVE {
             r.allow(&RemoteTarget::Player(format!("p{i}")), now);
         }
