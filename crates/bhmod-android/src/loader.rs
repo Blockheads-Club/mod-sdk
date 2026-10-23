@@ -403,7 +403,12 @@ impl<P: Platform + 'static> Loader<P> {
                     let changed = self.content_lock().apply(&c);
                     self.p.log(
                         LogLevel::Info,
-                        &format!("cosmetics: {} player(s) in the message, {} changed", c.players.len(), changed.len()),
+                        &format!(
+                            "cosmetics: {} player(s) in the message, {} changed: {:?}",
+                            c.players.len(),
+                            changed.len(),
+                            c.players
+                        ),
                     );
                 }
                 Output::Channel { name, data } => {

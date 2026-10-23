@@ -42,6 +42,8 @@ struct State {
     textures: HashMap<(u64, u8), usize>,
     /// The game's own texture of every ivar a cosmetic replaced (retained), by blockhead and ivar.
     originals: HashMap<(usize, &'static str), usize>,
+    /// Blockheads (by address) whose clothes were rebuilt on their first frame, when the game has everything set up.
+    rebuilt: std::collections::HashSet<usize>,
     /// Vanilla `InventoryItem`s lent to empty slots, by item type.
     items: HashMap<u16, usize>,
 }
@@ -79,9 +81,14 @@ fn serial() -> u64 {
     with_content(|c| c.serial()).unwrap_or(0)
 }
 
-/// The owner of a blockhead (`clientID`).
+/// The owner of a blockhead (`clientID`). The game leaves it empty on this client's own blockheads: they belong to
+/// the local player.
 fn player_of(bh: Id) -> String {
-    objc::string(objc::ivar(bh, "Blockhead", "clientID"))
+    let id = objc::string(objc::ivar(bh, "Blockhead", "clientID"));
+    if id.is_empty() && !is_net(bh) {
+        return super::local_player().unwrap_or_default();
+    }
+    id
 }
 
 /// The `ItemType` worn in each clothing slot ([`CLOTHING`] order), `None` for empty.
@@ -333,7 +340,11 @@ extern "C" fn hook_update_frame(this: Id, cmd: Sel, dt: u32, accurate: u32, simu
     }
     if active() {
         let now = serial();
-        let seen = st(|s| s.seen.get(&(this as usize)).copied());
+        let mut seen = st(|s| s.seen.get(&(this as usize)).copied());
+        if !is_net(this) && st(|s| s.rebuilt.insert(this as usize)) {
+            // The game builds a new blockhead's clothes before its textures and cubes can exist: once more, now.
+            seen = None;
+        }
         if seen != Some(now) {
             st(|s| s.seen.insert(this as usize, now));
             let player = player_of(this);
@@ -367,7 +378,10 @@ extern "C" fn hook_update_frame(this: Id, cmd: Sel, dt: u32, accurate: u32, simu
 
 /// Forgets which blockheads were looked at (a world closed: the addresses may be reused).
 pub fn reset() {
-    st(|s| s.seen.clear());
+    st(|s| {
+        s.seen.clear();
+        s.rebuilt.clear();
+    });
 }
 
 /// Installs the hooks. False when a method is missing (cosmetics stay off).

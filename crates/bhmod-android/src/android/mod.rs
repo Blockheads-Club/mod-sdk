@@ -92,6 +92,14 @@ fn conn() -> Option<Conn> {
     *CONN.lock().unwrap_or_else(|e| e.into_inner())
 }
 
+/// This client's own player id (`-[BHNetClientMatch localPlayerID]`) while a server connection is up: the game
+/// leaves `clientID` empty on the blockheads of this client, the server's `COSMETICS` name it by this id.
+pub fn local_player() -> Option<String> {
+    let c = conn()?;
+    let id = objc::string(objc::send0(c.matc, "localPlayerID"));
+    (!id.is_empty()).then_some(id)
+}
+
 fn set_conn(c: Option<Conn>) {
     *CONN.lock().unwrap_or_else(|e| e.into_inner()) = c;
 }
