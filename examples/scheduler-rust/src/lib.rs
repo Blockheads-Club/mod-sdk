@@ -30,7 +30,13 @@ impl Mod for Scheduler {
                 return Reply::lines(["A countdown is already running."]);
             }
             // A whole number of seconds: a fraction such as 2.5 (or NaN) would never reach 0 and the countdown would run forever.
-            let mut left = args.first().and_then(|a| a.parse::<f64>().ok()).filter(|n| n.is_finite()).unwrap_or(3.0).clamp(1.0, 10.0).floor();
+            let mut left = args
+                .first()
+                .and_then(|a| a.parse::<f64>().ok())
+                .filter(|n| n.is_finite())
+                .unwrap_or(3.0)
+                .clamp(1.0, 10.0)
+                .floor();
             let id = scheduler::run_every(0, TICKS_PER_SECOND, move || {
                 if left == 0.0 {
                     let _ = players::broadcast("Go!");
@@ -49,7 +55,11 @@ impl Mod for Scheduler {
         // /remind <seconds> <text>: a one-shot task, answered right away from the next network poll.
         let cmd = Command::new("remind").usage("/remind <seconds> <text>").description("Reminds you later.");
         commands::register(cmd, |sender, _, args| {
-            let seconds = args.first().and_then(|a| a.parse::<f64>().ok()).filter(|n| n.is_finite()).map(|n| n.clamp(0.0, MAX_REMIND_SECONDS));
+            let seconds = args
+                .first()
+                .and_then(|a| a.parse::<f64>().ok())
+                .filter(|n| n.is_finite())
+                .map(|n| n.clamp(0.0, MAX_REMIND_SECONDS));
             let (Some(seconds), Some(who), true) = (seconds, sender.player(), args.len() >= 2) else {
                 return Reply::usage(Vec::<String>::new());
             };
