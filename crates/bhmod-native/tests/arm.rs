@@ -65,6 +65,8 @@ fn pc_relative_loads_copy_the_literal() {
     // vldr s0 / d0
     let t = words(0xed9f0a04, MOV_FP).unwrap();
     assert_eq!(t[0], 0xed9f0a02); // the pool is 2 words ahead of the pc of the vldr
+                                  // a negative offset (vldr s0, [pc, #-16]) is copied the same way
+    assert_eq!(words(0xed1f0a04, MOV_FP).unwrap()[0], 0xed9f0a02);
     let d = words(0xed9f0b04, MOV_FP).unwrap();
     assert_eq!(d[0], 0xed9f0b02);
     assert_eq!(d[d.len() - 2..], [0xddccbbaa, 0x04030201]);
