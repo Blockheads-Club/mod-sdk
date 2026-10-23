@@ -8,6 +8,7 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
+use std::sync::{Arc, Mutex};
 
 use bhmod_client::installed::Installed;
 use bhmod_client::session::{Accepted, Output};
@@ -158,7 +159,7 @@ pub struct Loader<P: Platform + 'static> {
     last_tick: u64,
     last_progress: u64,
     budgets: Budgets,
-    content: Content,
+    content: Arc<Mutex<Content>>,
 }
 
 impl<P: Platform + 'static> Loader<P> {
@@ -178,7 +179,7 @@ impl<P: Platform + 'static> Loader<P> {
             last_tick: 0,
             last_progress: 0,
             budgets: Budgets::default(),
-            content: Content::new(),
+            content: Arc::new(Mutex::new(Content::new())),
         }
     }
 
@@ -193,14 +194,14 @@ impl<P: Platform + 'static> Loader<P> {
         Installed::new(&self.dirs.installed, self.caps.clone())
     }
 
-    /// The cosmetics of the running mods and who wears them (read by the game hooks).
-    pub fn content(&self) -> &Content {
-        &self.content
+    /// The cosmetics of the running mods and who wears them. Shared: the game hooks read it from the game's own
+    /// threads.
+    pub fn content(&self) -> Arc<Mutex<Content>> {
+        self.content.clone()
     }
 
-    /// Mutable access, for the hooks that fetch textures.
-    pub fn content_mut(&mut self) -> &mut Content {
-        &mut self.content
+    fn content_lock(&self) -> std::sync::MutexGuard<'_, Content> {
+        self.content.lock().unwrap_or_else(|e| e.into_inner())
     }
 
     /// True while mods run.
@@ -344,7 +345,7 @@ impl<P: Platform + 'static> Loader<P> {
         if let Some(mut h) = self.host.take() {
             h.disable_all();
         }
-        self.content = Content::new();
+        *self.content_lock() = Content::new();
         self.last_tick = 0;
     }
 
@@ -399,7 +400,11 @@ impl<P: Platform + 'static> Loader<P> {
                 }
                 Output::Reject(r) => self.p.ui(ui::reject(&self.server, &r)),
                 Output::Cosmetics(c) => {
-                    self.content.apply(&c);
+                    let changed = self.content_lock().apply(&c);
+                    self.p.log(
+                        LogLevel::Info,
+                        &format!("cosmetics: {} player(s) in the message, {} changed", c.players.len(), changed.len()),
+                    );
                 }
                 Output::Channel { name, data } => {
                     if let Some(h) = self.host.as_mut() {
@@ -413,7 +418,8 @@ impl<P: Platform + 'static> Loader<P> {
     /// Reads the cosmetics of the packages that run, with the ids of the server's world.
     fn load_content(&mut self, packages: &[PathBuf]) {
         let registry = self.session.as_ref().map(|s| s.registry().clone()).unwrap_or_default();
-        for problem in self.content.load(&registry, packages) {
+        let problems = self.content_lock().load(&registry, packages);
+        for problem in problems {
             self.p.log(LogLevel::Warn, &format!("content: {problem}"));
         }
     }

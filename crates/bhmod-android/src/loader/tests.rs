@@ -391,22 +391,22 @@ fn cosmetics_follow_the_registry_and_the_server() {
     r.l.on_ui(UiEvent::Decide(true));
     let chunk = Message::FileChunk(FileChunk { sha256: m.sha256, offset: 0, total: m.size, data: pkg });
     r.l.on_packet(&chunk.encode());
-    assert!(r.l.content().is_active());
+    assert!(r.l.content().lock().unwrap().is_active());
     // COSMETICS after the join: player p wears the crown (on an empty hat slot it wears the base item).
     let wear = Message::Cosmetics(bhmod_proto::Cosmetics {
         full: true,
         players: [("p".to_string(), [("hat".to_string(), 4u64)].into())].into(),
     });
     r.l.on_packet(&wear.encode());
-    let look = r.l.content().look("p", [None; 4]);
+    let look = r.l.content().lock().unwrap().look("p", [None; 4]);
     assert_eq!(look.clothing[3], Some((4, Some(115))));
-    let tex = r.l.content_mut().texture(4, bhmod_content::Part::Main).unwrap().unwrap();
+    let tex = r.l.content().lock().unwrap().texture(4, bhmod_content::Part::Main).unwrap().unwrap();
     assert_eq!((tex.wide, tex.high), (2, 2));
     // The world closing ends it all.
     r.l.on_world(Some("Sunny"));
     r.l.on_world(None);
-    assert!(!r.l.content().is_active());
-    assert!(r.l.content().look("p", [None; 4]).is_empty());
+    assert!(!r.l.content().lock().unwrap().is_active());
+    assert!(r.l.content().lock().unwrap().look("p", [None; 4]).is_empty());
 }
 
 #[test]
@@ -416,5 +416,5 @@ fn a_broken_content_package_is_reported_not_fatal() {
     std::fs::write(&junk, b"not a zip").unwrap();
     r.l.load_content(&[junk]);
     assert!(r.p.logged("content:"), "{:?}", r.p.logs.borrow());
-    assert!(!r.l.content().is_active());
+    assert!(!r.l.content().lock().unwrap().is_active());
 }

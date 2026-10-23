@@ -179,16 +179,17 @@ fn with_loader<R>(f: impl FnOnce(&mut Loader<AndroidPlatform>) -> R) -> Option<R
         if l.is_none() {
             let dirs = Dirs::under(&data_dir());
             let wasm_cache = data_dir().join("wasm-cache");
-            *l = Some(
-                Loader::new(
-                    Rc::new(AndroidPlatform),
-                    dirs,
-                    crate::caps(),
-                    crate::options(),
-                    Box::new(move || crate::runtimes(&wasm_cache)),
-                )
-                .with_budgets(crate::budgets()),
-            );
+            let loader = Loader::new(
+                Rc::new(AndroidPlatform),
+                dirs,
+                crate::caps(),
+                crate::options(),
+                Box::new(move || crate::runtimes(&wasm_cache)),
+            )
+            .with_budgets(crate::budgets());
+            // The blockhead hooks run on the game's other threads: they read the cosmetics through this handle.
+            let _ = cosmetics::SHARED.set(loader.content());
+            *l = Some(loader);
         }
         Some(f(l.as_mut().expect("just set")))
     });

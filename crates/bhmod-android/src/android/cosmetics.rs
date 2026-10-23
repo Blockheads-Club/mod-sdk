@@ -14,15 +14,14 @@
 //! Textures are made with `-[CPTexture2D initWithData:pixelFormat:pixelsWide:pixelsHigh:contentSize:mipmap:]`, the
 //! initializer the game's own loader uses (pixel format 1, premultiplied RGBA bytes; 0 makes it return nil), from the mod's decoded PNG.
 
-use std::cell::RefCell;
 use std::collections::HashMap;
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 
-use bhmod_content::{Gpu, Look, Part, CLOTHING};
+use bhmod_content::{Content, Gpu, Look, Part, CLOTHING};
 use bhmod_core::types::LogLevel;
 
+use super::log;
 use super::objc::{self, Id, Imp, Sel};
-use super::{log, with_loader};
 
 struct Originals {
     update_cubes: Imp,
@@ -47,8 +46,22 @@ struct State {
     items: HashMap<u16, usize>,
 }
 
-thread_local! {
-    static STATE: RefCell<State> = RefCell::new(State::default());
+/// The blockheads are updated and drawn on the game's own threads, which need not be the one the loader runs on, so
+/// the state is shared (and the cosmetics are in [`SHARED`], a handle of the loader's).
+static STATE: Mutex<Option<State>> = Mutex::new(None);
+
+fn st<R>(f: impl FnOnce(&mut State) -> R) -> R {
+    let mut g = STATE.lock().unwrap_or_else(|e| e.into_inner());
+    f(g.get_or_insert_with(State::default))
+}
+
+/// The loader's content, set when the loader is created.
+pub static SHARED: OnceLock<Arc<Mutex<Content>>> = OnceLock::new();
+
+fn with_content<R>(f: impl FnOnce(&mut Content) -> R) -> Option<R> {
+    let c = SHARED.get()?;
+    let mut g = c.lock().unwrap_or_else(|e| e.into_inner());
+    Some(f(&mut g))
 }
 
 fn part_key(p: Part) -> u8 {
@@ -59,11 +72,11 @@ fn part_key(p: Part) -> u8 {
 }
 
 fn active() -> bool {
-    with_loader(|l| l.content().is_active()).unwrap_or(false)
+    with_content(|c| c.is_active()).unwrap_or(false)
 }
 
 fn serial() -> u64 {
-    with_loader(|l| l.content().serial()).unwrap_or(0)
+    with_content(|c| c.serial()).unwrap_or(0)
 }
 
 /// The owner of a blockhead (`clientID`).
@@ -91,12 +104,12 @@ fn store(bh: Id, ivar: &'static str, tex: Id) {
     if tex.is_null() || slot.is_null() {
         return;
     }
-    let first = STATE.with(|s| !s.borrow().originals.contains_key(&(bh as usize, ivar)));
+    let first = st(|s| !s.originals.contains_key(&(bh as usize, ivar)));
     if first {
         let cur = unsafe { *slot };
         if !cur.is_null() {
             objc::send0(cur, "retain");
-            STATE.with(|s| s.borrow_mut().originals.insert((bh as usize, ivar), cur as usize));
+            st(|s| s.originals.insert((bh as usize, ivar), cur as usize));
         }
     }
     objc::store_strong(slot, tex);
@@ -122,8 +135,8 @@ impl Which {
 /// because the game just rebuilt them).
 fn restore(bh: Id, which: Which, keep: bool) {
     let mine = which.ivars();
-    let saved: Vec<(&'static str, usize)> = STATE.with(|s| {
-        let mut s = s.borrow_mut();
+    let saved: Vec<(&'static str, usize)> = st(|s| {
+        let mut s = s;
         let keys: Vec<_> = s.originals.keys().filter(|k| k.0 == bh as usize && mine.contains(&k.1)).copied().collect();
         keys.into_iter().filter_map(|k| s.originals.remove(&k).map(|v| (k.1, v))).collect()
     });
@@ -139,10 +152,10 @@ fn restore(bh: Id, which: Which, keep: bool) {
 /// A `CPTexture2D` for a cosmetic's texture (made once; null when it cannot be loaded).
 fn texture(id: u64, part: Part) -> Id {
     let key = (id, part_key(part));
-    if let Some(t) = STATE.with(|s| s.borrow().textures.get(&key).copied()) {
+    if let Some(t) = st(|s| s.textures.get(&key).copied()) {
         return t as Id;
     }
-    let gpu: Option<Arc<Gpu>> = with_loader(|l| match l.content_mut().texture(id, part) {
+    let gpu: Option<Arc<Gpu>> = with_content(|c| match c.texture(id, part) {
         Ok(g) => g,
         Err(why) => {
             log(LogLevel::Warn, &format!("cosmetics: {why}"));
@@ -151,7 +164,7 @@ fn texture(id: u64, part: Part) -> Id {
     })
     .flatten();
     let tex = gpu.map_or(std::ptr::null_mut(), |g| make_texture(&g));
-    STATE.with(|s| s.borrow_mut().textures.insert(key, tex as usize));
+    st(|s| s.textures.insert(key, tex as usize));
     tex
 }
 
@@ -186,7 +199,7 @@ fn make_texture(g: &Gpu) -> Id {
 
 /// A vanilla `InventoryItem` of `item_type` (made once) to put in an empty clothing slot.
 fn item(item_type: u16) -> Id {
-    if let Some(i) = STATE.with(|s| s.borrow().items.get(&item_type).copied()) {
+    if let Some(i) = st(|s| s.items.get(&item_type).copied()) {
         return i as Id;
     }
     let alloc = objc::send0(objc::class("InventoryItem"), "alloc");
@@ -201,7 +214,7 @@ fn item(item_type: u16) -> Id {
             std::ptr::null_mut(),
         )
     };
-    STATE.with(|s| s.borrow_mut().items.insert(item_type, it as usize));
+    st(|s| s.items.insert(item_type, it as usize));
     it
 }
 
@@ -224,7 +237,7 @@ fn lend_items(bh: Id, player: &str) -> Vec<Id> {
     let n = count(subs);
     let mut lent = Vec::new();
     for (i, slot) in CLOTHING.iter().enumerate().take(n) {
-        let Some(wear) = with_loader(|l| l.content().resolve(player, slot, None).and_then(|r| r.wear)).flatten() else {
+        let Some(wear) = with_content(|c| c.resolve(player, slot, None).and_then(|r| r.wear)).flatten() else {
             continue;
         };
         let arr = at(subs, i);
@@ -255,12 +268,13 @@ fn apply_to(bh: Id, which: Which) {
     restore(bh, which, true);
     let player = player_of(bh);
     let w = worn(bh);
-    let Some((look, serial)) = with_loader(|l| (l.content().look(&player, w), l.content().serial())) else { return };
-    STATE.with(|s| s.borrow_mut().seen.insert(bh as usize, serial));
+    let Some((look, serial)) = with_content(|c| (c.look(&player, w), c.serial())) else { return };
+    st(|s| s.seen.insert(bh as usize, serial));
     let look: Look = look;
     if look.is_empty() {
         return;
     }
+    log(LogLevel::Info, &format!("cosmetics: blockhead of {player:?} wears {look:?} (worn {w:?})"));
     if which != Which::Hair {
         for (i, slot) in CLOTHING.iter().enumerate() {
             let Some((id, _)) = look.clothing[i] else { continue };
@@ -315,13 +329,17 @@ extern "C" fn hook_setup_net(this: Id, cmd: Sel, data: Id) {
 extern "C" fn hook_update_frame(this: Id, cmd: Sel, dt: u32, accurate: u32, simulation: i8) {
     if active() {
         let now = serial();
-        let seen = STATE.with(|s| s.borrow().seen.get(&(this as usize)).copied());
+        let seen = st(|s| s.seen.get(&(this as usize)).copied());
         if seen != Some(now) {
-            STATE.with(|s| s.borrow_mut().seen.insert(this as usize, now));
+            st(|s| s.seen.insert(this as usize, now));
             let player = player_of(this);
             let w = worn(this);
-            let look = with_loader(|l| l.content().look(&player, w)).unwrap_or_default();
-            let had = STATE.with(|s| s.borrow().originals.keys().any(|k| k.0 == this as usize));
+            let look = with_content(|c| c.look(&player, w)).unwrap_or_default();
+            let had = st(|s| s.originals.keys().any(|k| k.0 == this as usize));
+            log(
+                LogLevel::Info,
+                &format!("cosmetics: frame refresh of {player:?} net {} worn {w:?} look {look:?}", is_net(this)),
+            );
             if !look.is_empty() || had {
                 if is_net(this) {
                     // Other players' blockheads are never rebuilt by the game: put the old textures back, then
@@ -345,7 +363,7 @@ extern "C" fn hook_update_frame(this: Id, cmd: Sel, dt: u32, accurate: u32, simu
 
 /// Forgets which blockheads were looked at (a world closed: the addresses may be reused).
 pub fn reset() {
-    STATE.with(|s| s.borrow_mut().seen.clear());
+    st(|s| s.seen.clear());
 }
 
 /// Installs the hooks. False when a method is missing (cosmetics stay off).
