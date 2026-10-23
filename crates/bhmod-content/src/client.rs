@@ -35,6 +35,27 @@ pub fn open_package(path: &Path) -> Result<Box<dyn Source>, String> {
     Ok(Box::new(ZipSource::open(file, size).map_err(fail)?))
 }
 
+/// A clothing slot of a blockhead, in the order of the game's `clothingItemAtIndex:` (0 shoes, 1 pants, 2 shirt,
+/// 3 hat).
+pub const CLOTHING: [&str; 4] = ["shoes", "pants", "shirt", "hat"];
+
+/// What one blockhead shows from cosmetics.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Look {
+    /// Per clothing slot (indexed like [`CLOTHING`]): the cosmetic id, and the vanilla item to wear if the slot is
+    /// empty.
+    pub clothing: [Option<(u64, Option<u16>)>; 4],
+    /// The hair cosmetic.
+    pub hair: Option<u64>,
+}
+
+impl Look {
+    /// True when nothing is overridden.
+    pub fn is_empty(&self) -> bool {
+        self.clothing.iter().all(Option::is_none) && self.hair.is_none()
+    }
+}
+
 /// The client's cosmetics: table, wearing, texture cache.
 #[derive(Default)]
 pub struct Content {
@@ -111,6 +132,17 @@ impl Content {
     /// What `player` shows in `slot`; see [`cosmetics::resolve`].
     pub fn resolve(&self, player: &str, slot: &str, worn: Option<u16>) -> Option<Resolved<'_>> {
         cosmetics::resolve(&self.table, &self.wearing, player, slot, worn)
+    }
+
+    /// Everything `player`'s blockhead shows from cosmetics, given the `ItemType` worn in each clothing slot
+    /// ([`CLOTHING`] order; `None` for an empty slot).
+    pub fn look(&self, player: &str, worn: [Option<u16>; 4]) -> Look {
+        let mut look = Look::default();
+        for (i, slot) in CLOTHING.iter().enumerate() {
+            look.clothing[i] = self.resolve(player, slot, worn[i]).map(|r| (r.def.id, r.wear));
+        }
+        look.hair = self.resolve(player, "hair", None).map(|r| r.def.id);
+        look
     }
 
     /// The pixels of a cosmetic's texture, prepared for the game and cached. `None` when the cosmetic has no such

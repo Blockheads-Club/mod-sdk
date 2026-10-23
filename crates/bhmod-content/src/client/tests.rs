@@ -126,3 +126,26 @@ fn texture_of_an_unloaded_package() {
     assert!(c.texture(1, Part::Main).unwrap_err().contains("not loaded"));
     let _ = dir;
 }
+
+#[test]
+fn look_of_a_blockhead() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path().join("hats-src");
+    source_dir(&dir);
+    let (mut c, _) = Content::load(&registry(), &[dir]);
+    let wear = |rows: &[(&str, &[(&str, u64)])]| Cosmetics {
+        full: true,
+        players: rows
+            .iter()
+            .map(|(p, s)| (p.to_string(), s.iter().map(|(a, b)| (a.to_string(), *b)).collect()))
+            .collect(),
+    };
+    assert!(c.look("a", [None; 4]).is_empty());
+    c.apply(&wear(&[("a", &[("hat", 1), ("shirt", 2)])]));
+    let look = c.look("a", [Some(124), None, None, Some(142)]);
+    // Index 3 is the hat (worn: a santa hat, the cosmetic has no base), index 2 the shirt (empty: default shirt).
+    assert_eq!(look.clothing, [None, None, Some((2, Some(85))), Some((1, None))]);
+    assert_eq!(look.hair, None);
+    assert!(!look.is_empty());
+    assert_eq!(CLOTHING[3], "hat");
+}
