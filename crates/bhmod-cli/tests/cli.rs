@@ -159,6 +159,27 @@ fn new_lua_and_rust_templates() {
 }
 
 #[test]
+fn new_java_template() {
+    let d = tempfile::tempdir().unwrap();
+    let (code, out, _) = run(&["new", "9-lives", "--lang", "java", "--dir", s(d.path())]);
+    assert_eq!(code, 0, "{out}");
+    let root = d.path().join("9-lives");
+    let main = fs::read_to_string(root.join("src/main/java/mod_9_lives/Main.java")).unwrap();
+    assert!(main.starts_with("package mod_9_lives;"), "{main}");
+    assert!(main.contains("9-lives enabled"));
+    assert!(fs::read_to_string(root.join("build.sh")).unwrap().contains("Bhmod-Main: mod_9_lives.Main"));
+    assert!(fs::read_to_string(root.join("build.gradle.kts")).unwrap().contains("\"mod_9_lives.Main\""));
+    // Without the built jar the check fails on the missing entry point; with one it passes (and warns about native).
+    let (code, out, _) = run(&["check", s(&root)]);
+    assert_eq!(code, 1);
+    assert!(out.contains("server/mod.jar is not in the package"), "{out}");
+    fs::create_dir_all(root.join("server")).unwrap();
+    fs::write(root.join("server/mod.jar"), b"PK\x03\x04").unwrap();
+    let (code, out, _) = run(&["check", s(&root)]);
+    assert_eq!(code, 0, "{out}");
+}
+
+#[test]
 fn wit_list_matches_directory() {
     let list = |p: PathBuf| {
         let mut v: Vec<String> =

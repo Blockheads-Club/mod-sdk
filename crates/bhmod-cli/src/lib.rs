@@ -59,6 +59,7 @@ enum Command {
 enum Lang {
     Lua,
     Rust,
+    Java,
 }
 
 /// Runs the tool; returns the process exit code (0 ok, 1 failure, 2 usage error).
@@ -158,6 +159,7 @@ fn cmd_new(id: &str, lang: Lang, parent: &Path, out: &mut dyn Write) -> io::Resu
     let files = match lang {
         Lang::Lua => templates::lua(id),
         Lang::Rust => templates::rust(id),
+        Lang::Java => templates::java(id),
     };
     for (path, content) in &files {
         let p = root.join(path);

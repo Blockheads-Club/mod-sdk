@@ -1,0 +1,22 @@
+schema = 1
+id = "{{id}}"
+version = "0.1.0"
+name = { en = "{{id}}" }
+description = { en = "My first Blockheads mod." }
+authors = ["your-name"]
+# Your mod, your licence: pick any (MIT, GPL-3.0-or-later, Apache-2.0, ...). Add a LICENSE file before publishing.
+license = "MIT"
+api = "^0.2"
+
+[sides]
+server = true
+client = false
+
+[entry]
+server = { runtime = "jvm", path = "server/mod.jar" }
+
+[permissions]
+# JVM code is not sandboxed: players and server owners see a red warning for it, and the server only runs it
+# when its JVM feature is switched on and the owner grants `native` in mods.toml.
+native = true
+players = ["chat"]
