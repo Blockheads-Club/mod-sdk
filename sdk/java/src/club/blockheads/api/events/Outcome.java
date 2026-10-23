@@ -25,13 +25,13 @@ public final class Outcome {
     public static Outcome fromWire(Object o, club.blockheads.mod.rt.Bridge b) {
         java.util.Map<String, Object> m = Wire.map(o);
         return new Outcome(Wire.bool(m.get("cancelled")),
-                Wire.optIn(m.get("mutation"), x -> club.blockheads.api.events.Mutation.fromWire(x, b)));
+                Wire.optIn(m.get("mutation"), x0 -> club.blockheads.api.events.Mutation.fromWire(x0, b)));
     }
 
     public Object toWire(club.blockheads.mod.rt.Bridge b) {
         java.util.Map<String, Object> m = new java.util.LinkedHashMap<String, Object>();
         m.put("cancelled", this.cancelled);
-        m.put("mutation", Wire.optOut(this.mutation, x -> x.toWire(b)));
+        m.put("mutation", Wire.optOut(this.mutation, x0 -> x0.toWire(b)));
         return m;
     }
 }

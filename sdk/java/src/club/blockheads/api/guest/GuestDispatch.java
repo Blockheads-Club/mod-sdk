@@ -26,7 +26,7 @@ public final class GuestDispatch {
         }
 
         if (fn.equals("run-command")) {
-            return g.runCommand(Wire.num(args.get(0)), club.blockheads.api.events.CommandSender.fromWire(args.get(1), b), Wire.text(args.get(2)), Wire.list(args.get(3), x -> Wire.text(x))).toWire(b);
+            return g.runCommand(Wire.num(args.get(0)), club.blockheads.api.events.CommandSender.fromWire(args.get(1), b), Wire.text(args.get(2)), Wire.list(args.get(3), x0 -> Wire.text(x0))).toWire(b);
         }
 
         if (fn.equals("run-task")) {

@@ -24,13 +24,13 @@ public final class DeathEvent {
 
     public static DeathEvent fromWire(Object o, club.blockheads.mod.rt.Bridge b) {
         java.util.Map<String, Object> m = Wire.map(o);
-        return new DeathEvent(Wire.optIn(m.get("player"), x -> new club.blockheads.api.players.Player(b, Wire.text(x))),
+        return new DeathEvent(Wire.optIn(m.get("player"), x0 -> new club.blockheads.api.players.Player(b, Wire.text(x0))),
                 Wire.num(m.get("blockhead")));
     }
 
     public Object toWire(club.blockheads.mod.rt.Bridge b) {
         java.util.Map<String, Object> m = new java.util.LinkedHashMap<String, Object>();
-        m.put("player", Wire.optOut(this.player, x -> x.key()));
+        m.put("player", Wire.optOut(this.player, x0 -> x0.key()));
         m.put("blockhead", this.blockhead);
         return m;
     }

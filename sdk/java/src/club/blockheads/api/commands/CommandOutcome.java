@@ -25,13 +25,13 @@ public final class CommandOutcome {
     public static CommandOutcome fromWire(Object o, club.blockheads.mod.rt.Bridge b) {
         java.util.Map<String, Object> m = Wire.map(o);
         return new CommandOutcome(Wire.bool(m.get("handled")),
-                Wire.list(m.get("reply"), x -> Wire.text(x)));
+                Wire.list(m.get("reply"), x0 -> Wire.text(x0)));
     }
 
     public Object toWire(club.blockheads.mod.rt.Bridge b) {
         java.util.Map<String, Object> m = new java.util.LinkedHashMap<String, Object>();
         m.put("handled", this.handled);
-        m.put("reply", Wire.listOut(this.reply, x -> x));
+        m.put("reply", Wire.listOut(this.reply, x0 -> x0));
         return m;
     }
 }

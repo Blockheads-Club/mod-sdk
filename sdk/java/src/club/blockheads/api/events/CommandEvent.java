@@ -35,7 +35,7 @@ public final class CommandEvent {
         java.util.Map<String, Object> m = Wire.map(o);
         return new CommandEvent(club.blockheads.api.events.CommandSender.fromWire(m.get("sender"), b),
                 Wire.text(m.get("name")),
-                Wire.list(m.get("args"), x -> Wire.text(x)),
+                Wire.list(m.get("args"), x0 -> Wire.text(x0)),
                 Wire.text(m.get("raw")),
                 Wire.bool(m.get("cancelled")));
     }
@@ -44,7 +44,7 @@ public final class CommandEvent {
         java.util.Map<String, Object> m = new java.util.LinkedHashMap<String, Object>();
         m.put("sender", this.sender.toWire(b));
         m.put("name", this.name);
-        m.put("args", Wire.listOut(this.args, x -> x));
+        m.put("args", Wire.listOut(this.args, x0 -> x0));
         m.put("raw", this.raw);
         m.put("cancelled", this.cancelled);
         return m;

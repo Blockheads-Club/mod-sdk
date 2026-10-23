@@ -18,7 +18,7 @@ public final class StorageImpl implements Storage {
     @Override
     public byte[] get(String key) {
         Object r = b.call("storage.get", key);
-        return Wire.optIn(r, x -> Wire.bytes(x));
+        return Wire.optIn(r, x0 -> Wire.bytes(x0));
     }
 
     /**
@@ -44,6 +44,6 @@ public final class StorageImpl implements Storage {
     @Override
     public java.util.List<String> keys(String prefix) {
         Object r = b.call("storage.keys", prefix);
-        return Wire.list(r, x -> Wire.text(x));
+        return Wire.list(r, x0 -> Wire.text(x0));
     }
 }

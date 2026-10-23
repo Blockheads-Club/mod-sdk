@@ -442,8 +442,9 @@ class Gen:
             return self.jclass(t[1])
         raise WitError("no Java type for %r" % (t,))
 
-    def dec(self, t, e):
-        """Java expression decoding the wire object `e` into the Java type."""
+    def dec(self, t, e, d=0):
+        """Java expression decoding the wire object `e` into the Java type (`d`: lambda nesting, for unique names)."""
+        v = "x%d" % d
         k = t[0]
         if k == "prim":
             return PRIMS[t[1]][2] % e
@@ -452,11 +453,11 @@ class Gen:
         if k == "list":
             if t[1] == ("prim", "u8"):
                 return "Wire.bytes(%s)" % e
-            return "Wire.list(%s, x -> %s)" % (e, self.dec(t[1], "x"))
+            return "Wire.list(%s, %s -> %s)" % (e, v, self.dec(t[1], v, d + 1))
         if k == "option":
-            return "Wire.optIn(%s, x -> %s)" % (e, self.dec(t[1], "x"))
+            return "Wire.optIn(%s, %s -> %s)" % (e, v, self.dec(t[1], v, d + 1))
         if k == "tuple":
-            return "Wire.list(%s, x -> x)" % e
+            return "Wire.list(%s, %s -> %s)" % (e, v, v)
         if k == "def":
             d = self.m.defs[t[1]]
             if d["kind"] == "resource":
@@ -464,8 +465,9 @@ class Gen:
             return "%s.fromWire(%s, b)" % (self.jclass(t[1]), e)
         raise WitError("cannot decode %r" % (t,))
 
-    def enc(self, t, e):
+    def enc(self, t, e, d=0):
         """Java expression encoding the Java value `e` as a wire object."""
+        v = "x%d" % d
         k = t[0]
         if k == "prim":
             return PRIMS[t[1]][3] % e
@@ -474,9 +476,9 @@ class Gen:
         if k == "list":
             if t[1] == ("prim", "u8"):
                 return e
-            return "Wire.listOut(%s, x -> %s)" % (e, self.enc(t[1], "x"))
+            return "Wire.listOut(%s, %s -> %s)" % (e, v, self.enc(t[1], v, d + 1))
         if k == "option":
-            return "Wire.optOut(%s, x -> %s)" % (e, self.enc(t[1], "x"))
+            return "Wire.optOut(%s, %s -> %s)" % (e, v, self.enc(t[1], v, d + 1))
         if k == "tuple":
             return e
         if k == "def":

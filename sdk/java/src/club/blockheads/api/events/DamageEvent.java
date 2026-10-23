@@ -36,19 +36,19 @@ public final class DamageEvent {
 
     public static DamageEvent fromWire(Object o, club.blockheads.mod.rt.Bridge b) {
         java.util.Map<String, Object> m = Wire.map(o);
-        return new DamageEvent(Wire.optIn(m.get("player"), x -> new club.blockheads.api.players.Player(b, Wire.text(x))),
+        return new DamageEvent(Wire.optIn(m.get("player"), x0 -> new club.blockheads.api.players.Player(b, Wire.text(x0))),
                 Wire.num(m.get("blockhead")),
                 (float) Wire.dbl(m.get("amount")),
-                Wire.optIn(m.get("attacker"), x -> new club.blockheads.api.players.Player(b, Wire.text(x))),
+                Wire.optIn(m.get("attacker"), x0 -> new club.blockheads.api.players.Player(b, Wire.text(x0))),
                 Wire.bool(m.get("cancelled")));
     }
 
     public Object toWire(club.blockheads.mod.rt.Bridge b) {
         java.util.Map<String, Object> m = new java.util.LinkedHashMap<String, Object>();
-        m.put("player", Wire.optOut(this.player, x -> x.key()));
+        m.put("player", Wire.optOut(this.player, x0 -> x0.key()));
         m.put("blockhead", this.blockhead);
         m.put("amount", (double) this.amount);
-        m.put("attacker", Wire.optOut(this.attacker, x -> x.key()));
+        m.put("attacker", Wire.optOut(this.attacker, x0 -> x0.key()));
         m.put("cancelled", this.cancelled);
         return m;
     }

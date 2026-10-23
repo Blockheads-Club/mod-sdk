@@ -45,7 +45,7 @@ public final class CommandSpec {
     public static CommandSpec fromWire(Object o, club.blockheads.mod.rt.Bridge b) {
         java.util.Map<String, Object> m = Wire.map(o);
         return new CommandSpec(Wire.text(m.get("name")),
-                Wire.list(m.get("aliases"), x -> Wire.text(x)),
+                Wire.list(m.get("aliases"), x0 -> Wire.text(x0)),
                 Wire.text(m.get("description")),
                 Wire.text(m.get("usage")),
                 club.blockheads.api.players.Role.fromWire(m.get("min-role"), b),
@@ -55,7 +55,7 @@ public final class CommandSpec {
     public Object toWire(club.blockheads.mod.rt.Bridge b) {
         java.util.Map<String, Object> m = new java.util.LinkedHashMap<String, Object>();
         m.put("name", this.name);
-        m.put("aliases", Wire.listOut(this.aliases, x -> x));
+        m.put("aliases", Wire.listOut(this.aliases, x0 -> x0));
         m.put("description", this.description);
         m.put("usage", this.usage);
         m.put("min-role", this.minRole.toWire(b));

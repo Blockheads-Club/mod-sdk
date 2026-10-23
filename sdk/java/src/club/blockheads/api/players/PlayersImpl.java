@@ -18,7 +18,7 @@ public final class PlayersImpl implements Players {
     @Override
     public club.blockheads.api.players.Player get(String id) {
         Object r = b.call("players.get", id);
-        return Wire.optIn(r, x -> new club.blockheads.api.players.Player(b, Wire.text(x)));
+        return Wire.optIn(r, x0 -> new club.blockheads.api.players.Player(b, Wire.text(x0)));
     }
 
     /**
@@ -27,7 +27,7 @@ public final class PlayersImpl implements Players {
     @Override
     public club.blockheads.api.players.Player fromValueHandle(long handle) {
         Object r = b.call("players.from-value-handle", handle);
-        return Wire.optIn(r, x -> new club.blockheads.api.players.Player(b, Wire.text(x)));
+        return Wire.optIn(r, x0 -> new club.blockheads.api.players.Player(b, Wire.text(x0)));
     }
 
     /**
@@ -36,7 +36,7 @@ public final class PlayersImpl implements Players {
     @Override
     public club.blockheads.api.players.Player findByAlias(String alias) {
         Object r = b.call("players.find-by-alias", alias);
-        return Wire.optIn(r, x -> new club.blockheads.api.players.Player(b, Wire.text(x)));
+        return Wire.optIn(r, x0 -> new club.blockheads.api.players.Player(b, Wire.text(x0)));
     }
 
     /**
@@ -45,7 +45,7 @@ public final class PlayersImpl implements Players {
     @Override
     public java.util.List<club.blockheads.api.players.Player> online() {
         Object r = b.call("players.online");
-        return Wire.list(r, x -> new club.blockheads.api.players.Player(b, Wire.text(x)));
+        return Wire.list(r, x0 -> new club.blockheads.api.players.Player(b, Wire.text(x0)));
     }
 
     /**

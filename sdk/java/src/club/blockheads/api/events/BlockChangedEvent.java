@@ -28,14 +28,14 @@ public final class BlockChangedEvent {
         java.util.Map<String, Object> m = Wire.map(o);
         return new BlockChangedEvent(club.blockheads.api.types.Pos.fromWire(m.get("at"), b),
                 Wire.num(m.get("tile")),
-                Wire.optIn(m.get("player"), x -> new club.blockheads.api.players.Player(b, Wire.text(x))));
+                Wire.optIn(m.get("player"), x0 -> new club.blockheads.api.players.Player(b, Wire.text(x0))));
     }
 
     public Object toWire(club.blockheads.mod.rt.Bridge b) {
         java.util.Map<String, Object> m = new java.util.LinkedHashMap<String, Object>();
         m.put("at", this.at.toWire(b));
         m.put("tile", this.tile);
-        m.put("player", Wire.optOut(this.player, x -> x.key()));
+        m.put("player", Wire.optOut(this.player, x0 -> x0.key()));
         return m;
     }
 }

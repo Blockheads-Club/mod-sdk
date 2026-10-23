@@ -81,7 +81,7 @@ public class Player {
      */
     public club.blockheads.api.types.Pos pos() {
         Object r = b.call("players.player.pos", key);
-        return Wire.optIn(r, x -> club.blockheads.api.types.Pos.fromWire(x, b));
+        return Wire.optIn(r, x0 -> club.blockheads.api.types.Pos.fromWire(x0, b));
     }
 
     /**
