@@ -227,6 +227,21 @@ final class Overlay {
         }
         dismiss();
         FrameLayout scrim = new FrameLayout(a) {
+            /** The panel width follows the window: after a rotation (landscape to portrait on the Fold cover screen) a width fixed at show time would run off the screen. */
+            @Override protected void onMeasure(int wSpec, int hSpec) {
+                int avail = MeasureSpec.getSize(wSpec);
+                View p = getChildCount() > 0 ? getChildAt(0) : null;
+                if (p != null && avail > 0) {
+                    ViewGroup.LayoutParams pl = p.getLayoutParams();
+                    int w = Math.min(avail - Kit.u(getContext(), 8), Kit.u(getContext(), 250));
+                    if (pl.width != w) {
+                        pl.width = w;
+                        p.setLayoutParams(pl);
+                    }
+                }
+                super.onMeasure(wSpec, hSpec);
+            }
+
             @Override public boolean dispatchKeyEvent(KeyEvent e) {
                 if (e.getKeyCode() == KeyEvent.KEYCODE_BACK) {
                     if (e.getAction() == KeyEvent.ACTION_UP) {
