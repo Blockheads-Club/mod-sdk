@@ -91,7 +91,7 @@ macro_rules! export_mod {
     ($t:ty) => {
         const _: () = {
             type BlockheadsModExport = $crate::Exported<$t>;
-            $crate::bindings::__export_mod!(BlockheadsModExport with_types_in $crate::bindings);
+    $crate::bindings::__export_mod!(BlockheadsModExport with_types_in $crate::bindings);
         };
     };
 }
@@ -281,7 +281,13 @@ pub mod ui {
     pub fn panel(id: &str, slot: Slot, title: &str, lines: &str) -> Result<(), ApiError> {
         set_widget(
             id,
-            &Widget { slot, kind: WidgetKind::Panel, icon: None, title: Some(title.to_string()), text: lines.to_string() },
+            &Widget {
+                slot,
+                kind: WidgetKind::Panel,
+                icon: None,
+                title: Some(title.to_string()),
+                text: lines.to_string(),
+            },
         )
     }
 
