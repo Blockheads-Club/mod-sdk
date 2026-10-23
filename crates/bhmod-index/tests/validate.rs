@@ -276,3 +276,29 @@ fn manifest_comparison() {
     let p = compare_manifest(&m, "other", &r.entries["demo"].entry.versions[0]);
     assert_eq!(p, ["id is `demo` in mod.toml but `other` in the entry"]);
 }
+
+#[test]
+fn organisation_members_and_draft_releases() {
+    let v = |ver: &str, url: &str| version(ver, b"x", "").replace("example.com", url);
+    let draft = entry("demo", "\"Blockheads-Club\"", &format!("draft = true\n{}", v("1.0.0", "example.invalid")));
+    let base = repo(&[("demo", &draft)]);
+    let mut o = opts(None);
+    o.base = Some(load(&base));
+
+    // Publishing the draft rewrites its placeholder version; an outsider may not.
+    let released = entry("demo", "\"Blockheads-Club\"", &v("1.0.0", "example.com"));
+    let head = repo(&[("demo", &released), ("new", &entry("new", "\"Blockheads-Club\"", &v("1.0.0", "example.com")))]);
+    let out = validate(&load(&head), &o).unwrap();
+    has(&out.errors, "`me` is not an owner of `demo`; only Blockheads-Club may change it");
+    has(&out.errors, "the PR author `me` must be listed in owners");
+
+    // A member of the owning organisation may, and the draft's first release is reviewed like a new mod.
+    o.member_of = vec!["blockheads-club".into()];
+    o.allow_multiple = true;
+    let out = validate(&load(&head), &o).unwrap();
+    assert!(out.errors.iter().all(|e| e.message.contains("package not checked")), "{:#?}", out.errors);
+    assert!(out.labels.contains(LABEL_NEW_MOD) && out.needs_review());
+    let demo = out.changes.iter().find(|c| c.id == "demo").unwrap();
+    assert_eq!(demo.added, ["1.0.0"]);
+    assert_eq!(demo.permissions.as_ref().unwrap().from, None);
+}

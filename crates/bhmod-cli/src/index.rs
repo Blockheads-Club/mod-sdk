@@ -55,6 +55,9 @@ pub(crate) struct ValidateArgs {
     /// Supported blockheads:api versions (repeatable).
     #[arg(long = "api", default_values = SUPPORTED_API_VERSIONS)]
     api: Vec<Version>,
+    /// An organisation the PR author belongs to (repeatable); it counts as the author in owners lists.
+    #[arg(long = "member-of")]
+    member_of: Vec<String>,
     /// Allow changes to more than one mod.
     #[arg(long)]
     allow_multiple: bool,
@@ -112,6 +115,7 @@ fn cmd_validate(a: ValidateArgs, out: &mut dyn Write) -> io::Result<bool> {
         luau_compile: a.luau_compile,
         api_versions: a.api,
         allow_multiple: a.allow_multiple,
+        member_of: a.member_of,
     };
     let outcome = validate(&head, &opts)?;
     for w in &outcome.warnings {
