@@ -1,0 +1,25 @@
+schema = 1
+id = "cosmetics-hats"
+version = "0.1.0"
+name = { en = "Hat and hair set", tr = "Şapka ve saç seti" }
+description = { en = "Three cosmetics for every player: a gold crown, a party hat and ember hair. Wear a linen cap (or a santa hat) and type /hat; /hair works on any head. Example content mod from the SDK." }
+authors = ["Blockheads Club"]
+license = "MIT OR Apache-2.0"
+homepage = "https://github.com/Blockheads-Club/mod-sdk"
+api = "^0.3"
+
+[sides]
+server = true
+client = true
+
+[entry]
+server = { runtime = "lua", path = "server/main.luau" }
+# Content needs a client half; there is nothing to run, the clients just draw the textures.
+client = { runtime = "lua", path = "client/main.luau" }
+
+[content]
+cosmetics = [
+  { key = "cosmetics-hats:crown", slot = "hat", base = "linen-cap", texture = "assets/crown.png", name = { en = "Gold crown", tr = "Altın taç" } },
+  { key = "cosmetics-hats:party", slot = "hat", base = "santa-hat", texture = "assets/party.png", name = { en = "Party hat", tr = "Parti şapkası" } },
+  { key = "cosmetics-hats:ember", slot = "hair", texture = "assets/ember.png", name = { en = "Ember hair", tr = "Kor saç" } },
+]

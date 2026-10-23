@@ -69,6 +69,9 @@ that behave exactly the same (a test checks it): [`hello-lua`](examples/hello-lu
 [`chat-filter-rust`](examples/chat-filter-rust) (cancel and rewrite chat), [`scheduler-lua`](examples/scheduler-lua) /
 [`scheduler-rust`](examples/scheduler-rust) (`/countdown`, `/remind`). Rust, C, Zig and Go: [`docs/wasm.md`](docs/wasm.md).
 
+Content mods (API 0.3) declare textures in `[content]`: [`cosmetics-hats`](examples/cosmetics-hats) is a hat and hair
+set worn with `/hat` and `/hair` (see [`docs/content.md`](docs/content.md)).
+
 ---
 
 ## 📚 What's inside

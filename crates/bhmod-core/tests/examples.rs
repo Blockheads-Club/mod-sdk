@@ -250,3 +250,51 @@ fn economy_landclaim_perms() {
     h.world_save(SavePhase::Post);
     h.disable_all();
 }
+
+#[test]
+fn cosmetics_hats() {
+    let (_t, b, mut h) = host_with(&["cosmetics-hats"], "");
+    assert_eq!(h.mods().len(), 1, "{}", b.log_text());
+    *b.cosmetic_ids.borrow_mut() = vec![
+        ("cosmetics-hats:crown".into(), 1),
+        ("cosmetics-hats:party".into(), 2),
+        ("cosmetics-hats:ember".into(), 3),
+    ];
+    h.enable("World", "wid");
+    assert_eq!(h.mods()[0].state, ModState::Enabled, "{}", b.log_text());
+    b.join("p1", "ALICE", Role::Player);
+    let worn = |b: &common::FakeBridge| {
+        let mut w = b.worn.borrow().clone();
+        w.sort();
+        w
+    };
+
+    // /hat and /hair equip, replacing what the slot held; the console cannot wear anything.
+    assert_eq!(h.command(player("p1"), "/hat crown"), Some(vec!["Your hat is now crown.".to_string()]));
+    assert_eq!(h.command(player("p1"), "/hair ember"), Some(vec!["Your hair is now ember.".to_string()]));
+    assert_eq!(worn(&b), vec![("p1".into(), "hair".into(), 3), ("p1".into(), "hat".into(), 1)]);
+    h.command(player("p1"), "/hat party");
+    assert_eq!(worn(&b), vec![("p1".into(), "hair".into(), 3), ("p1".into(), "hat".into(), 2)]);
+    assert_eq!(h.command(CommandSender::Console, "/hat crown"), Some(vec!["Only players wear cosmetics.".to_string()]));
+
+    // Help for a missing or unknown word.
+    assert_eq!(h.command(player("p1"), "/hat"), Some(vec!["Usage: /hat <crown, party, none>".to_string()]));
+    assert_eq!(
+        h.command(player("p1"), "/hair purple"),
+        Some(vec!["Unknown hair \"purple\". Try: ember, none".to_string()])
+    );
+
+    // The choice is remembered: after the player left and came back it is put on again (the server forgot it).
+    b.leave("p1");
+    b.worn.borrow_mut().clear();
+    b.join("p1", "ALICE", Role::Player);
+    h.fire(Event::PlayerJoin { player: "p1".into() });
+    assert_eq!(worn(&b), vec![("p1".into(), "hair".into(), 3), ("p1".into(), "hat".into(), 2)]);
+
+    // none takes it off and forgets it.
+    assert_eq!(h.command(player("p1"), "/hat none"), Some(vec!["Your hat is back to normal.".to_string()]));
+    b.worn.borrow_mut().clear();
+    h.fire(Event::PlayerJoin { player: "p1".into() });
+    assert_eq!(worn(&b), vec![("p1".into(), "hair".into(), 3)]);
+    h.disable_all();
+}
