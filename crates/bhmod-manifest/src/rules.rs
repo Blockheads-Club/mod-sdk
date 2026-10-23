@@ -24,6 +24,11 @@ pub fn is_mod_id(s: &str) -> bool {
     is_slug(s, 2, 40)
 }
 
+/// A service method name: 1-64 characters of `[A-Za-z0-9_.-]`.
+pub fn is_method_name(s: &str) -> bool {
+    (1..=64).contains(&s.len()) && s.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'.' | b'-'))
+}
+
 /// A language code such as `en`, `tr`, `pt-BR`, `zh-Hans`.
 pub fn is_lang(s: &str) -> bool {
     let (base, region) = match s.split_once('-') {

@@ -32,7 +32,10 @@ channels = true
 native = false
 
 [provides]
-services = [{ name = "landclaim", version = "1.4.0", wit = "wit/landclaim.wit" }]
+services = [
+  { name = "landclaim", version = "1.4.0", wit = "wit/landclaim.wit", remote = true, remote-methods = ["owner-of", "count"] },
+  { name = "landclaim-admin", version = "1.4.0", wit = "wit/admin.wit" },
+]
 
 [content]
 blocks = [{ key = "landclaim:marker", texture = "assets/textures/blocks/marker.png", hardness = 2.0 }]
