@@ -17,6 +17,10 @@ crate-type = ["cdylib", "rlib"]
 default = ["wasm"]
 # WASM mods (wasmtime: Pulley on armv7; components are compiled on the device once and cached).
 wasm = ["dep:bhmod-wasm"]
+# Java and Kotlin mods on ART, the VM already in the game's process (`classes.dex` inside the mod; the loader's own dex
+# must carry the SDK classes: scripts/build-android-loader.sh --jvm). The owner turns it on with a `jvm-enabled` file in
+# the loader's data folder. Off by default.
+jvm = ["bhmod-core/jvm"]
 
 [dependencies]
 bhmod-client.workspace = true

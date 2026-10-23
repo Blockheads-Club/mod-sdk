@@ -30,11 +30,35 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 /// `HELLO.platform`.
 pub const PLATFORM: &str = "android-armv7";
 
-/// The runtime kinds compiled in.
+/// Makes the JVM runtime: on Android it adopts ART (see `android::jvm_factory`). Logs its own failures.
+#[cfg(feature = "jvm")]
+pub type JvmFactory = fn() -> Result<Box<dyn Runtime>, String>;
+
+#[cfg(feature = "jvm")]
+static JVM: std::sync::Mutex<Option<JvmFactory>> = std::sync::Mutex::new(None);
+
+/// Turns JVM mods on (`Some`) or off (`None`). Until it is called with a factory this loader neither runs nor
+/// advertises `jvm`: Java and Kotlin mods are unsandboxed code, so the owner has to ask for them.
+#[cfg(feature = "jvm")]
+pub fn set_jvm(factory: Option<JvmFactory>) {
+    *JVM.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = factory;
+}
+
+#[cfg(feature = "jvm")]
+fn jvm_factory() -> Option<JvmFactory> {
+    *JVM.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+/// The runtime kinds compiled in (and, for the JVM, switched on).
 pub fn kinds() -> Vec<Kind> {
+    #[allow(unused_mut)]
     let mut v = vec![Kind::Lua];
     if cfg!(feature = "wasm") {
         v.push(Kind::Wasm);
+    }
+    #[cfg(feature = "jvm")]
+    if jvm_factory().is_some() {
+        v.push(Kind::Jvm);
     }
     v
 }
@@ -60,7 +84,14 @@ pub fn caps() -> Caps {
 
 /// The 0xBC client options of this build.
 pub fn options() -> Options {
-    let names: Vec<&str> = kinds().iter().map(|k| if *k == Kind::Lua { "lua" } else { "wasm" }).collect();
+    let names: Vec<&str> = kinds()
+        .iter()
+        .map(|k| match k {
+            Kind::Lua => "lua",
+            Kind::Wasm => "wasm",
+            Kind::Jvm => "jvm",
+        })
+        .collect();
     Options::new(VERSION, PLATFORM, bhmod_core::API_VERSION, &names)
 }
 
@@ -81,13 +112,22 @@ pub fn runtimes(wasm_cache: &std::path::Path) -> Vec<Box<dyn Runtime>> {
     }
     #[cfg(not(feature = "wasm"))]
     let _ = wasm_cache;
+    #[cfg(feature = "jvm")]
+    if let Some(make) = jvm_factory() {
+        // The factory logs why it failed; the mods that need the JVM then report "runtime not available".
+        v.extend(make());
+    }
     v
 }
 
 #[cfg(test)]
 mod tests {
+    /// The JVM switch is process-wide: tests that read or change it take turns.
+    static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     #[test]
     fn identity() {
+        let _turn = LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let o = super::options();
         assert_eq!(o.platform, "android-armv7");
         assert!(o.runtimes.contains(&"lua".to_string()));
@@ -95,5 +135,30 @@ mod tests {
         assert!(super::budgets().hard > bhmod_core::budget::Budgets::default().hard);
         let t = tempfile::tempdir().unwrap();
         assert_eq!(super::runtimes(t.path()).len(), o.runtimes.len());
+    }
+
+    /// The JVM is off until the glue switches it on, then it is advertised and created like the others.
+    #[cfg(feature = "jvm")]
+    #[test]
+    fn jvm_is_opt_in() {
+        let _turn = LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        fn desktop_jvm() -> Result<Box<dyn bhmod_core::runtime::Runtime>, String> {
+            bhmod_core::jvm::JvmRuntime::new(Default::default()).map(|r| Box::new(r) as _)
+        }
+        fn broken() -> Result<Box<dyn bhmod_core::runtime::Runtime>, String> {
+            Err("no JVM".into())
+        }
+        let t = tempfile::tempdir().unwrap();
+        super::set_jvm(None);
+        assert!(!super::options().runtimes.contains(&"jvm".to_string()));
+        let without = super::runtimes(t.path()).len();
+        super::set_jvm(Some(desktop_jvm));
+        assert!(super::options().runtimes.contains(&"jvm".to_string()));
+        assert!(super::kinds().contains(&super::Kind::Jvm));
+        assert_eq!(super::caps().runtimes.len(), super::options().runtimes.len());
+        assert_eq!(super::runtimes(t.path()).len(), without + 1);
+        super::set_jvm(Some(broken));
+        assert_eq!(super::runtimes(t.path()).len(), without);
+        super::set_jvm(None);
     }
 }

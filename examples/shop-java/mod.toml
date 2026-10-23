@@ -1,0 +1,22 @@
+schema = 1
+id = "shop-java"
+version = "0.1.0"
+name = { en = "Shop (Java)" }
+description = { en = "/buy pays with coins from the Luau economy mod: a Java mod calling a Lua service." }
+authors = ["Blockheads Club"]
+license = "MIT OR Apache-2.0"
+homepage = "https://github.com/Blockheads-Club/mod-sdk"
+api = "^0.2"
+
+[sides]
+server = true
+client = false
+
+[entry]
+server = { runtime = "jvm", path = "server/mod.jar" }
+
+[permissions]
+native = true
+
+[dependencies]
+economy = "^1"

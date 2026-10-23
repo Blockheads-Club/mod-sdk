@@ -1,0 +1,67 @@
+name: Java SDK
+
+# Builds blockheads-mod-sdk.jar (the blockheads:api bindings and helpers for JVM mods), its sources jar and Javadoc.
+# Tags attach them to the GitHub release. `bhmod new --lang java` tells mod authors to put the jar in libs/.
+on:
+  push:
+    branches: [main, dev, "feat/m9-jvm"]
+    tags: ["v*"]
+  pull_request:
+    paths: ["sdk/java/**", "wit/**", "scripts/gen-java.py", "scripts/build-java.sh", ".github/workflows/java-sdk.yml"]
+  workflow_dispatch:
+
+concurrency:
+  group: java-sdk-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - name: Generated bindings are up to date
+        run: python3 scripts/gen-java.py --check
+      - name: Build the SDK and the example mods
+        run: scripts/build-java.sh
+      - name: Sources and Javadoc jars
+        run: |
+          out=target/java-sdk
+          jar cf "$out/blockheads-mod-sdk-sources.jar" -C sdk/java/src .
+          mkdir -p "$out/javadoc"
+          javadoc -quiet -Xdoclint:none -encoding UTF-8 -d "$out/javadoc" $(find sdk/java/src -name '*.java')
+          jar cf "$out/blockheads-mod-sdk-javadoc.jar" -C "$out/javadoc" .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: blockheads-mod-sdk
+          path: |
+            target/java-sdk/blockheads-mod-sdk.jar
+            target/java-sdk/blockheads-mod-sdk-sources.jar
+            target/java-sdk/blockheads-mod-sdk-javadoc.jar
+          if-no-files-found: error
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: blockheads-mod-sdk
+          path: dist
+      - name: Attach to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view "$GITHUB_REF_NAME" -R "$GITHUB_REPOSITORY" > /dev/null 2>&1 || \
+            gh release create "$GITHUB_REF_NAME" -R "$GITHUB_REPOSITORY" --title "$GITHUB_REF_NAME" --notes "" \
+            $([[ "$GITHUB_REF_NAME" == *-* ]] && echo --prerelease)
+          gh release upload "$GITHUB_REF_NAME" -R "$GITHUB_REPOSITORY" --clobber dist/*.jar

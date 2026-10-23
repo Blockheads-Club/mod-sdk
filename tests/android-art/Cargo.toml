@@ -1,0 +1,19 @@
+# ART smoke test of the JVM runtime: a cdylib that adopts the Android VM it is loaded into, runs the real mod host with
+# a Java mod (classes.dex inside the jar) and returns a transcript. Run by run.sh on an emulator; not part of the
+# workspace and not part of CI (it needs an emulator).
+[package]
+name = "bhmod-art-smoke"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[lib]
+name = "bhmod_art_smoke"
+crate-type = ["cdylib"]
+
+[dependencies]
+bhmod-core = { path = "../../crates/bhmod-core", default-features = false, features = ["jvm"] }
+bhmod-manifest = { path = "../../crates/bhmod-manifest" }
+jni = { version = "0.21", default-features = false }
+
+[workspace]

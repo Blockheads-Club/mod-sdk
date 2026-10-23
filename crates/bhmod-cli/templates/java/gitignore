@@ -1,0 +1,4 @@
+/build/
+/.gradle/
+/server/mod.jar
+/libs/

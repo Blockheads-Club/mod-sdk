@@ -29,8 +29,14 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: rustfmt
         run: cargo fmt --all --check
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
       - name: clippy
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - name: clippy with the JVM runtime
+        run: cargo clippy --workspace --all-targets --locked --features bhmod-core/jvm,bhmod-android/jvm -- -D warnings
 
   test:
     runs-on: ubuntu-latest
@@ -46,17 +52,25 @@ jobs:
             .
             target/wasm-guests
       - uses: taiki-e/install-action@cargo-llvm-cov
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
       - name: Build the WASM guests (Rust examples and the bhmod-wasm test guest)
         run: LOCKED=--locked scripts/build-wasm.sh
+      - name: Build the Java SDK and the Java example mods
+        run: scripts/build-java.sh
       - name: Conformance suite (Luau and WASM twins of every example behave the same)
         run: cargo test -p bhmod-wasm --test conformance --locked
+      - name: Conformance suite for the JVM runtime (Luau and Java twins)
+        run: cargo test -p bhmod-core --features jvm --test jvm_conformance --locked
       - name: Schema tests (JSON Schemas vs fixtures and the Rust validator)
         run: cargo test -p bhmod-manifest --test schema --locked
       - name: Protocol vectors (byte-exact)
         run: cargo test -p bhmod-proto --test vectors --locked
       - name: Tests with 100 % line coverage gate
         # The wasmtime bindgen! output (bhmod-wasm/src/wit*.rs) is generated code and not measured.
-        run: cargo llvm-cov --workspace --locked --ignore-filename-regex 'bhmod-wasm/src/wit' --fail-under-lines 100 --lcov --output-path lcov.info
+        run: cargo llvm-cov --workspace --features bhmod-core/jvm,bhmod-android/jvm --locked --ignore-filename-regex 'bhmod-wasm/src/wit' --fail-under-lines 100 --lcov --output-path lcov.info
       - name: Coverage summary
         run: cargo llvm-cov report --summary-only
 
@@ -69,6 +83,8 @@ jobs:
           tool: wasm-tools
       - name: Validate the blockheads:api WIT package
         run: wasm-tools component wit wit/blockheads-api > /dev/null
+      - name: The generated Java bindings match the WIT
+        run: python3 scripts/gen-java.py --check
 
   examples:
     runs-on: ubuntu-latest
@@ -83,8 +99,14 @@ jobs:
           workspaces: |
             .
             target/wasm-guests
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
       - name: Build bhmod
         run: cargo build -p bhmod --locked
+      - name: Java SDK and example mods (javac, jar)
+        run: scripts/build-java.sh
       - name: Install Luau
         run: |
           curl -sSfL "https://github.com/luau-lang/luau/releases/download/${LUAU_VERSION}/luau-ubuntu.zip" -o "$RUNNER_TEMP/luau.zip"
@@ -108,10 +130,10 @@ jobs:
       # TinyGo / Zig / C example builds are documented in docs/wasm.md but not run here yet (no toolchain in CI).
       - name: bhmod check on the examples
         run: |
-          for e in hello-lua chat-filter scheduler-lua economy perms landclaim hello-rust chat-filter-rust scheduler-rust shop-rust; do ./target/debug/bhmod check --index "examples/$e"; done
+          for e in hello-lua chat-filter scheduler-lua economy perms landclaim hello-rust chat-filter-rust scheduler-rust shop-rust hello-java chat-filter-java scheduler-java shop-java; do ./target/debug/bhmod check --index "examples/$e"; done
       - name: bhmod pack on the examples
         run: |
-          for e in hello-lua chat-filter scheduler-lua economy perms landclaim hello-rust chat-filter-rust scheduler-rust shop-rust; do
+          for e in hello-lua chat-filter scheduler-lua economy perms landclaim hello-rust chat-filter-rust scheduler-rust shop-rust hello-java chat-filter-java scheduler-java shop-java; do
             ./target/debug/bhmod pack "examples/$e" -o "$RUNNER_TEMP/$e.bhmod"
             ./target/debug/bhmod check --index "$RUNNER_TEMP/$e.bhmod"
           done
@@ -122,6 +144,13 @@ jobs:
           ./target/debug/bhmod new tpl-rust --lang rust --dir "$RUNNER_TEMP"
           (cd "$RUNNER_TEMP/tpl-rust" && ./build.sh)
           ./target/debug/bhmod check "$RUNNER_TEMP/tpl-rust"
+          ./target/debug/bhmod new tpl-java --lang java --dir "$RUNNER_TEMP"
+          mkdir "$RUNNER_TEMP/tpl-java/libs" && cp target/java-sdk/blockheads-mod-sdk.jar "$RUNNER_TEMP/tpl-java/libs/"
+          (cd "$RUNNER_TEMP/tpl-java" && ./build.sh)
+          ./target/debug/bhmod check "$RUNNER_TEMP/tpl-java"
+          rm "$RUNNER_TEMP/tpl-java/server/mod.jar"
+          (cd "$RUNNER_TEMP/tpl-java" && gradle --no-daemon -q jar)
+          ./target/debug/bhmod check "$RUNNER_TEMP/tpl-java"
 
   # The WASM runtime on a 32-bit host: Pulley on armv7 under qemu (cross). Experimental until the first green run.
   wasm-armv7:

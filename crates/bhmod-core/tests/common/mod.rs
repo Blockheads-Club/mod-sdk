@@ -1,6 +1,8 @@
 //! Test doubles shared by the integration tests.
 #![allow(dead_code)]
 
+pub mod conformance;
+
 use std::cell::{Cell, RefCell};
 use std::fs;
 use std::path::Path;
@@ -28,6 +30,8 @@ pub struct FakeBridge {
     pub cosmetic_ids: RefCell<Vec<(String, u64)>>,
     /// Worn cosmetics: (player, slot, id).
     pub worn: RefCell<Vec<(String, String, u64)>>,
+    /// Makes `online_players` panic (a host bug that must not cross into the JVM).
+    pub explode: Cell<bool>,
     /// The UI commands the bridge drew: (mod id, command).
     pub ui: RefCell<Vec<(String, UiCommand)>>,
     /// True: the bridge has no UI (the server), `ui` answers `unsupported`.
@@ -76,6 +80,7 @@ impl GameBridge for FakeBridge {
         self.logs.borrow_mut().push((mod_id.map(str::to_string), level, message.to_string()));
     }
     fn online_players(&self) -> Vec<String> {
+        assert!(!self.explode.get(), "the fake game exploded");
         self.players.borrow().iter().map(|p| p.0.clone()).collect()
     }
     fn player_alias(&self, id: &str) -> Option<String> {

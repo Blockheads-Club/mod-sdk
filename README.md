@@ -72,6 +72,10 @@ that behave exactly the same (a test checks it): [`hello-lua`](examples/hello-lu
 Content mods (API 0.3) declare textures in `[content]`: [`cosmetics-hats`](examples/cosmetics-hats) is a hat and hair
 set worn with `/hat` and `/hair` (see [`docs/content.md`](docs/content.md)).
 
+Java and Kotlin (milestone M9) are unsandboxed, so they need the `native` permission and a host with JVM support
+turned on: `bhmod new my-mod --lang java`, the examples ending in `-java` (`shop-java` calls the Lua `economy`
+service) and [`docs/jvm.md`](docs/jvm.md).
+
 ---
 
 ## 📚 What's inside
@@ -80,6 +84,7 @@ set worn with `/hat` and `/hair` (see [`docs/content.md`](docs/content.md)).
 | [`wit/blockheads-api/`](wit/blockheads-api/) | The mod API (`blockheads:api@0.3.0`, WIT): events (incl. gameplay), commands, scheduler, storage, players, services, channels, client UI (HUD, toasts, dialogs), mod content (items, blocks, cosmetics); the frozen 0.1 and 0.2 copies are in [`wit/compat/`](wit/compat/) |
 | [`docs/luau-api.md`](docs/luau-api.md) | How the API looks from Lua |
 | [`docs/wasm.md`](docs/wasm.md) | WASM mods: Rust SDK, C/Zig/TinyGo, how the host runs them, the conformance suite |
+| [`docs/jvm.md`](docs/jvm.md) | JVM mods: Java/Kotlin SDK (generated from the WIT), how the host runs them, Android (ART) |
 | [`sdk/rust/blockheads-mod`](sdk/rust/blockheads-mod) | The Rust SDK (bindings + closures for events, commands, tasks) |
 | [`docs/package.md`](docs/package.md) | The `.bhmod` package and its rules |
 | [`schema/`](schema/) | JSON Schemas for `mod.toml`, index entries and the published `index.json` |

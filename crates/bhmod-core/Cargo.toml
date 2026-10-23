@@ -13,6 +13,9 @@ publish = false
 default = ["luau"]
 # The Luau runtime (mlua, vendored Luau, sandbox mode).
 luau = ["dep:mlua"]
+# The JVM runtime (JNI, `libjvm` loaded at run time from the user's JRE; build.rs compiles the Java SDK, so building
+# with this feature needs a JDK 8 or newer).
+jvm = ["dep:jni"]
 
 [dependencies]
 bhmod-manifest.workspace = true
@@ -21,6 +24,8 @@ toml.workspace = true
 semver.workspace = true
 zip.workspace = true
 mlua = { version = "0.12", features = ["luau"], optional = true }
+jni = { version = "0.21", features = ["invocation"], optional = true }
 
 [dev-dependencies]
 tempfile.workspace = true
+jni = { version = "0.21", features = ["invocation"] }

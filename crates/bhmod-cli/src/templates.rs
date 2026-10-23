@@ -10,6 +10,13 @@ const RUST_BUILD: &str = include_str!("../templates/rust/build.sh");
 const RUST_GITIGNORE: &str = include_str!("../templates/rust/gitignore");
 const RUST_README: &str = include_str!("../templates/rust/README.md");
 
+const JAVA_MOD: &str = include_str!("../templates/java/mod.toml");
+const JAVA_MAIN: &str = include_str!("../templates/java/Main.java");
+const JAVA_BUILD: &str = include_str!("../templates/java/build.sh");
+const JAVA_GRADLE: &str = include_str!("../templates/java/build.gradle.kts");
+const JAVA_GITIGNORE: &str = include_str!("../templates/java/gitignore");
+const JAVA_README: &str = include_str!("../templates/java/README.md");
+
 /// The `blockheads:api` WIT files, copied into Rust projects.
 pub const WIT: [(&str, &str); 14] = [
     ("channels.wit", include_str!("../../../wit/blockheads-api/channels.wit")),
@@ -31,7 +38,13 @@ pub const WIT: [(&str, &str); 14] = [
 fn fill(template: &str, id: &str) -> String {
     // Cargo package names may not start with a digit.
     let package = if id.starts_with(|c: char| c.is_ascii_digit()) { format!("mod-{id}") } else { id.to_string() };
-    template.replace("{{id}}", id).replace("{{package}}", &package).replace("{{crate}}", &package.replace('-', "_"))
+    // Java package names are lower-case identifiers: `-` becomes `_`, and a leading digit gets a prefix.
+    let javapkg = format!("mod_{}", id.replace('-', "_"));
+    template
+        .replace("{{id}}", id)
+        .replace("{{package}}", &package)
+        .replace("{{crate}}", &package.replace('-', "_"))
+        .replace("{{javapkg}}", &javapkg)
 }
 
 /// Files of a new Luau mod.
@@ -55,4 +68,17 @@ pub fn rust(id: &str) -> Vec<(String, String)> {
     ];
     files.extend(WIT.iter().map(|(name, text)| (format!("bindings/blockheads-api/{name}"), text.to_string())));
     files
+}
+
+/// Files of a new Java (JVM) mod.
+pub fn java(id: &str) -> Vec<(String, String)> {
+    let pkg = format!("mod_{}", id.replace('-', "_"));
+    vec![
+        ("mod.toml".into(), fill(JAVA_MOD, id)),
+        (format!("src/main/java/{pkg}/Main.java"), fill(JAVA_MAIN, id)),
+        ("build.sh".into(), fill(JAVA_BUILD, id)),
+        ("build.gradle.kts".into(), fill(JAVA_GRADLE, id)),
+        (".gitignore".into(), JAVA_GITIGNORE.to_string()),
+        ("README.md".into(), fill(JAVA_README, id)),
+    ]
 }
