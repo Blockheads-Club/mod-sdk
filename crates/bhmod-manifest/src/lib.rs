@@ -8,6 +8,7 @@
 
 use std::fmt;
 
+pub mod content;
 pub mod manifest;
 pub mod pack;
 pub mod package;

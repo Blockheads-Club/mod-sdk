@@ -1,0 +1,18 @@
+[package]
+name = "bhmod-content"
+description = "Content registry of the Blockheads mod system: id allocation, the world sidecar, cosmetics and their textures"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+bhmod-proto.workspace = true
+bhmod-manifest.workspace = true
+toml.workspace = true
+png = { version = "0.17", default-features = false }
+
+[dev-dependencies]
+tempfile.workspace = true

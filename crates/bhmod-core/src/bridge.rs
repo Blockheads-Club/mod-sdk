@@ -3,7 +3,7 @@
 //! The bridge is the only way mod code reaches the game. Every method is called on the game's main thread while a
 //! mod call is running, so implementations must not call back into the [`crate::ModHost`].
 
-use crate::types::{ApiError, ChannelTarget, LogLevel, Pos, Role, Side};
+use crate::types::{ApiError, ChannelTarget, ContentKind, LogLevel, Pos, Role, Side};
 
 /// The game side of the mod host. Players are identified by their player id string (the vanilla `playerID`).
 pub trait GameBridge {
@@ -49,5 +49,26 @@ pub trait GameBridge {
     fn channel_send(&self, mod_id: &str, name: &str, target: &ChannelTarget, data: &[u8]) -> Result<(), ApiError> {
         let _ = (mod_id, name, target, data);
         Err(ApiError::Unsupported)
+    }
+
+    /// The numeric id this world gave a content key (API 0.3). `None` for an unknown key and on hosts that keep no
+    /// registry (the clients).
+    fn content_id(&self, kind: ContentKind, key: &str) -> Option<u64> {
+        let _ = (kind, key);
+        None
+    }
+
+    /// Puts the cosmetic `id` on a player in `slot` (API 0.3); `None` takes the slot's cosmetic off. The host
+    /// tells every modded client. The mod host has already checked that the cosmetic belongs to the calling mod and
+    /// fits the slot. The default reports [`ApiError::Unsupported`].
+    fn set_cosmetic(&self, player: &str, slot: &str, id: Option<u64>) -> Result<(), ApiError> {
+        let _ = (player, slot, id);
+        Err(ApiError::Unsupported)
+    }
+
+    /// What a player wears as `(slot, cosmetic id)` pairs (API 0.3).
+    fn cosmetics_of(&self, player: &str) -> Vec<(String, u64)> {
+        let _ = player;
+        Vec::new()
     }
 }

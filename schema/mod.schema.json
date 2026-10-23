@@ -115,8 +115,11 @@
             "required": ["key", "slot", "texture"],
             "properties": {
               "key": { "$ref": "#/$defs/contentKey" },
-              "slot": { "type": "string", "pattern": "^[a-z0-9_-]{1,32}$" },
-              "texture": { "$ref": "#/$defs/texture" }
+              "slot": { "enum": ["hat", "shirt", "pants", "shoes", "hair", "weapon"], "description": "Where it is worn or used." },
+              "texture": { "$ref": "#/$defs/texture", "description": "PNG laid out like the vanilla texture of the item it re-skins (for shirt: the body)." },
+              "texture-arm": { "$ref": "#/$defs/texture", "description": "Shirt only: the arms." },
+              "base": { "type": "string", "pattern": "^[a-z0-9-]{3,32}$", "description": "The vanilla item it re-skins (see the BASE_ITEMS table); checked against the slot by `bhmod check`." },
+              "name": { "$ref": "#/$defs/localized64" }
             }
           }
         }

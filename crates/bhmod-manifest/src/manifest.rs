@@ -250,11 +250,21 @@ impl Content {
         self.blocks.is_empty() && self.items.is_empty() && self.cosmetics.is_empty()
     }
 
-    /// `(key, texture)` of every declaration.
+    /// The key of every declaration.
+    pub fn keys(&self) -> impl Iterator<Item = &str> {
+        let blocks = self.blocks.iter().map(|b| b.key.as_str());
+        let items = self.items.iter().map(|i| i.key.as_str());
+        blocks.chain(items).chain(self.cosmetics.iter().map(|c| c.key.as_str()))
+    }
+
+    /// `(key, texture)` of every declaration (a cosmetic's `texture-arm` counts too).
     pub fn textures(&self) -> Vec<(&str, &str)> {
         let blocks = self.blocks.iter().map(|b| (b.key.as_str(), b.texture.as_str()));
         let items = self.items.iter().map(|i| (i.key.as_str(), i.texture.as_str()));
-        let cosmetics = self.cosmetics.iter().map(|c| (c.key.as_str(), c.texture.as_str()));
+        let cosmetics = self.cosmetics.iter().flat_map(|c| {
+            std::iter::once((c.key.as_str(), c.texture.as_str()))
+                .chain(c.texture_arm.as_deref().map(|a| (c.key.as_str(), a)))
+        });
         blocks.chain(items).chain(cosmetics).collect()
     }
 }
@@ -287,14 +297,26 @@ pub struct ItemDecl {
 
 /// A new cosmetic.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[serde(deny_unknown_fields, rename_all = "kebab-case")]
 pub struct CosmeticDecl {
     /// `<mod-id>:<name>`.
     pub key: String,
-    /// Where it is worn, `[a-z0-9_-]{1,32}` (the list of slots is fixed in milestone M8).
+    /// Where it is worn: one of [`crate::content::SLOTS`].
     pub slot: String,
-    /// PNG under `assets/`.
+    /// PNG under `assets/`. For `shirt` the body texture, for the other slots the one texture, laid out like the
+    /// vanilla texture of the item it re-skins.
     pub texture: String,
+    /// `shirt` only: PNG for the arms (the body is `texture`). Without it the vanilla arms stay.
+    #[serde(default)]
+    pub texture_arm: Option<String>,
+    /// The vanilla item (`linen-cap`, `iron-sword`, ... see [`crate::content::BASE_ITEMS`]) this cosmetic re-skins:
+    /// it shows only while that item is worn or held. Without it, it shows on every vanilla item of the slot (and
+    /// always for `hair`, which has no base).
+    #[serde(default)]
+    pub base: Option<String>,
+    /// Display name per language.
+    #[serde(default)]
+    pub name: Localized,
 }
 
 impl Manifest {
@@ -457,7 +479,7 @@ impl Manifest {
             ));
         }
         let mut seen = BTreeSet::new();
-        for (key, texture) in self.content.textures() {
+        for key in self.content.keys() {
             let name = key.strip_prefix(&self.id).and_then(|r| r.strip_prefix(':'));
             if !name.is_some_and(|n| is_slug(n, 1, 40)) {
                 v.push(Issue::new(
@@ -468,6 +490,8 @@ impl Manifest {
             if !seen.insert(key) {
                 v.push(Issue::new("content", format!("duplicate key `{key}`")));
             }
+        }
+        for (key, texture) in self.content.textures() {
             if check_path(texture).is_err() || !texture.starts_with("assets/") || !texture.ends_with(".png") {
                 v.push(Issue::new("content", format!("texture of `{key}` must be a .png under assets/")));
             }
@@ -480,8 +504,37 @@ impl Manifest {
         for i in &self.content.items {
             check_localized(v, &format!("content `{}` name", i.key), &i.name, false, 64);
         }
-        for c in self.content.cosmetics.iter().filter(|c| !is_slug(&c.slot, 1, 32)) {
-            v.push(Issue::new("content", format!("slot of `{}` must match [a-z0-9_-]{{1,32}}", c.key)));
+        for c in &self.content.cosmetics {
+            self.validate_cosmetic(v, c);
+        }
+    }
+}
+
+impl Manifest {
+    fn validate_cosmetic(&self, v: &mut Vec<Issue>, c: &CosmeticDecl) {
+        let at = format!("content `{}`", c.key);
+        if !crate::content::SLOTS.contains(&c.slot.as_str()) {
+            v.push(Issue::new(&at, format!("slot must be one of {}", crate::content::SLOTS.join(", "))));
+        }
+        check_localized(v, &format!("{at} name"), &c.name, false, 64);
+        if let Some(arm) = &c.texture_arm {
+            if c.slot != "shirt" {
+                v.push(Issue::new(&at, "texture-arm is only for shirt cosmetics"));
+            }
+            if check_path(arm).is_err() || !arm.starts_with("assets/") || !arm.ends_with(".png") {
+                v.push(Issue::new(&at, "texture-arm must be a .png under assets/"));
+            }
+        }
+        if let Some(base) = &c.base {
+            match crate::content::base_item(base) {
+                None => v.push(Issue::new(&at, format!("base `{base}` is not a known vanilla item"))),
+                Some(b) if b.slot != c.slot => {
+                    v.push(Issue::new(&at, format!("base `{base}` belongs to the {} slot, not {}", b.slot, c.slot)))
+                }
+                Some(_) => {}
+            }
+        } else if c.slot == "weapon" {
+            v.push(Issue::new(&at, "a weapon cosmetic needs a base (the weapon it re-skins)"));
         }
     }
 }

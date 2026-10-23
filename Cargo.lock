@@ -168,6 +168,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "bhmod-content"
+version = "0.1.0"
+dependencies = [
+ "bhmod-manifest",
+ "bhmod-proto",
+ "png",
+ "tempfile",
+ "toml",
+]
+
+[[package]]
 name = "bhmod-core"
 version = "0.1.0"
 dependencies = [
@@ -246,6 +257,12 @@ name = "bit-vec"
 version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5e764a1d40d510daf35e07be9eb06e75770908c27d411ee6c92109c9840eaaf7"
+
+[[package]]
+name = "bitflags"
+version = "1.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bef38d45163c2f1dde094a7dfd33ccf595c92905c8f8f4fdc18d06fb1037718a"
 
 [[package]]
 name = "bitflags"
@@ -717,6 +734,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "da7c62ceae207dd37ea5b845da6a0696c799f85e97da1ab5b7910be3c1c80223"
 
 [[package]]
+name = "fdeflate"
+version = "0.3.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1e6853b52649d4ac5c0bd02320cddc5ba956bdb407c4b75a2c6b75bf51500f8c"
+dependencies = [
+ "simd-adler32",
+]
+
+[[package]]
 name = "find-msvc-tools"
 version = "0.1.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -729,7 +755,8 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6e634e2e0ebac1ee034020da1ca582e17ffe4e0f5e985823721e168928136dcb"
 dependencies = [
  "crc32fast",
- "miniz_oxide",
+ "miniz_oxide 0.9.1",
+ "zlib-rs",
 ]
 
 [[package]]
@@ -1254,6 +1281,16 @@ checksum = "c2a86d3146ed3995b5913c414f6664344b9617457320782e64f0bb44afd49d74"
 
 [[package]]
 name = "miniz_oxide"
+version = "0.8.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1fa76a2c86f704bdb222d66965fb3d63269ce38518b83cb0575fca855ebb6316"
+dependencies = [
+ "adler2",
+ "simd-adler32",
+]
+
+[[package]]
+name = "miniz_oxide"
 version = "0.9.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b63fbc4a50860e98e7b2aa7804ded1db5cbc3aff9193adaff57a6931bf7c4b4c"
@@ -1457,6 +1494,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f6b464fbc74e149a392436b17d523f769e057cb6877f6a5c4618bc6f11800548"
 
 [[package]]
+name = "png"
+version = "0.17.16"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "82151a2fc869e011c153adc57cf2789ccb8d9906ce52c0b39a6b5697749d7526"
+dependencies = [
+ "bitflags 1.3.2",
+ "crc32fast",
+ "fdeflate",
+ "flate2",
+ "miniz_oxide 0.8.9",
+]
+
+[[package]]
 name = "postcard"
 version = "1.1.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1553,7 +1603,7 @@ version = "0.5.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ed2bf2547551a7053d6fdfafda3f938979645c44812fbfcda098faae3f1a362d"
 dependencies = [
- "bitflags",
+ "bitflags 2.13.2",
 ]
 
 [[package]]
@@ -1655,7 +1705,7 @@ version = "1.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "891efababe418670775f199f0d233d84843c227a0949a883ce15b37c78d6629d"
 dependencies = [
- "bitflags",
+ "bitflags 2.13.2",
  "errno",
  "libc",
  "linux-raw-sys",
@@ -2215,7 +2265,7 @@ version = "0.261.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4f20f20e44f7e8aeb6744823ea9d869ede51e51be4fdaedede2852282e54d2d8"
 dependencies = [
- "bitflags",
+ "bitflags 2.13.2",
  "hashbrown 0.17.1",
  "indexmap",
  "semver",
@@ -2228,7 +2278,7 @@ version = "0.262.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "974d643b125b272607e2fff8012ea14a8328acd7621e4bafa7afb32500052b1b"
 dependencies = [
- "bitflags",
+ "bitflags 2.13.2",
  "hashbrown 0.17.1",
  "indexmap",
  "semver",
@@ -2254,7 +2304,7 @@ checksum = "2d93539aae382faee7b19650fd966f1f8185599b9cc4adc0a5a8b8f768c11ba9"
 dependencies = [
  "addr2line",
  "async-trait",
- "bitflags",
+ "bitflags 2.13.2",
  "bumpalo",
  "cc",
  "encoding_rs",
@@ -2441,7 +2491,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8511353a609cd60bb91c85f96beef39a63e96ccdc20eb20af1da9b805c499ece"
 dependencies = [
  "anyhow",
- "bitflags",
+ "bitflags 2.13.2",
  "heck",
  "indexmap",
  "wit-component",
@@ -2455,7 +2505,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ed63d0061d45fdf32d8f47913845491395a6918e5b4bee51d1910c3777bcbaca"
 dependencies = [
  "async-trait",
- "bitflags",
+ "bitflags 2.13.2",
  "bytes",
  "futures",
  "rand",
@@ -2620,7 +2670,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2818766842bd2321074c348fb5c15d8fdb105a9eb78374e6d77c7d4127e1f2f9"
 dependencies = [
  "anyhow",
- "bitflags",
+ "bitflags 2.13.2",
  "indexmap",
  "log",
  "serde",
@@ -2768,6 +2818,12 @@ dependencies = [
  "memchr",
  "zopfli",
 ]
+
+[[package]]
+name = "zlib-rs"
+version = "0.6.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b268e58e7c693d7c271f93ffc4ba3b380412554231c85bf61ca7af91042a4112"
 
 [[package]]
 name = "zmij"

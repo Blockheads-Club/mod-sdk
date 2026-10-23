@@ -80,8 +80,9 @@ client                                   modded server                  vanilla 
 | `08` | S->C | `REJECT_TEXT` | `{reasonCode, text, url?}` |
 | `10` | both | `CHANNEL` | raw: `channelId:u16le payload[0..=32768]` |
 | `11` | both | `CHANNEL_REGISTER` | `{name, id}` |
+| `12` | S->C | `COSMETICS` | `{full, players}` |
 
-Ops `09`, `0a`-`0f` and `12`-`ff` are reserved.
+Ops `09`, `0a`-`0f` and `13`-`ff` are reserved.
 
 ### 00 HELLO (client -> server)
 
@@ -116,7 +117,7 @@ Empty map (`a0`). The full packet is `bc 02 a0`.
 | --- | --- | --- |
 | `mods` | array of mod entries | Every mod the client should or may run, sorted by `id`. Server-only mods may be listed for information with `sides = ["server"]`. |
 | `channels` | array of `{name: text, id: uint ≤ 65535}` | Channels open now (`<mod-id>:<name>` → wire id). |
-| `registry` | map text → (map text → uint) | Content id map: kind (`blocks`, `items`, `cosmetics`, ...) → content key → numeric id for this world. Empty map until M8. |
+| `registry` | map text → (map text → uint) | Content id map, see [Content registry](#content-registry): kind (`blocks`, `items`, `cosmetics`) → content key → numeric id for this world. Empty map when no listed mod declares content. |
 
 Mod entry:
 
@@ -191,6 +192,22 @@ The server owns the id space: it assigns an id the first time a channel name is 
 while it runs, and sends `CHANNEL_REGISTER` to a client in the game before the first `CHANNEL` on a new id (and for
 channels opened later, on its next network poll). A `CHANNEL_REGISTER` from a client is ignored in version 1.
 
+### 12 COSMETICS (server -> client)
+
+`{full: bool, players: {<playerID>: {<slot>: <cosmetic id>}}}`: which cosmetics players wear. Sent only to modded
+clients in the game, and only by servers whose mods declare cosmetics.
+
+- `full = true` replaces everything the client knew. The server sends one right after approval (it is empty when
+  nobody wears anything), before the client's world starts drawing other players.
+- `full = false` is a delta: the set of every listed player is replaced by the one in the message, and a player with
+  an empty map wears nothing. Players not listed are unchanged.
+- The key is the vanilla `playerID` string, the same id the client sees as `clientID` of that player's blockheads
+  (all of a player's blockheads show the same cosmetics).
+- `slot` is one of `hat`, `shirt`, `pants`, `shoes`, `hair`, `weapon`; the id is a value of
+  `registry.cosmetics`. A client ignores ids it does not know and slots it does not draw.
+- A server resends a delta when a mod equips or takes off a cosmetic, and `{full: false, players: {id: {}}}` when the
+  player leaves. Cosmetics are not saved by the server: mods re-equip on `player-join` from their own storage.
+
 ## 6. Join after acceptance
 
 After `READY` the client sends its normal 0x1f player-information plist with **one extra key**:
@@ -242,6 +259,26 @@ mod never changes the hash. `SERVER_HELLO.clientRequired` is true exactly when t
 gives `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855`. Vectors: `modsHash` in
 [`../vectors/vectors.json`](../vectors/vectors.json).
 
+## Content registry
+
+Mods with `[content]` give their blocks, items and cosmetics a string key `<mod-id>:<name>`. Packets carry numbers,
+so the server gives every key an id the first time its world sees it, and sends the map in `MOD_LIST.registry`:
+
+```
+registry = { "cosmetics": { "hats:crown": 1, "hats:ember-hair": 2 }, "items": { "hats:crown-token": 1107 } }
+```
+
+- Kinds are `blocks`, `items`, `cosmetics`. A kind without a key is left out; the map is empty without content.
+- Ids are per world and per kind. `0` is never an id. Ranges: `cosmetics` and `blocks` start at 1, `items` at 1107
+  (above the game's own item types). All ids fit 16 bits.
+- The server keeps the map in `<world>/mods/registry.toml` (`schema = 1`, one table per kind of `"key" = id`). It
+  gives new keys, sorted, the lowest free id of their kind. It never changes or reuses an id, not even after the
+  mod was removed (the key stays in the file), so a mod that comes back gets its ids back.
+- The list holds only the keys of the mods listed in this `MOD_LIST`. A client matches the keys with the `[content]`
+  of the packages it loaded; a key without a declaration, and a declaration without a key, are ignored.
+- The registry is not part of `modsHash`: the ids are decided by the server and delivered with the list, and a
+  change of the declarations changes the mods' hashes anyway.
+
 ## 8. Test vectors
 
 `vectors/*.hex` hold one full packet each (lowercase hex + newline); `vectors/invalid/*.hex` must be rejected with
@@ -258,7 +295,8 @@ Example, `02-list-request.hex`: `bc02a0`. `10-channel.hex` (channel 1, payload `
 
 ## 9. Versioning
 
-`proto` is bumped only for incompatible changes. New keys and new ops are compatible additions (ignored by older
+`proto` is bumped only for incompatible changes (`COSMETICS` is a compatible addition: an older client ignores the
+unknown op). New keys and new ops are compatible additions (ignored by older
 peers). The API version (`HELLO.api`, `mod.toml` `api`) is independent of `proto`.
 
 ## 10. Server behaviour (blockheads-server, M5)

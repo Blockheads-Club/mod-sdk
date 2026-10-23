@@ -42,5 +42,7 @@ input always gives the same bytes and the same SHA-256.
 - No self-dependency; an id may not be in both `dependencies` and `soft-dependencies`.
 - `permissions.net-http` needs a server side.
 - `[content]` needs `sides.client = true` and forces `client-required = true` (explicit `false` is an error). Keys are
-  `<id>:<name>`, unique; textures are PNGs under `assets/`.
+  `<id>:<name>`, unique; textures are PNGs under `assets/`. A cosmetic's `slot` is one of `hat`, `shirt`, `pants`,
+  `shoes`, `hair`, `weapon`; `base` is a known vanilla item of that slot; `texture-arm` is for `shirt` only
+  ([content.md](content.md)).
 - `client-required` defaults to `sides.client`.

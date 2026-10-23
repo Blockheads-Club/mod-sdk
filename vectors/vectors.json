@@ -70,6 +70,14 @@
     },
     {
       "error": "type",
+      "file": "invalid/cosmetics-id-text.hex"
+    },
+    {
+      "error": "missing",
+      "file": "invalid/cosmetics-missing-full.hex"
+    },
+    {
+      "error": "type",
       "file": "invalid/reject-text-big-reason.hex"
     }
   ],
@@ -272,6 +280,56 @@
     {
       "body": {
         "channels": [],
+        "mods": [
+          {
+            "clientRequired": false,
+            "description": {},
+            "id": "hello-lua",
+            "indexListed": false,
+            "name": {
+              "en": "Hello (Lua)"
+            },
+            "permissions": {
+              "channels": false,
+              "native": false,
+              "netHttp": [],
+              "players": [
+                "chat"
+              ],
+              "world": "none"
+            },
+            "sha256": {
+              "$bytes": "c9f47f2fafa69d8e28bd8585599cd3020e2cca21188e8a51543ef016591be08e"
+            },
+            "sides": [
+              "server"
+            ],
+            "size": 1532,
+            "version": "0.1.0"
+          }
+        ],
+        "registry": {
+          "blocks": {
+            "hats:marble": 1
+          },
+          "cosmetics": {
+            "hats:crown": 1,
+            "hats:ember-hair": 2
+          },
+          "items": {
+            "hats:crown-token": 1107
+          }
+        }
+      },
+      "description": "One content mod: the world's id map for blocks, items and cosmetics (cosmetic ids start at 1).",
+      "direction": "S->C",
+      "file": "03-mod-list-registry.hex",
+      "length": 336,
+      "op": "0x03"
+    },
+    {
+      "body": {
+        "channels": [],
         "mods": [],
         "registry": {}
       },
@@ -429,6 +487,41 @@
       "file": "11-channel-register.hex",
       "length": 29,
       "op": "0x11"
+    },
+    {
+      "body": {
+        "full": true,
+        "players": {
+          "player-a": {
+            "hair": 2,
+            "hat": 1
+          },
+          "player-b": {
+            "hat": 1
+          }
+        }
+      },
+      "description": "Everything players wear, sent once after approval: two players, one with a hat and hair.",
+      "direction": "S->C",
+      "file": "12-cosmetics-full.hex",
+      "length": 54,
+      "op": "0x12"
+    },
+    {
+      "body": {
+        "full": false,
+        "players": {
+          "player-a": {},
+          "player-c": {
+            "hat": 1
+          }
+        }
+      },
+      "description": "A delta: player-a took the hat off (empty set), player-c puts a hat on.",
+      "direction": "S->C",
+      "file": "12-cosmetics-delta.hex",
+      "length": 43,
+      "op": "0x12"
     }
   ],
   "vanillaReject": {

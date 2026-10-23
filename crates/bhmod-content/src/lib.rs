@@ -1,0 +1,21 @@
+//! Content of the Blockheads mod system (milestone M8): what mods declare in `[content]`, the numeric ids a world
+//! gives it, and how clients show cosmetics.
+//!
+//! - [`registry`]: per-world id allocation from free ranges and the `<world>/mods/registry.toml` sidecar. The
+//!   server owns it; the result is sent in `MOD_LIST.registry`.
+//! - [`cosmetics`]: the client's table of cosmetics (registry + manifests), the `COSMETICS` state, and the rule
+//!   that decides which cosmetic a given blockhead shows in a slot.
+//! - [`texture`]: PNG decoding to RGBA for the clients' game hooks.
+//!
+//! Nothing here touches the game, the network or a clock; the server and both clients share it, so they agree on
+//! ids and on which texture is drawn.
+#![warn(missing_docs)]
+#![deny(unsafe_code)]
+
+pub mod cosmetics;
+pub mod registry;
+pub mod texture;
+
+pub use cosmetics::{CosmeticDef, Table, Wearing};
+pub use registry::{Kind, Registry};
+pub use texture::Texture;

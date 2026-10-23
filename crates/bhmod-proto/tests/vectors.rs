@@ -146,6 +146,20 @@ fn valid() -> Vec<(&'static str, &'static str, &'static str, Message)> {
                 registry: BTreeMap::from([("blocks".into(), BTreeMap::from([("landclaim:marker".into(), 200)]))]),
             }),
         ),
+        (
+            "03-mod-list-registry",
+            "S->C",
+            "One content mod: the world's id map for blocks, items and cosmetics (cosmetic ids start at 1).",
+            Message::ModList(ModList {
+                mods: vec![hello_lua()],
+                channels: vec![],
+                registry: BTreeMap::from([
+                    ("blocks".into(), BTreeMap::from([("hats:marble".into(), 1)])),
+                    ("cosmetics".into(), BTreeMap::from([("hats:crown".into(), 1), ("hats:ember-hair".into(), 2)])),
+                    ("items".into(), BTreeMap::from([("hats:crown-token".into(), 1107)])),
+                ]),
+            }),
+        ),
         ("03-mod-list-empty", "S->C", "No mods, channels or registry.", Message::ModList(ModList::default())),
         (
             "04-file-request",
@@ -229,6 +243,30 @@ fn valid() -> Vec<(&'static str, &'static str, &'static str, Message)> {
             "Late registration of channel 2.",
             Message::ChannelRegister(ChannelRegister { name: "landclaim:claims".into(), id: 2 }),
         ),
+        (
+            "12-cosmetics-full",
+            "S->C",
+            "Everything players wear, sent once after approval: two players, one with a hat and hair.",
+            Message::Cosmetics(Cosmetics {
+                full: true,
+                players: BTreeMap::from([
+                    ("player-a".into(), BTreeMap::from([("hair".into(), 2), ("hat".into(), 1)])),
+                    ("player-b".into(), BTreeMap::from([("hat".into(), 1)])),
+                ]),
+            }),
+        ),
+        (
+            "12-cosmetics-delta",
+            "S->C",
+            "A delta: player-a took the hat off (empty set), player-c puts a hat on.",
+            Message::Cosmetics(Cosmetics {
+                full: false,
+                players: BTreeMap::from([
+                    ("player-a".into(), BTreeMap::new()),
+                    ("player-c".into(), BTreeMap::from([("hat".into(), 1)])),
+                ]),
+            }),
+        ),
     ]
 }
 
@@ -283,6 +321,25 @@ fn invalid() -> Vec<(&'static str, String, &'static str)> {
                 ]))
             ),
             "type",
+        ),
+        (
+            "cosmetics-id-text",
+            format!(
+                "bc12{}",
+                cbor_hex(Value::Map(vec![
+                    (Value::text("full"), Value::Bool(true)),
+                    (
+                        Value::text("players"),
+                        Value::Map(vec![(Value::text("p"), Value::Map(vec![(Value::text("hat"), Value::text("1"))]))])
+                    )
+                ]))
+            ),
+            "type",
+        ),
+        (
+            "cosmetics-missing-full",
+            format!("bc12{}", cbor_hex(Value::Map(vec![(Value::text("players"), Value::Map(vec![]))]))),
+            "missing",
         ),
         (
             "reject-text-big-reason",

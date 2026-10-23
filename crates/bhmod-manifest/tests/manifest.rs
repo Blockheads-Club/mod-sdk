@@ -110,7 +110,7 @@ fn content_forces_client_required() {
     let m = parse(&format!(
         "{CLIENT}\n[content]\nblocks = [{{ key = \"demo:lamp\", texture = \"assets/lamp.png\", hardness = 1.5 }}]\n\
          items = [{{ key = \"demo:gem\", texture = \"assets/gem.png\", name = {{ en = \"Gem\" }} }}]\n\
-         cosmetics = [{{ key = \"demo:hat\", slot = \"head\", texture = \"assets/hat.png\" }}]\n"
+         cosmetics = [{{ key = \"demo:hat\", slot = \"hat\", texture = \"assets/hat.png\" }}]\n"
     ))
     .unwrap();
     assert!(m.client_required());
@@ -244,9 +244,51 @@ fn content() {
         "needs an `en`",
     );
     has(
-        &content(CLIENT, "cosmetics = [{ key = \"demo:hat\", slot = \"Head\", texture = \"assets/hat.png\" }]"),
-        "slot of",
+        &content(CLIENT, "cosmetics = [{ key = \"demo:hat\", slot = \"head\", texture = \"assets/hat.png\" }]"),
+        "slot must be one of",
     );
+}
+
+fn cosmetic(fields: &str) -> String {
+    format!("{CLIENT}\n[content]\ncosmetics = [{{ key = \"demo:c\", texture = \"assets/c.png\", {fields} }}]\n")
+}
+
+fn cosmetic_errors(fields: &str) -> Vec<String> {
+    match parse(&cosmetic(fields)) {
+        Ok(m) => panic!("accepted {m:?}"),
+        Err(i) => i.iter().map(ToString::to_string).collect(),
+    }
+}
+
+#[test]
+fn cosmetic_rules() {
+    let m = parse(&cosmetic(
+        "slot = \"shirt\", texture-arm = \"assets/arm.png\", base = \"linen-shirt\", name = { en = \"C\" }",
+    ))
+    .unwrap();
+    let c = &m.content.cosmetics[0];
+    assert_eq!((c.base.as_deref(), c.texture_arm.as_deref()), (Some("linen-shirt"), Some("assets/arm.png")));
+    // The arm texture counts as a texture of the declaration.
+    assert_eq!(m.content.textures(), vec![("demo:c", "assets/c.png"), ("demo:c", "assets/arm.png")]);
+    assert_eq!(m.content.keys().collect::<Vec<_>>(), vec!["demo:c"]);
+    assert!(parse(&cosmetic("slot = \"hair\"")).is_ok());
+    assert!(parse(&cosmetic("slot = \"weapon\", base = \"iron-sword\"")).is_ok());
+    has(&cosmetic_errors("slot = \"hat\", texture-arm = \"assets/arm.png\""), "only for shirt");
+    has(&cosmetic_errors("slot = \"shirt\", texture-arm = \"arm.png\""), "texture-arm must be a .png");
+    has(&cosmetic_errors("slot = \"hat\", base = \"nope\""), "not a known vanilla item");
+    has(&cosmetic_errors("slot = \"hat\", base = \"linen-pants\""), "belongs to the pants slot");
+    has(&cosmetic_errors("slot = \"weapon\""), "needs a base");
+    has(&cosmetic_errors("slot = \"hat\", name = { tr = \"x\" }"), "needs an `en`");
+}
+
+#[test]
+fn base_item_table() {
+    use bhmod_manifest::content::{base_item, base_item_for, BASE_ITEMS, SLOTS};
+    assert_eq!(base_item("linen-cap").unwrap().item_type, 115);
+    assert!(base_item("nope").is_none());
+    assert_eq!(base_item_for("pants", 84).unwrap().slug, "linen-pants");
+    assert!(base_item_for("hat", 84).is_none());
+    assert!(BASE_ITEMS.iter().all(|b| SLOTS.contains(&b.slot)));
 }
 
 #[test]

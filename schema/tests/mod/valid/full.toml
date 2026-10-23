@@ -37,4 +37,7 @@ services = [{ name = "landclaim", version = "1.4.0", wit = "wit/landclaim.wit" }
 [content]
 blocks = [{ key = "landclaim:marker", texture = "assets/textures/blocks/marker.png", hardness = 2.0 }]
 items = [{ key = "landclaim:deed", texture = "assets/textures/items/deed.png", name = { en = "Deed" } }]
-cosmetics = [{ key = "landclaim:flag-hat", slot = "head", texture = "assets/cosmetics/flag-hat.png" }]
+cosmetics = [
+  { key = "landclaim:flag-hat", slot = "hat", texture = "assets/cosmetics/flag-hat.png", base = "linen-cap", name = { en = "Flag hat" } },
+  { key = "landclaim:surveyor", slot = "shirt", texture = "assets/cosmetics/surveyor.png", texture-arm = "assets/cosmetics/surveyor-arm.png" },
+]

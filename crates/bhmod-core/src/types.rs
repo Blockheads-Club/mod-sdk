@@ -78,6 +78,36 @@ impl Role {
     }
 }
 
+/// A kind of content a mod declares in `[content]` (`content.kind`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ContentKind {
+    /// A new block.
+    Block,
+    /// A new item.
+    Item,
+    /// A new cosmetic.
+    Cosmetic,
+}
+
+impl ContentKind {
+    /// All kinds.
+    pub const ALL: [ContentKind; 3] = [ContentKind::Block, ContentKind::Item, ContentKind::Cosmetic];
+
+    /// The WIT name.
+    pub fn name(self) -> &'static str {
+        match self {
+            ContentKind::Block => "block",
+            ContentKind::Item => "item",
+            ContentKind::Cosmetic => "cosmetic",
+        }
+    }
+
+    /// Parses a WIT name.
+    pub fn parse(s: &str) -> Option<ContentKind> {
+        ContentKind::ALL.into_iter().find(|k| k.name() == s)
+    }
+}
+
 /// Which program the host is (`types.side`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Side {

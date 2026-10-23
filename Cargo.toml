@@ -8,6 +8,7 @@ members = [
     "crates/bhmod-index",
     "crates/bhmod-wasm",
     "crates/bhmod-client",
+    "crates/bhmod-content",
     "crates/bhmod-android",
 ]
 # Guest code builds for wasm32-wasip2 on its own (scripts/build-wasm.sh).
@@ -33,6 +34,7 @@ authors = ["Blockheads Club contributors"]
 bhmod-manifest = { path = "crates/bhmod-manifest", version = "0.1.0" }
 bhmod-proto = { path = "crates/bhmod-proto", version = "0.1.0" }
 bhmod-client = { path = "crates/bhmod-client", version = "0.1.0" }
+bhmod-content = { path = "crates/bhmod-content", version = "0.1.0" }
 bhmod-index = { path = "crates/bhmod-index", version = "0.1.0" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

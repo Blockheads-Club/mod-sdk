@@ -114,6 +114,8 @@ pub enum Op {
     Channel = 0x10,
     /// Both directions, late channel registration.
     ChannelRegister = 0x11,
+    /// S->C, the cosmetics the players wear (M8).
+    Cosmetics = 0x12,
 }
 
 impl Op {
@@ -131,6 +133,7 @@ impl Op {
             0x08 => Op::RejectText,
             0x10 => Op::Channel,
             0x11 => Op::ChannelRegister,
+            0x12 => Op::Cosmetics,
             _ => return None,
         })
     }
@@ -297,6 +300,18 @@ pub struct ChannelRegister {
     pub id: u16,
 }
 
+/// `COSMETICS` (S->C): the cosmetics players wear, by the numeric ids of the `cosmetics` registry.
+///
+/// `full = true` replaces everything the client knew (sent once after approval); otherwise it is a delta: every
+/// listed player's set is replaced, and a player with an empty set wears nothing.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Cosmetics {
+    /// True: replace the whole table.
+    pub full: bool,
+    /// Vanilla `playerID` -> slot (`hat`, `hair`, ...) -> cosmetic id.
+    pub players: BTreeMap<String, BTreeMap<String, u64>>,
+}
+
 /// A decoded 0xBC packet.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Message {
@@ -322,6 +337,8 @@ pub enum Message {
     Channel(Channel),
     /// 0x11.
     ChannelRegister(ChannelRegister),
+    /// 0x12.
+    Cosmetics(Cosmetics),
 }
 
 fn text(s: &str) -> Value {
@@ -359,6 +376,7 @@ impl Message {
             Message::RejectText(_) => Op::RejectText,
             Message::Channel(_) => Op::Channel,
             Message::ChannelRegister(_) => Op::ChannelRegister,
+            Message::Cosmetics(_) => Op::Cosmetics,
         }
     }
 
@@ -427,6 +445,23 @@ impl Message {
                 map(m)
             }
             Message::ChannelRegister(c) => channel_entry(&c.name, c.id),
+            Message::Cosmetics(c) => map(vec![
+                ("full", Value::Bool(c.full)),
+                (
+                    "players",
+                    Value::Map(
+                        c.players
+                            .iter()
+                            .map(|(player, slots)| {
+                                (
+                                    text(player),
+                                    Value::Map(slots.iter().map(|(s, id)| (text(s), Value::Uint(*id))).collect()),
+                                )
+                            })
+                            .collect(),
+                    ),
+                ),
+            ]),
             Message::FileChunk(c) => {
                 let mut raw = c.sha256.to_vec();
                 raw.extend(c.offset.to_le_bytes());
@@ -517,6 +552,22 @@ fn decode_cbor(op: Op, f: &Fields) -> Result<Message, Error> {
             reason_code: u8::try_from(f.uint("reasonCode")?).map_err(|_| Error::Type("reasonCode"))?,
             text: f.text("text")?,
             url: f.opt_text("url")?,
+        }),
+        Op::Cosmetics => Message::Cosmetics(Cosmetics {
+            full: f.bool("full")?,
+            players: f
+                .map("players")?
+                .0
+                .iter()
+                .map(|(player, slots)| {
+                    let slots = Fields::of(slots, "players")?
+                        .0
+                        .iter()
+                        .map(|(s, id)| Ok((as_text(s, "players")?, as_uint(id, "players")?)))
+                        .collect::<Result<_, Error>>()?;
+                    Ok((as_text(player, "players")?, slots))
+                })
+                .collect::<Result<_, Error>>()?,
         }),
         // FILE_CHUNK and CHANNEL never reach here; CHANNEL_REGISTER is the remaining CBOR message.
         _ => Message::ChannelRegister(ChannelRegister { name: f.text("name")?, id: f.u16("id")? }),
