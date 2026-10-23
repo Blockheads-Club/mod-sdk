@@ -75,20 +75,40 @@ fn resolve_follows_the_worn_item() {
         true,
         &[("p", &[("hat", 1), ("hair", 3), ("shirt", 4)]), ("q", &[("hat", 2)]), ("r", &[("hat", 3), ("shoes", 9)])],
     ));
-    let key = |d: Option<&CosmeticDef>| d.map(|d| d.key.clone());
-    // Restricted to the linen cap.
-    assert_eq!(key(resolve(&t, &w, "p", "hat", Some(115))), Some("hats:crown".into()));
-    assert_eq!(key(resolve(&t, &w, "p", "hat", Some(142))), None);
-    assert_eq!(key(resolve(&t, &w, "p", "hat", None)), None);
-    // Without a base: any worn item, but not an empty slot.
-    assert_eq!(key(resolve(&t, &w, "q", "hat", Some(142))), Some("hats:any".into()));
-    assert_eq!(key(resolve(&t, &w, "q", "hat", None)), None);
+    let key = |d: Option<Resolved>| d.map(|d| (d.def.key.clone(), d.wear));
+    let hats = |p, worn| key(resolve(&t, &w, p, "hat", worn));
+    // Restricted to the linen cap: shown on it, shown on an empty slot (wearing the cap), hidden on other hats.
+    assert_eq!(hats("p", Some(115)), Some(("hats:crown".into(), None)));
+    assert_eq!(hats("p", None), Some(("hats:crown".into(), Some(115))));
+    assert_eq!(hats("p", Some(142)), None);
+    // Without a base: any worn item; an empty slot gets the slot's default item.
+    assert_eq!(hats("q", Some(142)), Some(("hats:any".into(), None)));
+    assert_eq!(hats("q", None), Some(("hats:any".into(), Some(115))));
     // Hair does not depend on the item.
-    assert_eq!(key(resolve(&t, &w, "p", "hair", None)), Some("hats:ember".into()));
+    assert_eq!(key(resolve(&t, &w, "p", "hair", None)), Some(("hats:ember".into(), None)));
+    assert_eq!(key(resolve(&t, &w, "p", "hair", Some(1))), Some(("hats:ember".into(), None)));
+    // The shirt cosmetic has no base: empty slot wears the default shirt.
+    assert_eq!(key(resolve(&t, &w, "p", "shirt", None)), Some(("hats:suit".into(), Some(85))));
     // Not worn, unknown player, unknown id, id of another slot.
     assert_eq!(key(resolve(&t, &w, "p", "pants", Some(84))), None);
     assert_eq!(key(resolve(&t, &w, "nobody", "hat", Some(115))), None);
     assert_eq!(key(resolve(&t, &w, "r", "shoes", Some(124))), None);
     assert_eq!(key(resolve(&t, &w, "r", "hat", Some(115))), None);
-    assert_eq!(key(resolve(&t, &w, "p", "shirt", Some(85))), Some("hats:suit".into()));
+}
+
+#[test]
+fn weapons_need_their_base_in_hand() {
+    let m = Manifest::parse(
+        "schema = 1\nid = \"arms\"\nversion = \"1.0.0\"\nname = { en = \"Arms\" }\nauthors = [\"me\"]\nlicense = \"MIT\"\n\
+         api = \"^0.1\"\n[sides]\nclient = true\n[entry]\nclient = { runtime = \"lua\", path = \"client/main.luau\" }\n\
+         [content]\ncosmetics = [{ key = \"arms:blade\", slot = \"weapon\", texture = \"assets/b.png\", base = \"iron-sword\" }]\n",
+    )
+    .unwrap();
+    let reg = BTreeMap::from([("cosmetics".to_string(), BTreeMap::from([("arms:blade".to_string(), 1)]))]);
+    let t = Table::build(&reg, [&m]);
+    let mut w = Wearing::default();
+    w.apply(&msg(true, &[("p", &[("weapon", 1)])]));
+    assert_eq!(resolve(&t, &w, "p", "weapon", Some(68)).map(|r| r.wear), Some(None));
+    assert!(resolve(&t, &w, "p", "weapon", Some(50)).is_none());
+    assert!(resolve(&t, &w, "p", "weapon", None).is_none());
 }

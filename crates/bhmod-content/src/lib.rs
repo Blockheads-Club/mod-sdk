@@ -6,16 +6,19 @@
 //! - [`cosmetics`]: the client's table of cosmetics (registry + manifests), the `COSMETICS` state, and the rule
 //!   that decides which cosmetic a given blockhead shows in a slot.
 //! - [`texture`]: PNG decoding to RGBA for the clients' game hooks.
+//! - [`client`]: the clients' state: packages, registry, who wears what, prepared textures.
 //!
 //! Nothing here touches the game, the network or a clock; the server and both clients share it, so they agree on
 //! ids and on which texture is drawn.
 #![warn(missing_docs)]
 #![deny(unsafe_code)]
 
+pub mod client;
 pub mod cosmetics;
 pub mod registry;
 pub mod texture;
 
-pub use cosmetics::{CosmeticDef, Table, Wearing};
+pub use client::{Content, Part};
+pub use cosmetics::{resolve, CosmeticDef, Resolved, Table, Wearing};
 pub use registry::{Kind, Registry};
-pub use texture::Texture;
+pub use texture::{Gpu, Texture};

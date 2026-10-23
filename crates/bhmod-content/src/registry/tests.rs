@@ -61,6 +61,7 @@ fn allocation_fills_holes_and_reports_exhaustion() {
     let err = r.clone().allocate(&keys).unwrap_err();
     assert_eq!(err, Error::Exhausted(Kind::Blocks));
     assert_eq!(err.to_string(), "no free blocks id left");
+    assert_eq!(Error::Io("denied".into()).to_string(), "registry.toml: denied");
     // A failed allocation leaves the registry as it was.
     let mut r2 = before.clone();
     assert!(r2.allocate(&keys).is_err());
@@ -132,6 +133,8 @@ fn files() {
     let file = dir.path().join("file");
     std::fs::write(&file, "x").unwrap();
     assert!(r.write(&file.join("sub/registry.toml")).is_err());
+    // No parent directory at all.
+    assert!(r.write(Path::new("")).is_err());
 }
 
 #[test]

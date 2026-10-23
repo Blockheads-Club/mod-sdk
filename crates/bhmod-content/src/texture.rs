@@ -32,12 +32,12 @@ impl Texture {
         let mut buf = vec![0; reader.output_buffer_size()];
         let frame = reader.next_frame(&mut buf).map_err(|e| e.to_string())?;
         let raw = &buf[..frame.buffer_size()];
-        let rgba = match frame.color_type {
-            png::ColorType::Rgba => raw.to_vec(),
-            png::ColorType::Rgb => raw.chunks_exact(3).flat_map(|p| [p[0], p[1], p[2], 255]).collect(),
-            png::ColorType::GrayscaleAlpha => raw.chunks_exact(2).flat_map(|p| [p[0], p[0], p[0], p[1]]).collect(),
-            png::ColorType::Grayscale => raw.iter().flat_map(|g| [*g, *g, *g, 255]).collect(),
-            png::ColorType::Indexed => return Err("palette was not expanded".to_string()),
+        // EXPAND turned palettes into RGB(A) and low bit depths into 8 bits, so what is left is 1 to 4 samples.
+        let rgba = match frame.color_type.samples() {
+            4 => raw.to_vec(),
+            3 => raw.chunks_exact(3).flat_map(|p| [p[0], p[1], p[2], 255]).collect(),
+            2 => raw.chunks_exact(2).flat_map(|p| [p[0], p[0], p[0], p[1]]).collect(),
+            _ => raw.iter().flat_map(|g| [*g, *g, *g, 255]).collect(),
         };
         Ok(Texture { width: w, height: h, rgba })
     }
@@ -58,6 +58,39 @@ impl Texture {
             }
         }
         Texture { width: self.width, height: self.height, rgba }
+    }
+}
+
+/// A texture as the game's `CPTexture2D` wants it: edges rounded up to powers of two, colours premultiplied by
+/// alpha, plus the size of the picture inside.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Gpu {
+    /// Padded width (a power of two).
+    pub wide: u32,
+    /// Padded height (a power of two).
+    pub high: u32,
+    /// The picture's width.
+    pub content_wide: u32,
+    /// The picture's height.
+    pub content_high: u32,
+    /// `wide * high * 4` bytes, RGBA, premultiplied; the picture is in the top-left corner, the padding is
+    /// transparent.
+    pub rgba: Vec<u8>,
+}
+
+impl Texture {
+    /// The pixels in the form `CPTexture2D initWithData:pixelFormat:pixelsWide:pixelsHigh:contentSize:mipmap:`
+    /// takes them (pixel format 1, RGBA8888, as the game's own loader passes).
+    pub fn for_gpu(&self) -> Gpu {
+        let (wide, high) = (self.width.next_power_of_two(), self.height.next_power_of_two());
+        let src = self.premultiplied();
+        let mut rgba = vec![0; wide as usize * high as usize * 4];
+        let row = self.width as usize * 4;
+        for y in 0..self.height as usize {
+            let to = y * wide as usize * 4;
+            rgba[to..to + row].copy_from_slice(&src.rgba[y * row..(y + 1) * row]);
+        }
+        Gpu { wide, high, content_wide: self.width, content_high: self.height, rgba }
     }
 }
 

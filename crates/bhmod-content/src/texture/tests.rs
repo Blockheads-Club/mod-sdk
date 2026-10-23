@@ -62,3 +62,17 @@ fn reads_from_a_package() {
     assert!(Texture::read(&mut src, "assets/bad.png").unwrap_err().starts_with("assets/bad.png: "));
     assert!(Texture::read(&mut src, "assets/none.png").unwrap_err().starts_with("assets/none.png: "));
 }
+
+#[test]
+fn gpu_form_pads_to_powers_of_two() {
+    let t = Texture { width: 3, height: 2, rgba: (0..24).map(|i| if i % 4 == 3 { 255 } else { i as u8 }).collect() };
+    let g = t.for_gpu();
+    assert_eq!((g.wide, g.high, g.content_wide, g.content_high), (4, 2, 3, 2));
+    assert_eq!(g.rgba.len(), 4 * 2 * 4);
+    assert_eq!(&g.rgba[..12], &t.rgba[..12]);
+    assert_eq!(&g.rgba[12..16], [0, 0, 0, 0]);
+    assert_eq!(&g.rgba[16..28], &t.rgba[12..24]);
+    // Already a power of two: no padding.
+    let one = Texture { width: 1, height: 1, rgba: vec![255, 0, 0, 128] };
+    assert_eq!(one.for_gpu().rgba, [128, 0, 0, 128]);
+}

@@ -6,7 +6,7 @@
 
 use std::collections::BTreeMap;
 
-use bhmod_manifest::content::{base_item, SLOTS};
+use bhmod_manifest::content::base_item;
 use bhmod_manifest::Manifest;
 use bhmod_proto::Cosmetics;
 
@@ -49,9 +49,6 @@ impl Table {
         for m in mods {
             for c in &m.content.cosmetics {
                 let Some(id) = ids.and_then(|ids| ids.get(&c.key)).copied() else { continue };
-                if !SLOTS.contains(&c.slot.as_str()) {
-                    continue;
-                }
                 by_id.insert(
                     id,
                     CosmeticDef {
@@ -134,25 +131,47 @@ impl Wearing {
     }
 }
 
+/// The vanilla item a blockhead wears for a cosmetic that has no `base` while the slot is empty: plain items with
+/// no armour value.
+pub const DEFAULT_WEAR: [(&str, u16); 4] = [("hat", 115), ("shirt", 85), ("pants", 84), ("shoes", 124)];
+
+/// What a blockhead shows in a slot.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Resolved<'a> {
+    /// The cosmetic to draw.
+    pub def: &'a CosmeticDef,
+    /// `Some(item type)`: the slot is empty, so the blockhead wears this vanilla item (the cosmetic's base, or the
+    /// slot's [`DEFAULT_WEAR`]) just to have a shape to draw it on. `None`: the item worn is used.
+    pub wear: Option<u16>,
+}
+
 /// The cosmetic `player` shows in `slot`, given the vanilla item worn there (`worn`, an `ItemType`, or `None` when
-/// the slot is empty). `hair` ignores `worn`. A cosmetic restricted to a base item shows only while that item is
-/// worn; one without a base shows on any worn vanilla item.
+/// the slot is empty).
+///
+/// - `hair` ignores `worn`; `weapon` shows only on its base weapon.
+/// - A cosmetic restricted to a base item shows while that item is worn, and on an empty slot (the blockhead then
+///   wears the base). With another item worn it stays hidden.
+/// - A cosmetic without a base shows on any worn vanilla item, and on an empty slot (the blockhead then wears the
+///   slot's [`DEFAULT_WEAR`]).
 pub fn resolve<'a>(
     table: &'a Table,
     wearing: &Wearing,
     player: &str,
     slot: &str,
     worn: Option<u16>,
-) -> Option<&'a CosmeticDef> {
+) -> Option<Resolved<'a>> {
     let def = table.get(*wearing.of(player)?.get(slot)?)?;
     if def.slot != slot {
         return None;
     }
+    let default = DEFAULT_WEAR.iter().find(|(s, _)| *s == slot).map(|(_, t)| *t);
     match (slot, def.base, worn) {
-        ("hair", _, _) => Some(def),
-        (_, _, None) => None,
-        (_, Some(base), Some(item)) => (base == item).then_some(def),
-        (_, None, Some(_)) => Some(def),
+        ("hair", _, _) => Some(Resolved { def, wear: None }),
+        ("weapon", Some(base), Some(item)) => (base == item).then_some(Resolved { def, wear: None }),
+        ("weapon", ..) => None,
+        (_, base, None) => Some(Resolved { def, wear: Some(base.or(default)?) }),
+        (_, Some(base), Some(item)) => (base == item).then_some(Resolved { def, wear: None }),
+        (_, None, Some(_)) => Some(Resolved { def, wear: None }),
     }
 }
 

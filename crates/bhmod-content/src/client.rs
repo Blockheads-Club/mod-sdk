@@ -1,0 +1,144 @@
+//! The client's content state, shared by the PC port and the Android loader: the packages' declarations joined
+//! with the world's registry, who wears what, and the textures prepared for the game. The platform glue asks
+//! [`Content::resolve`] what a blockhead should show and [`Content::texture`] for the pixels.
+
+use std::collections::BTreeMap;
+use std::fs::File;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+
+use bhmod_manifest::package::{DirSource, Source, ZipSource, MAX_MANIFEST};
+use bhmod_manifest::Manifest;
+use bhmod_proto::Cosmetics;
+
+use crate::cosmetics::{self, Resolved, Table, Wearing};
+use crate::registry::Wire;
+use crate::texture::{Gpu, Texture};
+
+/// Which texture of a cosmetic.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Part {
+    /// `texture`: the one texture, or a shirt's body.
+    Main,
+    /// `texture-arm`: a shirt's arms.
+    Arm,
+}
+
+/// Opens a mod package: a `.bhmod` file or an unpacked folder (developer mods).
+pub fn open_package(path: &Path) -> Result<Box<dyn Source>, String> {
+    let fail = |e: std::io::Error| format!("{}: {e}", path.display());
+    if path.is_dir() {
+        return Ok(Box::new(DirSource::open(path).map_err(fail)?));
+    }
+    let file = File::open(path).map_err(fail)?;
+    let size = file.metadata().map_err(fail)?.len();
+    Ok(Box::new(ZipSource::open(file, size).map_err(fail)?))
+}
+
+/// The client's cosmetics: table, wearing, texture cache.
+#[derive(Default)]
+pub struct Content {
+    table: Table,
+    wearing: Wearing,
+    /// Package of each mod id.
+    packages: BTreeMap<String, PathBuf>,
+    cache: BTreeMap<(u64, Part), Option<Arc<Gpu>>>,
+    serial: u64,
+}
+
+impl Content {
+    /// Reads the manifests of the packages the server listed and joins their cosmetics with `registry`
+    /// (`MOD_LIST.registry`). Problems (an unreadable package) are returned as text; that package adds nothing.
+    pub fn load(registry: &Wire, packages: &[PathBuf]) -> (Content, Vec<String>) {
+        let mut problems = Vec::new();
+        let mut manifests = Vec::new();
+        let mut paths = BTreeMap::new();
+        for path in packages {
+            let read = open_package(path).and_then(|mut src| {
+                let text =
+                    src.read("mod.toml", MAX_MANIFEST).map_err(|e| format!("{}: mod.toml: {e}", path.display()))?;
+                Manifest::parse(&String::from_utf8_lossy(&text)).map_err(|issues| {
+                    let why: Vec<String> = issues.iter().map(ToString::to_string).collect();
+                    format!("{}: {}", path.display(), why.join("; "))
+                })
+            });
+            match read {
+                Ok(m) => {
+                    paths.insert(m.id.clone(), path.clone());
+                    manifests.push(m);
+                }
+                Err(why) => problems.push(why),
+            }
+        }
+        let table = Table::build(registry, &manifests);
+        // Keep only the packages that declare cosmetics.
+        paths.retain(|id, _| table.all().any(|c| &c.mod_id == id));
+        (Content { table, packages: paths, ..Content::default() }, problems)
+    }
+
+    /// True when some loaded mod declares a cosmetic the world has an id for.
+    pub fn is_active(&self) -> bool {
+        !self.table.is_empty()
+    }
+
+    /// The declared cosmetics.
+    pub fn table(&self) -> &Table {
+        &self.table
+    }
+
+    /// Applies a `COSMETICS` message. Returns the players whose look changed.
+    pub fn apply(&mut self, msg: &Cosmetics) -> Vec<String> {
+        let changed = self.wearing.apply(msg);
+        if !changed.is_empty() {
+            self.serial += 1;
+        }
+        changed
+    }
+
+    /// Forgets who wears what (the server connection ended).
+    pub fn clear(&mut self) {
+        if !self.wearing.is_empty() {
+            self.wearing.clear();
+            self.serial += 1;
+        }
+    }
+
+    /// Bumped whenever somebody's look changes; glue re-applies a blockhead when it differs from the last one seen.
+    pub fn serial(&self) -> u64 {
+        self.serial
+    }
+
+    /// What `player` shows in `slot`; see [`cosmetics::resolve`].
+    pub fn resolve(&self, player: &str, slot: &str, worn: Option<u16>) -> Option<Resolved<'_>> {
+        cosmetics::resolve(&self.table, &self.wearing, player, slot, worn)
+    }
+
+    /// The pixels of a cosmetic's texture, prepared for the game and cached. `None` when the cosmetic has no such
+    /// part or the file cannot be read (the problem is returned once, by the first call that hit it).
+    pub fn texture(&mut self, id: u64, part: Part) -> Result<Option<Arc<Gpu>>, String> {
+        if let Some(t) = self.cache.get(&(id, part)) {
+            return Ok(t.clone());
+        }
+        let Some(def) = self.table.get(id) else { return Ok(None) };
+        let path = match part {
+            Part::Main => Some(def.texture.clone()),
+            Part::Arm => def.texture_arm.clone(),
+        };
+        let Some(path) = path else {
+            self.cache.insert((id, part), None);
+            return Ok(None);
+        };
+        let loaded = self
+            .packages
+            .get(&def.mod_id)
+            .ok_or_else(|| format!("{}: the package is not loaded", def.mod_id))
+            .and_then(|p| open_package(p))
+            .and_then(|mut src| Texture::read(src.as_mut(), &path));
+        let gpu = loaded.as_ref().ok().map(|t| Arc::new(t.for_gpu()));
+        self.cache.insert((id, part), gpu.clone());
+        loaded.map(|_| gpu)
+    }
+}
+
+#[cfg(test)]
+mod tests;
