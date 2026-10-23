@@ -10,8 +10,8 @@ have.
 | Host | JVM mods |
 | --- | --- |
 | Desktop server (`blockheads-server`) | Build with the `jvm` cargo feature (off by default) and set `BLOCKHEADS_JVM=1`; uses the JRE of the machine. |
-| PC client (`blockheads-pc`) | Same: `jvm` feature, off by default, the user's JRE. |
-| Android client | ART is already in the process. `classes.dex` inside the jar, loaded with `InMemoryDexClassLoader`. |
+| PC client (`blockheads-pc`) | Build the runner with the `jvm` feature (off by default); the launcher preference `mods_jvm` (runner flag `--mods-jvm`, `--mods-java-home`) turns it on; the user's JRE. |
+| Android client | ART is already in the process. Loader built with `--jvm`, switched on by a `jvm-enabled` file; `classes.dex` inside the mod's jar, loaded with `InMemoryDexClassLoader`. |
 
 ## Quick start
 
@@ -206,3 +206,18 @@ every way a mod can fail, with fixtures compiled from `tests/jvm-fixtures`. They
 scripts/build-java.sh
 cargo test -p bhmod-core --features jvm
 ```
+
+## For host developers
+
+`bhmod-core` with `features = ["jvm"]` (needs a JDK to build: `build.rs` compiles `sdk/java`). Add the runtime to
+`HostOptions::runtimes` next to the others:
+
+```rust
+let rt = bhmod_core::jvm::JvmRuntime::new(bhmod_core::jvm::JvmConfig::default())?; // finds the JRE, starts the JVM
+opts.runtimes.push(Box::new(rt));
+```
+
+Keep it opt-in (the server uses `BLOCKHEADS_JVM=1`). `JvmConfig` sets the JRE (`java_home`, `bundled`), heap, extra JVM
+options, where the SDK jar is written and the grace periods. One JVM per process: the first configuration wins, and a
+failed start is remembered. Scale `grace` with your budgets on slow machines. Call it from the game thread: the host API
+is only usable inside the calls the host makes.
