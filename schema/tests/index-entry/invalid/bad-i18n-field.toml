@@ -1,0 +1,17 @@
+id = "hello-lua"
+name = "Hello"
+owners = ["Blockheads-Club"]
+repo = "https://github.com/Blockheads-Club/mod-sdk"
+
+[i18n.tr]
+title = "x"
+
+[[versions]]
+version = "0.1.0"
+url = "https://github.com/Blockheads-Club/mod-sdk/releases/download/mods-2026.10.23/hello-lua-0.1.0.bhmod"
+sha256 = "f5ba606a82aabf2406b9c1476c76e5cc7162e6f0abb05a00d2350a35190bca53"
+size = 1408
+sides = ["server"]
+api = "^0.1"
+permissions = {}
+published = 2026-10-23

@@ -1,5 +1,5 @@
 //! A `blockheads:api@0.1.0` component that calls every 0.1 import once in `on-enable` and logs what it gets.
-//! It depends on the 0.2 test guest loaded as `tour` (service `tour`, channel `tour:c`).
+//! It depends on the 0.3 test guest loaded as `tour` (service `tour`, channel `tour:c`).
 
 wit_bindgen::generate!({ path: "../../../../wit/compat/blockheads-api-0.1.0", world: "server-mod" });
 

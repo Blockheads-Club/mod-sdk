@@ -28,8 +28,9 @@ final class Kit {
     static final int DANGER = 0xFFD23B26, STRIPE_A = 0xFFC8351F, STRIPE_B = 0xFF8E2516, OK = 0xFF2F8F57;
     static final int TEXT = 0xFFFBF3E6, TEXT2 = 0xFFDCCDBB, TEXT3 = 0xFFBBA894;
 
-    /** Titles, buttons, tabs: a pixel-like face (Tiny5 when bundled; the system monospace bold otherwise). */
+    /** Titles, buttons, tabs, HUD numbers: Tiny5 once {@link Fonts#load} ran (the system monospace bold until then). */
     static Typeface title = Typeface.create(Typeface.MONOSPACE, Typeface.BOLD);
+    /** Reading text: Atkinson Hyperlegible Next (Golos Text for ru and kk) once {@link Fonts#load} ran. */
     static Typeface body = Typeface.DEFAULT;
 
     private Kit() {}

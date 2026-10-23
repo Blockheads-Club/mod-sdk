@@ -1,0 +1,16 @@
+schema = 1
+id = "hud-rust"
+version = "0.1.0"
+name = { en = "HUD demo (Rust)", tr = "HUD örneği (Rust)" }
+description = { en = "Shows a coin counter, a position text, a notice and a dialog. Example client mod for the ui interface (Rust twin of hud-lua)." }
+authors = ["Blockheads Club"]
+license = "MIT OR Apache-2.0"
+homepage = "https://github.com/Blockheads-Club/mod-sdk"
+api = "^0.3"
+
+[sides]
+server = false
+client = true
+
+[entry]
+client = { runtime = "wasm", path = "client/mod.wasm" }

@@ -78,7 +78,7 @@ service) and [`docs/jvm.md`](docs/jvm.md).
 ## 📚 What's inside
 | Path | What |
 | --- | --- |
-| [`wit/blockheads-api/`](wit/blockheads-api/) | The mod API (`blockheads:api@0.2.0`, WIT): events (incl. gameplay), commands, scheduler, storage, players, services, channels; the frozen 0.1 copy is in [`wit/compat/`](wit/compat/) |
+| [`wit/blockheads-api/`](wit/blockheads-api/) | The mod API (`blockheads:api@0.3.0`, WIT): events (incl. gameplay), commands, scheduler, storage, players, services, channels, client UI (HUD, toasts, dialogs); the frozen 0.1 and 0.2 copies are in [`wit/compat/`](wit/compat/) |
 | [`docs/luau-api.md`](docs/luau-api.md) | How the API looks from Lua |
 | [`docs/wasm.md`](docs/wasm.md) | WASM mods: Rust SDK, C/Zig/TinyGo, how the host runs them, the conformance suite |
 | [`docs/jvm.md`](docs/jvm.md) | JVM mods: Java/Kotlin SDK (generated from the WIT), how the host runs them, Android (ART) |

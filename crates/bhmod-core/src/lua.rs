@@ -18,6 +18,7 @@ use crate::runtime::TaskId;
 use crate::runtime::{CallError, CommandId, HostApi, Instance, InstanceLimits, ModFiles, Runtime, SubscriptionId};
 use crate::types::{ApiError, CommandOutcome, CommandSender, CommandSpec, Event, EventKind, LogLevel, Mutation};
 use crate::types::{ChannelSource, ChannelTarget, Outcome, Pos, Priority, RejectReason, Role};
+use crate::ui::{ButtonKind, Dialog, DialogButton, Field, NoticeLevel, Slot, Widget, WidgetKind};
 use crate::value::{self, Value as Cbor};
 
 /// The Luau runtime.
@@ -41,8 +42,13 @@ struct Shared {
     host: Cell<Option<HostPtr>>,
     deadline: Cell<Option<Instant>>,
     timed_out: Cell<bool>,
+    /// Interrupts since the last clock read: `Instant::now` is a syscall on hosts without a vDSO clock (HPET).
+    ticks: Cell<u32>,
     files: ModFiles,
 }
+
+/// The deadline is compared with the clock on every n-th interrupt (loop back-edges and calls), not on each one.
+const INTERRUPT_CHECK_EVERY: u32 = 64;
 
 fn rt_err(msg: impl std::fmt::Display) -> mlua::Error {
     mlua::Error::runtime(msg)
@@ -349,6 +355,8 @@ fn call_service(
 ) -> mlua::Result<Value> {
     let args = args.iter().map(|a| to_cbor(sh, a, 1)).collect::<mlua::Result<Vec<_>>>()?;
     let bytes = Cbor::List(args).encode();
+    // The service runs another mod and may use up this call's time: the next interrupt reads the clock.
+    sh.ticks.set(INTERRUPT_CHECK_EVERY - 1);
     let out = with_host(sh, |h| h.call_service(name, req, method, &bytes))?
         .map_err(|e| rt_err(format!("service {name}.{method}: {e}")))?;
     decode_cbor(lua, sh, &out)
@@ -556,6 +564,56 @@ fn command_spec(t: &Table) -> mlua::Result<CommandSpec> {
     Ok(spec)
 }
 
+/// A required string key of a UI table.
+fn req_str(t: &Table, key: &str) -> mlua::Result<String> {
+    t.get::<Option<String>>(key)?.ok_or_else(|| rt_err(format!("invalid argument: {key} is required")))
+}
+
+/// An enum-valued key of a UI table: `default` when absent.
+fn enum_key<T>(t: &Table, key: &str, default: T, parse: fn(&str) -> Option<T>) -> mlua::Result<T> {
+    match t.get::<Option<String>>(key)? {
+        Some(s) => parse(&s).ok_or_else(|| rt_err(format!("invalid argument: unknown {key} {s:?}"))),
+        None => Ok(default),
+    }
+}
+
+fn widget_of(t: &Table) -> mlua::Result<Widget> {
+    Ok(Widget {
+        slot: enum_key(t, "slot", Slot::TopLeft, Slot::parse)?,
+        kind: enum_key(t, "kind", WidgetKind::Text, WidgetKind::parse)?,
+        icon: t.get("icon")?,
+        title: t.get("title")?,
+        text: t.get::<Option<String>>("text")?.unwrap_or_default(),
+    })
+}
+
+fn dialog_of(t: &Table) -> mlua::Result<Dialog> {
+    let field = match t.get::<Option<Table>>("field")? {
+        Some(f) => Some(Field {
+            placeholder: f.get::<Option<String>>("placeholder")?.unwrap_or_default(),
+            initial: f.get::<Option<String>>("initial")?.unwrap_or_default(),
+            max_length: f.get::<Option<u32>>("max_length")?.unwrap_or(crate::ui::MAX_FIELD),
+        }),
+        None => None,
+    };
+    let mut buttons = Vec::new();
+    if let Some(list) = t.get::<Option<Table>>("buttons")? {
+        for b in list.sequence_values::<Table>() {
+            let b = b?;
+            buttons.push(DialogButton {
+                label: req_str(&b, "label")?,
+                kind: enum_key(&b, "kind", ButtonKind::Secondary, ButtonKind::parse)?,
+            });
+        }
+    }
+    Ok(Dialog {
+        title: req_str(t, "title")?,
+        text: t.get::<Option<String>>("text")?.unwrap_or_default(),
+        field,
+        buttons,
+    })
+}
+
 impl LuaInstance {
     /// Creates the VM, installs `bh` and compiles nothing yet (the entry runs in `on_enable`).
     pub fn new(mod_id: &str, files: ModFiles, limits: InstanceLimits) -> mlua::Result<LuaInstance> {
@@ -563,8 +621,13 @@ impl LuaInstance {
             return Err(rt_err(format!("{mod_id}: entry point {} is missing", files.entry)));
         }
         let lua = Lua::new();
-        let sh =
-            Rc::new(Shared { host: Cell::new(None), deadline: Cell::new(None), timed_out: Cell::new(false), files });
+        let sh = Rc::new(Shared {
+            host: Cell::new(None),
+            deadline: Cell::new(None),
+            timed_out: Cell::new(false),
+            ticks: Cell::new(0),
+            files,
+        });
         let g = lua.globals();
         for name in ["debug", "loadstring", "getfenv", "setfenv"] {
             g.set(name, Value::Nil)?;
@@ -599,7 +662,9 @@ impl LuaInstance {
         lua.sandbox(true)?;
         let s = sh.clone();
         lua.set_interrupt(move |_| {
-            if s.deadline.get().is_some_and(|d| Instant::now() >= d) {
+            let ticks = s.ticks.get().wrapping_add(1);
+            s.ticks.set(ticks);
+            if ticks % INTERRUPT_CHECK_EVERY == 0 && s.deadline.get().is_some_and(|d| Instant::now() >= d) {
                 s.timed_out.set(true);
                 return Err(rt_err("time budget exceeded"));
             }
@@ -806,6 +871,35 @@ impl LuaInstance {
             with_host(&s, |h| h.channel_close(id))
         });
         bh.set("channels", channels)?;
+
+        let ui = lua.create_table()?;
+        let s = sh.clone();
+        b.func(&ui, "set_widget", move |_, (id, w): (String, Table)| {
+            let w = widget_of(&w)?;
+            with_host(&s, |h| h.ui_set_widget(&id, w))?.map_err(api_err)
+        });
+        let s = sh.clone();
+        b.func(&ui, "remove_widget", move |_, id: String| with_host(&s, |h| h.ui_remove_widget(&id)));
+        let s = sh.clone();
+        b.func(&ui, "toast", move |_, text: String| with_host(&s, |h| h.ui_toast(&text))?.map_err(api_err));
+        let s = sh.clone();
+        b.func(&ui, "notice", move |_, (text, level): (String, Option<String>)| {
+            let level = match level {
+                Some(l) => {
+                    NoticeLevel::parse(&l).ok_or_else(|| rt_err(format!("invalid argument: unknown level {l:?}")))?
+                }
+                None => NoticeLevel::Info,
+            };
+            with_host(&s, |h| h.ui_notice(&text, level))?.map_err(api_err)
+        });
+        let s = sh.clone();
+        b.func(&ui, "show_dialog", move |_, d: Table| {
+            let d = dialog_of(&d)?;
+            with_host(&s, |h| h.ui_show_dialog(d))?.map_err(api_err)
+        });
+        let s = sh.clone();
+        b.func(&ui, "close_dialog", move |_, id: u32| with_host(&s, |h| h.ui_close_dialog(id)));
+        bh.set("ui", ui)?;
 
         let val = lua.create_table()?;
         let s = sh.clone();

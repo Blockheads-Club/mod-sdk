@@ -41,6 +41,7 @@ use crate::types::{
     ApiError, ChannelSource, ChannelTarget, CommandOutcome, CommandSender, CommandSpec, Event, EventKind, LogLevel,
     Mutation, Outcome, Pos, Priority, RejectReason, Role, ServiceError,
 };
+use crate::ui::{ButtonKind, Dialog, DialogButton, Field, NoticeLevel, Slot, Widget, WidgetKind};
 use crate::value::Value;
 
 /// The Java SDK (generated bindings and runtime glue), compiled by `build.rs`.
@@ -570,6 +571,62 @@ fn spec_of(v: &Value) -> Result<CommandSpec, String> {
     })
 }
 
+/// An enum argument given by its WIT name.
+fn named<T>(a: &[Value], i: usize, parse: fn(&str) -> Option<T>) -> Result<T, String> {
+    let name = text(a, i)?;
+    parse(name).ok_or_else(|| format!("unknown name {name:?} in argument {i}"))
+}
+
+fn str_field(v: &Value, key: &str) -> Result<String, String> {
+    match v.get(key) {
+        Some(Value::Text(t)) => Ok(t.clone()),
+        _ => Err(format!("{key} must be text")),
+    }
+}
+
+fn opt_str_field(v: &Value, key: &str) -> Result<Option<String>, String> {
+    match v.get(key) {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::Text(t)) => Ok(Some(t.clone())),
+        _ => Err(format!("{key} must be text or none")),
+    }
+}
+
+fn widget_of(v: &Value) -> Result<Widget, String> {
+    Ok(Widget {
+        slot: named(&[v.get("slot").cloned().unwrap_or(Value::Null)], 0, Slot::parse)?,
+        kind: named(&[v.get("kind").cloned().unwrap_or(Value::Null)], 0, WidgetKind::parse)?,
+        icon: opt_str_field(v, "icon")?,
+        title: opt_str_field(v, "title")?,
+        text: str_field(v, "text")?,
+    })
+}
+
+fn dialog_of(v: &Value) -> Result<Dialog, String> {
+    let field = match v.get("field") {
+        None | Some(Value::Null) => None,
+        Some(f) => Some(Field {
+            placeholder: str_field(f, "placeholder")?,
+            initial: str_field(f, "initial")?,
+            max_length: match f.get("max-length") {
+                Some(Value::Int(n)) => u32::try_from(*n).map_err(|_| "max-length is out of range".to_string())?,
+                _ => return Err("max-length must be an integer".into()),
+            },
+        }),
+    };
+    let Some(Value::List(items)) = v.get("buttons") else { return Err("buttons must be a list".into()) };
+    let buttons = items
+        .iter()
+        .map(|b| {
+            Ok(DialogButton {
+                label: str_field(b, "label")?,
+                kind: named(&[b.get("kind").cloned().unwrap_or(Value::Null)], 0, ButtonKind::parse)?,
+            })
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    Ok(Dialog { title: str_field(v, "title")?, text: str_field(v, "text")?, field, buttons })
+}
+
 /// The WIT imports, by name (`interface.function`; resource methods `interface.resource.method` with the
 /// resource's key first).
 fn call_host(h: &mut dyn HostApi, f: &str, a: &[Value]) -> Result<Value, String> {
@@ -641,6 +698,16 @@ fn call_host(h: &mut dyn HostApi, f: &str, a: &[Value]) -> Result<Value, String>
             api_result(h.channel_send(unsigned(a, 0)?, target, bytes_arg(a, 2)?), |()| Value::Null)
         }
         "channels.close" => Value::Bool(h.channel_close(unsigned(a, 0)?)),
+
+        "ui.set-widget" => api_result(h.ui_set_widget(text(a, 0)?, widget_of(arg(a, 1)?)?), |()| Value::Null),
+        "ui.remove-widget" => Value::Bool(h.ui_remove_widget(text(a, 0)?)),
+        "ui.toast" => api_result(h.ui_toast(text(a, 0)?), |()| Value::Null),
+        "ui.notice" => {
+            let level = named(a, 1, NoticeLevel::parse)?;
+            api_result(h.ui_notice(text(a, 0)?, level), |()| Value::Null)
+        }
+        "ui.show-dialog" => api_result(h.ui_show_dialog(dialog_of(arg(a, 0)?)?), |id| Value::Int(id.into())),
+        "ui.close-dialog" => Value::Bool(h.ui_close_dialog(unsigned(a, 0)?)),
 
         other => return Err(format!("unknown host function {other:?} (this host does not implement it)")),
     })
@@ -1177,6 +1244,24 @@ mod tests {
         fn channel_close(&mut self, c: ChannelId) -> bool {
             c == 5
         }
+        fn ui_set_widget(&mut self, id: &str, w: Widget) -> Result<(), ApiError> {
+            self.res(&format!("widget {id} {w:?}"), ())
+        }
+        fn ui_remove_widget(&mut self, id: &str) -> bool {
+            id == "w"
+        }
+        fn ui_toast(&mut self, text: &str) -> Result<(), ApiError> {
+            self.res(&format!("toast {text}"), ())
+        }
+        fn ui_notice(&mut self, text: &str, level: NoticeLevel) -> Result<(), ApiError> {
+            self.res(&format!("notice {text} {}", level.name()), ())
+        }
+        fn ui_show_dialog(&mut self, d: Dialog) -> Result<u32, ApiError> {
+            self.res(&format!("dialog {d:?}"), 9)
+        }
+        fn ui_close_dialog(&mut self, id: u32) -> bool {
+            id == 9
+        }
     }
 
     fn t(s: &str) -> Value {
@@ -1276,6 +1361,65 @@ mod tests {
         assert_eq!(call(&mut h, "storage.set", &[t("k"), Value::Bytes(vec![9])]), ok(Value::Null));
         assert_eq!(call(&mut h, "storage.delete", &[t("k")]), Value::Bool(true));
         assert_eq!(call(&mut h, "storage.keys", &[t("p")]), Value::List(vec![t("pa")]));
+    }
+
+    #[test]
+    fn ui_functions() {
+        let mut h = Fake::default();
+        let widget = record(vec![
+            ("slot", t("top-right")),
+            ("kind", t("panel")),
+            ("icon", Value::Null),
+            ("title", t("T")),
+            ("text", t("hi")),
+        ]);
+        assert_eq!(call(&mut h, "ui.set-widget", &[t("w"), widget.clone()]), ok(Value::Null));
+        assert!(h.calls.last().unwrap().contains("TopRight"));
+        assert_eq!(call(&mut h, "ui.remove-widget", &[t("w")]), Value::Bool(true));
+        assert_eq!(call(&mut h, "ui.toast", &[t("yo")]), ok(Value::Null));
+        assert_eq!(call(&mut h, "ui.notice", &[t("n"), t("success")]), ok(Value::Null));
+        let dialog = record(vec![
+            ("title", t("D")),
+            ("text", t("body")),
+            ("field", record(vec![("placeholder", t("p")), ("initial", t("i")), ("max-length", Value::Int(20))])),
+            ("buttons", Value::List(vec![record(vec![("label", t("OK")), ("kind", t("primary"))])])),
+        ]);
+        assert_eq!(call(&mut h, "ui.show-dialog", std::slice::from_ref(&dialog)), ok(Value::Int(9)));
+        assert_eq!(call(&mut h, "ui.close-dialog", &[Value::Int(9)]), Value::Bool(true));
+        let Value::Map(plain) = dialog.clone() else { unreachable!() };
+        let mut plain = plain;
+        plain.retain(|(k, _)| k != "field");
+        assert!(call_host(&mut h, "ui.show-dialog", &[Value::Map(plain)]).is_ok());
+        // Bad shapes are errors.
+        let bad = |key: &str, v: Value, base: &Value| {
+            let Value::Map(mut m) = base.clone() else { unreachable!() };
+            m.retain(|(k, _)| k != key);
+            m.push((key.to_string(), v));
+            Value::Map(m)
+        };
+        for w in [
+            bad("slot", t("middle"), &widget),
+            bad("kind", Value::Null, &widget),
+            bad("icon", Value::Int(1), &widget),
+            bad("text", Value::Int(1), &widget),
+        ] {
+            assert!(call_host(&mut h, "ui.set-widget", &[t("w"), w]).is_err());
+        }
+        assert!(call_host(&mut h, "ui.notice", &[t("n"), t("loud")]).is_err());
+        let field = |f: Value| bad("field", f, &dialog);
+        let fld = |k: &str, v: Value| {
+            let base = record(vec![("placeholder", t("p")), ("initial", t("i")), ("max-length", Value::Int(20))]);
+            bad(k, v, &base)
+        };
+        for d in [
+            field(fld("max-length", Value::Int(-1))),
+            field(fld("max-length", t("x"))),
+            bad("buttons", Value::Int(1), &dialog),
+            bad("buttons", Value::List(vec![record(vec![("label", t("OK")), ("kind", t("loud"))])]), &dialog),
+            bad("title", Value::Int(1), &dialog),
+        ] {
+            assert!(call_host(&mut h, "ui.show-dialog", &[d]).is_err());
+        }
     }
 
     #[test]

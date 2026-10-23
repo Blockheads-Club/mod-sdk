@@ -89,3 +89,18 @@ fn build_index() {
     assert!(msgs.iter().any(|m| m.starts_with("mods/junk")), "{msgs:?}");
     assert!(msgs.iter().any(|m| m.starts_with("index.json")), "{msgs:?}");
 }
+
+#[test]
+fn entry_translations() {
+    let text = std::fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../schema/tests/index-entry/valid/localized.toml"),
+    )
+    .unwrap();
+    let (json, entry) = bhmod_index::entry::Entry::parse("localized.toml", &text).unwrap();
+    assert_eq!(json["i18n"]["tr"]["name"], "Merhaba (Lua)");
+    assert_eq!(entry.i18n["tr"].description.as_deref(), Some("/hello komutunu ekler."));
+    assert_eq!(entry.i18n["pt-BR"].description, None);
+    // An entry without translations still parses.
+    let plain = text.split("[i18n.tr]").next().unwrap().to_string() + &text[text.find("[[versions]]").unwrap()..];
+    assert!(bhmod_index::entry::Entry::parse("plain.toml", &plain).unwrap().1.i18n.is_empty());
+}

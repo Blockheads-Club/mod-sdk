@@ -6,7 +6,7 @@ description = { en = "My first Blockheads mod." }
 authors = ["your-name"]
 # Your mod, your licence: pick any (MIT, GPL-3.0-or-later, Apache-2.0, ...). Add a LICENSE file before publishing.
 license = "MIT"
-api = "^0.2"
+api = "^0.3"
 
 [sides]
 server = true

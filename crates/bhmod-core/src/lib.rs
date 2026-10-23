@@ -46,6 +46,7 @@ pub mod scheduler;
 pub mod services;
 pub mod storage;
 pub mod types;
+pub mod ui;
 pub mod value;
 
 pub use bridge::GameBridge;
@@ -53,7 +54,7 @@ pub use host::{HostOptions, ModHost, ModInfo, ModState};
 pub use runtime::{CallError, HostApi, Instance, Runtime};
 
 /// The `blockheads:api` version this host implements.
-pub const API_VERSION: &str = "0.2.0";
+pub const API_VERSION: &str = "0.3.0";
 
 /// The runtimes compiled into this build.
 pub fn default_runtimes() -> Vec<Box<dyn Runtime>> {

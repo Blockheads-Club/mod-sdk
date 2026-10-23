@@ -123,7 +123,7 @@ fn the_whole_api_from_a_command() {
     assert_eq!(r, vec!["done".to_string()], "{}", t.b.log_text());
     let log = t.b.log_text();
     for want in [
-        "facts 0.2.0 sink 1.0.0 SERVER fake-host 1.0",
+        "facts 0.3.0 sink 1.0.0 SERVER fake-host 1.0",
         "get p1 -",
         "alias p1 -",
         "online 2",
@@ -331,4 +331,16 @@ fn a_panic_in_the_host_is_a_java_exception_not_a_crash() {
     t.b.explode.set(false);
     // The mod is still there.
     assert_eq!(t.h.command(CommandSender::Player("p1".into()), "/api").unwrap(), vec!["done".to_string()]);
+}
+
+#[test]
+fn ui_calls_reach_the_game_or_are_unsupported() {
+    let mut t = sink("");
+    let p = || CommandSender::Player("p1".into());
+    assert_eq!(t.h.command(p(), "/ui"), Some(vec!["drawn".to_string()]), "{}", t.b.log_text());
+    let drawn = t.b.take_ui();
+    assert!(drawn.len() >= 5, "{drawn:?}");
+    assert!(t.b.has_log("ui true false 1 true"), "{}", t.b.log_text());
+    t.b.no_ui.set(true);
+    assert_eq!(t.h.command(p(), "/ui"), Some(vec!["ui unsupported".to_string()]));
 }

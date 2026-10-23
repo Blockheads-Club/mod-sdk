@@ -1,0 +1,21 @@
+package blockheads:api@0.2.0;
+
+/// Logging to the server console or the client log. Lines are prefixed with the mod id by the host.
+interface log {
+    /// Log severity.
+    enum level {
+        /// Very detailed output, hidden by default.
+        trace,
+        /// Diagnostic output, hidden by default.
+        debug,
+        /// Normal messages.
+        info,
+        /// Something looks wrong but the mod keeps working.
+        warn,
+        /// Something failed.
+        error,
+    }
+
+    /// Writes one log line. Messages longer than 4096 bytes are truncated by the host.
+    log: func(level: level, message: string);
+}

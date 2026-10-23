@@ -87,6 +87,24 @@ public final class Sink implements Mod {
             api.info("unregister " + api.unregisterCommand(id) + " " + api.unregisterCommand(id));
             return Replies.reply("done");
         });
+
+        api.command(Spec.command("ui").build(), (sender, label, args) -> {
+            try {
+                api.ui().setWidget("w", new club.blockheads.api.ui.Widget(club.blockheads.api.ui.Slot.TOP_RIGHT,
+                        club.blockheads.api.ui.WidgetKind.COUNTER, "coin", null, "5"));
+                api.ui().toast("hi");
+                api.ui().notice("n", club.blockheads.api.ui.NoticeLevel.SUCCESS);
+                club.blockheads.api.ui.Dialog d = new club.blockheads.api.ui.Dialog("T", "body",
+                        new club.blockheads.api.ui.Field("p", "i", 10), java.util.Arrays.asList(
+                                new club.blockheads.api.ui.DialogButton("OK", club.blockheads.api.ui.ButtonKind.PRIMARY)));
+                long id = api.ui().showDialog(d);
+                api.info("ui " + api.ui().removeWidget("w") + " " + api.ui().removeWidget("w") + " " + id + " "
+                        + api.ui().closeDialog(id));
+                return Replies.reply("drawn");
+            } catch (ApiErrorException e) {
+                return Replies.reply("ui " + e.error.tag());
+            }
+        });
     }
 
     static Map<String, Object> mapOf(Object... kv) {

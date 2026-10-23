@@ -1,4 +1,4 @@
-//! One instantiated component: the WIT `guest` export behind [`Instance`], for components of API 0.2 or 0.1.
+//! One instantiated component: the WIT `guest` export behind [`Instance`], for components of API 0.3, 0.2 or 0.1.
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -10,7 +10,7 @@ use bhmod_core::channels::ChannelId;
 use bhmod_core::runtime::{CallError, CommandId, HostApi, Instance, InstanceLimits, SubscriptionId, TaskId};
 use bhmod_core::types as core;
 
-use crate::bindings::{v01, v02, PlayerRes};
+use crate::bindings::{v01, v02, v03, PlayerRes};
 use crate::state::State;
 use crate::ticker::Ticker;
 
@@ -19,6 +19,7 @@ pub const INSTANTIATE_BUDGET: Duration = Duration::from_millis(500);
 
 /// The guest export of one API version.
 enum Bindings {
+    V03(v03::ServerMod),
     V02(v02::ServerMod),
     V01(v01::ServerMod),
 }
@@ -26,11 +27,13 @@ enum Bindings {
 /// The `blockheads:api` version a component was built for (from its `guest` export).
 pub fn api_version_of(component: &Component) -> &'static str {
     let ty = component.component_type();
-    let old = ty.exports(component.engine()).any(|(name, _)| name == "blockheads:api/guest@0.1.0");
-    if old {
+    let has = |v: &str| ty.exports(component.engine()).any(|(name, _)| name == format!("blockheads:api/guest@{v}"));
+    if has("0.1.0") {
         "0.1.0"
-    } else {
+    } else if has("0.2.0") {
         "0.2.0"
+    } else {
+        "0.3.0"
     }
 }
 
@@ -86,7 +89,8 @@ impl WasmInstance {
         let busy = ticker.busy();
         let bindings = match api_version_of(component) {
             "0.1.0" => v01::ServerMod::instantiate(&mut store, component, linker).map(Bindings::V01),
-            _ => v02::ServerMod::instantiate(&mut store, component, linker).map(Bindings::V02),
+            "0.2.0" => v02::ServerMod::instantiate(&mut store, component, linker).map(Bindings::V02),
+            _ => v03::ServerMod::instantiate(&mut store, component, linker).map(Bindings::V03),
         };
         drop(busy);
         store.data_mut().deadline = None;
@@ -124,6 +128,7 @@ impl Instance for WasmInstance {
     fn on_enable(&mut self, host: &mut dyn HostApi) -> Result<(), CallError> {
         let mut out = Ok(());
         let r = self.call(host, &mut |b, s| match b {
+            Bindings::V03(b) => v03::on_enable(b, s).map(|r| out = r),
             Bindings::V02(b) => v02::on_enable(b, s).map(|r| out = r),
             Bindings::V01(b) => v01::on_enable(b, s).map(|r| out = r),
         });
@@ -132,6 +137,7 @@ impl Instance for WasmInstance {
 
     fn on_disable(&mut self, host: &mut dyn HostApi) -> Result<(), CallError> {
         self.call(host, &mut |b, s| match b {
+            Bindings::V03(b) => v03::on_disable(b, s),
             Bindings::V02(b) => v02::on_disable(b, s),
             Bindings::V01(b) => v01::on_disable(b, s),
         })
@@ -145,6 +151,10 @@ impl Instance for WasmInstance {
     ) -> Result<core::Outcome, CallError> {
         let mut out = None;
         self.call(host, &mut |b, s| match b {
+            Bindings::V03(b) => {
+                let w = v03::event_to(ev, &mut lender(s));
+                w.map_or(Ok(()), |w| v03::handle_event(b, s, sub, &w).map(|o| out = Some(o)))
+            }
             Bindings::V02(b) => {
                 let w = v02::event_to(ev, &mut lender(s));
                 w.map_or(Ok(()), |w| v02::handle_event(b, s, sub, &w).map(|o| out = Some(o)))
@@ -167,6 +177,10 @@ impl Instance for WasmInstance {
     ) -> Result<core::CommandOutcome, CallError> {
         let mut out = None;
         self.call(host, &mut |b, s| match b {
+            Bindings::V03(b) => {
+                let w = v03::sender_to(sender, &mut lender(s));
+                v03::run_command(b, s, id, w, label, args).map(|o| out = Some(o))
+            }
             Bindings::V02(b) => {
                 let w = v02::sender_to(sender, &mut lender(s));
                 v02::run_command(b, s, id, w, label, args).map(|o| out = Some(o))
@@ -181,6 +195,7 @@ impl Instance for WasmInstance {
 
     fn run_task(&mut self, host: &mut dyn HostApi, id: TaskId) -> Result<(), CallError> {
         self.call(host, &mut |b, s| match b {
+            Bindings::V03(b) => v03::run_task(b, s, id),
             Bindings::V02(b) => v02::run_task(b, s, id),
             Bindings::V01(b) => v01::run_task(b, s, id),
         })
@@ -195,6 +210,7 @@ impl Instance for WasmInstance {
     ) -> Result<Vec<u8>, CallError> {
         let mut out = Ok(Vec::new());
         let r = self.call(host, &mut |b, s| match b {
+            Bindings::V03(b) => v03::call_service(b, s, name, method, args).map(|r| out = r),
             Bindings::V02(b) => v02::call_service(b, s, name, method, args).map(|r| out = r),
             Bindings::V01(b) => v01::call_service(b, s, name, method, args).map(|r| out = r),
         });
@@ -209,6 +225,10 @@ impl Instance for WasmInstance {
         data: &[u8],
     ) -> Result<(), CallError> {
         self.call(host, &mut |b, s| match b {
+            Bindings::V03(b) => {
+                let w = v03::source_to(source, &mut lender(s));
+                v03::on_channel_message(b, s, channel, w, data)
+            }
             Bindings::V02(b) => {
                 let w = v02::source_to(source, &mut lender(s));
                 v02::on_channel_message(b, s, channel, w, data)

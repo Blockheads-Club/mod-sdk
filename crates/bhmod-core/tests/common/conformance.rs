@@ -26,17 +26,22 @@ pub struct Run {
 
 impl Run {
     pub fn new(example: &str, grants: &[&str], make: MakeRuntime) -> Run {
+        Run::with_side(example, grants, make, Side::Server)
+    }
+
+    pub fn with_side(example: &str, grants: &[&str], make: MakeRuntime, side: Side) -> Run {
         let dir = examples().join(example);
+        let code = if side == Side::Client { "client" } else { "server" };
         assert!(
-            dir.join("server").read_dir().unwrap().next().is_some(),
-            "{example} has no server code (run scripts/build-wasm.sh or scripts/build-java.sh)"
+            dir.join(code).read_dir().unwrap().next().is_some(),
+            "{example} has no {code} code (run scripts/build-wasm.sh or scripts/build-java.sh)"
         );
         let tmp = tempfile::tempdir().unwrap();
         copy_dir(&dir, &tmp.path().join(example));
         let grants: Vec<String> = grants.iter().map(|g| format!("\"{g}\"")).collect();
         fs::write(tmp.path().join("mods.toml"), format!("[{example}]\ngrant = [{}]\n", grants.join(", "))).unwrap();
         let b = FakeBridge::new();
-        let mut opts = HostOptions::new(tmp.path(), Side::Server);
+        let mut opts = HostOptions::new(tmp.path(), side);
         opts.runtimes.extend(make());
         // Behaviour, not speed: emulated 32-bit runs (qemu) and coverage builds are slow.
         opts.budgets.hard = std::time::Duration::from_secs(5);
@@ -77,6 +82,8 @@ impl Run {
         self.note("broadcasts", casts);
         self.note("kicks", kicks);
         self.note("logs", logs);
+        let ui: Vec<String> = self.b.take_ui().into_iter().map(|(m, c)| format!("{}: {c:?}", m == self.id)).collect();
+        self.note("ui", ui);
     }
 
     pub fn state(&self) -> ModState {
@@ -90,7 +97,18 @@ pub fn player(id: &str) -> CommandSender {
 
 /// Runs `scenario` on both twins and compares the transcripts; returns one of them.
 pub fn conform(lua: &str, other: &str, grants: &[&str], make: MakeRuntime, scenario: fn(&mut Run)) -> Vec<String> {
-    let mut runs = [Run::new(lua, grants, || None), Run::new(other, grants, make)];
+    conform_on(lua, other, grants, Side::Server, make, scenario)
+}
+
+pub fn conform_on(
+    lua: &str,
+    other: &str,
+    grants: &[&str],
+    side: Side,
+    make: MakeRuntime,
+    scenario: fn(&mut Run),
+) -> Vec<String> {
+    let mut runs = [Run::with_side(lua, grants, || None, side), Run::with_side(other, grants, make, side)];
     for r in &mut runs {
         scenario(r);
         r.flush();
@@ -101,6 +119,11 @@ pub fn conform(lua: &str, other: &str, grants: &[&str], make: MakeRuntime, scena
         assert_eq!(x, y, "{lua} vs {other}");
     }
     a.out
+}
+
+/// Like [`has`], for transcript lines that hold Debug text of strings (quotes escaped twice).
+pub fn has_ui(out: &[String], needle: &str) -> bool {
+    out.iter().any(|l| l.replace("\\\"", "\"").contains(needle))
 }
 
 pub fn has(out: &[String], needle: &str) -> bool {
@@ -181,4 +204,34 @@ pub fn scheduler(r: &mut Run) {
     ticks(r, 1);
     r.flush();
     ticks(r, 1500);
+}
+
+pub fn hud(r: &mut Run) {
+    r.h.enable("World", "wid");
+    r.note("state", r.state());
+    r.flush();
+    // The tick handler updates the position text every fifth step.
+    ticks(r, 10);
+    r.flush();
+    // The player answers the dialog: send 25 coins.
+    let v = r.h.ui_result(1, 1, Some("25".into()));
+    r.note("answer", v);
+    r.flush();
+    // A second answer to the same dialog is refused; the loader never saw one.
+    let v = r.h.ui_result(1, 0, None);
+    r.note("again", v);
+    r.flush();
+    r.h.disable_all();
+    r.note("state", r.state());
+    r.flush();
+}
+
+pub fn hud_cancel(r: &mut Run) {
+    r.h.enable("World", "wid");
+    r.flush();
+    let v = r.h.ui_result(1, 0, None);
+    r.note("answer", v);
+    let v = r.h.ui_result(2, bhmod_core::ui::CLOSED, None);
+    r.note("closed", v);
+    r.flush();
 }

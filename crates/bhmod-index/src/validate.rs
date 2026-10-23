@@ -30,6 +30,8 @@ pub struct Options {
     pub base: Option<Repo>,
     /// GitHub login of the PR author. `None` skips the owner check (local runs).
     pub author: Option<String>,
+    /// Organisations the PR author belongs to: an organisation in a mod's owners counts as the author.
+    pub member_of: Vec<String>,
     /// Folder holding the packages as `<id>-<version>.bhmod`.
     pub packages: Option<PathBuf>,
     /// `luau-compile` binary for the Luau syntax check.
@@ -249,8 +251,12 @@ fn check_mod(head: &Repo, opts: &Options, id: &str, kind: ChangeKind, out: &mut 
     };
     let path = h.path.as_str();
     let author = opts.author.as_deref().map(str::to_lowercase);
-    let is_owner = |owners: &[String], a: &str| owners.iter().any(|o| o.to_lowercase() == a);
-    if kind == ChangeKind::New {
+    let orgs: Vec<String> = opts.member_of.iter().map(|o| o.to_lowercase()).collect();
+    let is_owner =
+        |owners: &[String], a: &str| owners.iter().map(|o| o.to_lowercase()).any(|o| o == a || orgs.contains(&o));
+    // Publishing a draft is a mod's first release: reviewed like a new one.
+    let first_release = kind == ChangeKind::New || base.is_some_and(|b| b.entry.draft && !h.entry.draft);
+    if first_release {
         out.labels.insert(LABEL_NEW_MOD.into());
         out.labels.insert(LABEL_SECURITY.into());
         if let Some(a) = author.as_deref().filter(|a| !is_owner(&h.entry.owners, a)) {
@@ -265,11 +271,18 @@ fn check_mod(head: &Repo, opts: &Options, id: &str, kind: ChangeKind, out: &mut 
                 format!("`{a}` is not an owner of `{id}`; only {} may change it", b.entry.owners.join(", ")),
             ));
         }
-        check_append_only(path, b, h, &mut change, out);
+        // A draft was never published (its URL may be a placeholder), so its versions may still change.
+        if !b.entry.draft {
+            check_append_only(path, b, h, &mut change, out);
+        }
     }
     check_order(path, &h.entry.versions, out);
-    let added: Vec<&VersionEntry> =
-        h.entry.versions.iter().filter(|v| base.is_none_or(|b| b.entry.version(&v.version).is_none())).collect();
+    let added: Vec<&VersionEntry> = h
+        .entry
+        .versions
+        .iter()
+        .filter(|v| base.is_none_or(|b| b.entry.draft || b.entry.version(&v.version).is_none()))
+        .collect();
     for v in &added {
         change.added.push(v.version.clone());
         check_version(head, opts, id, h.entry.draft, v, out)?;
@@ -278,7 +291,7 @@ fn check_mod(head: &Repo, opts: &Options, id: &str, kind: ChangeKind, out: &mut 
         out.labels.insert(LABEL_YANK.into());
     }
     if let Some(last) = added.last() {
-        let prev = base.and_then(|b| b.entry.versions.iter().rev().find(|v| !v.yanked));
+        let prev = base.filter(|b| !b.entry.draft).and_then(|b| b.entry.versions.iter().rev().find(|v| !v.yanked));
         let all = permission_labels(&last.permissions);
         let old = prev.map(|p| permission_labels(&p.permissions)).unwrap_or_default();
         let diff = PermissionDiff {
