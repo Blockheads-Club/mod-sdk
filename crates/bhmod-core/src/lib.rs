@@ -36,6 +36,8 @@ pub mod config;
 pub mod discover;
 pub mod handles;
 pub mod host;
+#[cfg(feature = "jvm")]
+pub mod jvm;
 #[cfg(feature = "luau")]
 pub mod lua;
 pub mod resolve;

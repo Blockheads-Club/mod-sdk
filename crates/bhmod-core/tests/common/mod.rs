@@ -1,6 +1,9 @@
 //! Test doubles shared by the integration tests.
 #![allow(dead_code)]
 
+pub mod conformance;
+pub mod java;
+
 use std::cell::{Cell, RefCell};
 use std::fs;
 use std::path::Path;
@@ -23,6 +26,8 @@ pub struct FakeBridge {
     pub kicks: RefCell<Vec<(String, String)>>,
     pub positions: RefCell<Vec<(String, Pos)>>,
     pub sent: RefCell<Vec<Sent>>,
+    /// Makes `online_players` panic (a host bug that must not cross into the JVM).
+    pub explode: Cell<bool>,
 }
 
 impl FakeBridge {
@@ -64,6 +69,7 @@ impl GameBridge for FakeBridge {
         self.logs.borrow_mut().push((mod_id.map(str::to_string), level, message.to_string()));
     }
     fn online_players(&self) -> Vec<String> {
+        assert!(!self.explode.get(), "the fake game exploded");
         self.players.borrow().iter().map(|p| p.0.clone()).collect()
     }
     fn player_alias(&self, id: &str) -> Option<String> {
