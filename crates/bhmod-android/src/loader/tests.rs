@@ -1,7 +1,7 @@
 use std::cell::Cell;
 
 use super::*;
-use crate::testutil::{content_package, package};
+use crate::testutil::{content_package, package, package_files};
 use bhmod_client::cache::sha256;
 use bhmod_proto::{
     mods_hash, Channel, ChannelInfo, FileChunk, Message, ModInfo, ModList, ModPermissions, RejectText, ServerHello,
@@ -16,6 +16,10 @@ struct Fake {
     joins: RefCell<Vec<Option<Hash>>>,
     aborts: Cell<u32>,
     ui: RefCell<Vec<Value>>,
+    /// `load_native` calls: (mod id, library file name, data folder exists), failing for the mods in `native_fail`.
+    natives: RefCell<Vec<(String, String, bool)>>,
+    unloaded: RefCell<Vec<String>>,
+    native_fail: RefCell<Vec<String>>,
 }
 
 impl Platform for Fake {
@@ -36,6 +40,17 @@ impl Platform for Fake {
     }
     fn ui(&self, json: String) {
         self.ui.borrow_mut().push(serde_json::from_str(&json).unwrap());
+    }
+    fn load_native(&self, mod_id: &str, lib: &Path, data_dir: &Path) -> Result<(), String> {
+        let name = lib.file_name().unwrap().to_string_lossy().into_owned();
+        self.natives.borrow_mut().push((mod_id.into(), name, data_dir.is_dir()));
+        if self.native_fail.borrow().iter().any(|m| m == mod_id) {
+            return Err("init returned 3".into());
+        }
+        Ok(())
+    }
+    fn unload_native(&self, mod_id: &str) {
+        self.unloaded.borrow_mut().push(mod_id.into());
     }
 }
 
@@ -417,4 +432,101 @@ fn a_broken_content_package_is_reported_not_fatal() {
     r.l.load_content(&[junk]);
     assert!(r.p.logged("content:"), "{:?}", r.p.logs.borrow());
     assert!(!r.l.content().lock().unwrap().is_active());
+}
+
+const LIB: &str = "client/native/armeabi-v7a/libnat.so";
+
+fn native_package(id: &str, libs: &[(&str, &[u8])]) -> Vec<u8> {
+    package_files(id, "1.0.0", "native = true\n", "client/main.luau", "return {}", libs)
+}
+
+#[test]
+fn confirmed_native_mods_load_with_the_world_and_unload_with_it() {
+    let mut r = rig();
+    let index = Some("index:https://x/nat.bhmod");
+    r.l.installed().install_with(&native_package("nat", &[(LIB, b"ELF")]), index, true).unwrap();
+    r.l.installed().install(&package("plain", "1.0.0", "", "client/main.luau", "return {}"), None).unwrap();
+    r.l.on_world(Some("Solo"));
+    assert_eq!(*r.p.natives.borrow(), [("nat".to_string(), "libnat.so".to_string(), true)]);
+    assert!(r.p.logged("native code loaded"));
+    assert!(r.p.unloaded.borrow().is_empty());
+    // the extracted file is where the Platform was told
+    let sha = hex(&sha256(&fs::read(r.l.installed().list()[0].path.clone()).unwrap()));
+    assert!(r.dirs.native.join(sha).join("armeabi-v7a/libnat.so").is_file());
+    r.l.on_world(None);
+    assert_eq!(*r.p.unloaded.borrow(), ["nat"]);
+    // the next world loads it again
+    r.l.on_world(Some("Solo"));
+    assert_eq!(r.p.natives.borrow().len(), 2);
+}
+
+#[test]
+fn native_failures_are_logged_and_undone() {
+    let mut r = rig();
+    let index = Some("index:https://x/nat.bhmod");
+    // a failing init, a package without a library for this ABI
+    r.l.installed().install_with(&native_package("bad", &[(LIB, b"ELF")]), index, true).unwrap();
+    r.l.installed()
+        .install_with(&native_package("empty", &[("client/native/x86/libn.so", b"ELF")]), index, true)
+        .unwrap();
+    r.p.native_fail.borrow_mut().push("bad".into());
+    r.l.on_world(Some("Solo"));
+    assert!(r.p.logged("native code failed: init returned 3"));
+    assert!(r.p.logged("empty: no armeabi-v7a library"));
+    assert_eq!(*r.p.unloaded.borrow(), ["bad"]);
+    r.l.on_world(None);
+    // nothing was left to unload at the end
+    assert_eq!(*r.p.unloaded.borrow(), ["bad"]);
+}
+
+#[test]
+fn native_code_that_is_not_the_confirmed_file_is_not_loaded() {
+    let mut r = rig();
+    let index = Some("index:https://x/nat.bhmod");
+    let m = r.l.installed().install_with(&native_package("nat", &[(LIB, b"ELF")]), index, true).unwrap();
+    // a package of a mod the player installed natively but whose file is now another one: the installed list hides
+    // it, and a direct candidate with an unconfirmed hash is refused by the loader itself
+    let evil = native_package("nat", &[(LIB, b"EVIL")]);
+    let evil_path = r.dirs.run.join("evil.bhmod");
+    fs::create_dir_all(&r.dirs.run).unwrap();
+    fs::write(&evil_path, &evil).unwrap();
+    r.l.start_natives(
+        &[("nat".into(), evil_path), ("gone".into(), r.dirs.run.join("none.bhmod"))],
+        &[("nat".into(), "1.0.0".into()), ("gone".into(), "1".into())],
+    );
+    assert!(r.p.logged("not an installed, confirmed package"));
+    assert!(r.p.natives.borrow().is_empty());
+    // the unpack step can fail (the native folder is a file)
+    fs::write(&r.dirs.native, b"x").unwrap();
+    r.l.start_natives(&[("nat".into(), m.path)], &[("nat".into(), "1.0.0".into())]);
+    assert!(r.p.logged("cannot unpack the native library"));
+}
+
+#[test]
+fn a_server_may_list_native_code_only_when_the_player_installed_that_file() {
+    let mut r = rig();
+    let pkg = native_package("nat", &[(LIB, b"ELF")]);
+    let index = Some("index:https://x/nat.bhmod");
+    let mut m = info("nat", &pkg);
+    m.permissions.native = true;
+    let hash = mods_hash([(m.id.as_str(), m.version.as_str(), &m.sha256)]);
+    // not installed: refused at the prompt answer
+    let flow = |r: &mut Rig| {
+        r.l.on_contact("10.0.2.2:15151");
+        r.l.on_join_request();
+        r.l.on_packet(&server_hello(hash, 1));
+        r.l.on_packet(
+            &Message::ModList(ModList { mods: vec![m.clone()], channels: vec![], registry: Default::default() })
+                .encode(),
+        );
+        r.l.on_ui(UiEvent::Decide(true));
+    };
+    flow(&mut r);
+    assert!(r.p.logged("modded join stopped"), "{:?}", r.p.logs.borrow());
+    r.l.on_disconnect();
+    // installed and confirmed: the cached file loads
+    r.l.installed().install_with(&pkg, index, true).unwrap();
+    PackageCache::new(&r.dirs.cache).put(&pkg).unwrap();
+    flow(&mut r);
+    assert_eq!(r.p.natives.borrow().len(), 1, "{:?}", r.p.logs.borrow());
 }

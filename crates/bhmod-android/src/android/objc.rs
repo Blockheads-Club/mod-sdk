@@ -22,6 +22,8 @@ const RTLD_NOLOAD: i32 = 4;
 struct Rt {
     add_method: unsafe extern "C" fn(Id, Sel, Imp, *const c_char) -> i8,
     get_class: unsafe extern "C" fn(*const c_char) -> Id,
+    /// `objc_getMetaClass`, null when the runtime lacks it (class methods then cannot be hooked).
+    get_meta_class: *mut c_void,
     sel_register: unsafe extern "C" fn(*const c_char) -> Sel,
     instance_method: unsafe extern "C" fn(Id, Sel) -> *mut c_void,
     set_imp: unsafe extern "C" fn(*mut c_void, Imp) -> Imp,
@@ -63,6 +65,7 @@ fn rt() -> Option<&'static Rt> {
         Some(Rt {
             add_method: std::mem::transmute::<*mut c_void, unsafe extern "C" fn(Id, Sel, Imp, *const c_char) -> i8>(h),
             get_class: std::mem::transmute::<*mut c_void, unsafe extern "C" fn(*const c_char) -> Id>(a),
+            get_meta_class: f("objc_getMetaClass"),
             sel_register: std::mem::transmute::<*mut c_void, unsafe extern "C" fn(*const c_char) -> Sel>(b),
             instance_method: std::mem::transmute::<*mut c_void, unsafe extern "C" fn(Id, Sel) -> *mut c_void>(c),
             set_imp: std::mem::transmute::<*mut c_void, unsafe extern "C" fn(*mut c_void, Imp) -> Imp>(d),
@@ -106,6 +109,32 @@ pub fn swizzle(class_name: &str, selector: &str, imp: Imp) -> Imp {
             return std::ptr::null();
         }
         (r.set_imp)(m, imp)
+    }
+}
+
+/// The runtime's `Method` of `-[class selector]` (`+[...]` when `meta`), null when the class or method is missing.
+pub fn method(class_name: &str, selector: &str, meta: bool) -> *mut c_void {
+    let Some(r) = rt() else { return std::ptr::null_mut() };
+    let c = CString::new(class_name).expect("no NUL");
+    let mut cls = unsafe { (r.get_class)(c.as_ptr()) };
+    if cls.is_null() {
+        return std::ptr::null_mut();
+    }
+    if meta {
+        if r.get_meta_class.is_null() {
+            return std::ptr::null_mut();
+        }
+        let f: unsafe extern "C" fn(*const c_char) -> Id = unsafe { std::mem::transmute(r.get_meta_class) };
+        cls = unsafe { f(c.as_ptr()) };
+    }
+    unsafe { (r.instance_method)(cls, sel(selector)) }
+}
+
+/// `method_setImplementation(method, imp)`: the previous implementation (null without the runtime).
+pub fn set_imp(method: *mut c_void, imp: Imp) -> Imp {
+    match rt() {
+        Some(r) if !method.is_null() => unsafe { (r.set_imp)(method, imp) },
+        _ => std::ptr::null(),
     }
 }
 

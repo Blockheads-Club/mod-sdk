@@ -148,6 +148,7 @@ dependencies = [
  "bhmod-content",
  "bhmod-core",
  "bhmod-manifest",
+ "bhmod-native",
  "bhmod-proto",
  "bhmod-wasm",
  "jni",

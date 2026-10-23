@@ -14,6 +14,7 @@
 
 pub mod cosmetics;
 pub mod menus;
+pub mod native;
 pub mod objc;
 
 use std::cell::RefCell;
@@ -166,6 +167,12 @@ impl Platform for AndroidPlatform {
     }
     fn ui(&self, json: String) {
         java_post(&json);
+    }
+    fn load_native(&self, mod_id: &str, lib: &std::path::Path, data_dir: &std::path::Path) -> Result<(), String> {
+        native::load(mod_id, lib, data_dir)
+    }
+    fn unload_native(&self, mod_id: &str) {
+        native::unload(mod_id);
     }
 }
 
@@ -596,7 +603,7 @@ pub extern "system" fn Java_com_blockheadsclub_modloader_Native_inspect(
     out(&mut env, s)
 }
 
-/// `Native.install(path, sha256, source)`: JSON.
+/// `Native.install(path, sha256, source, nativeConfirmed)`: JSON.
 #[no_mangle]
 pub extern "system" fn Java_com_blockheadsclub_modloader_Native_install(
     mut env: JNIEnv,
@@ -604,11 +611,19 @@ pub extern "system" fn Java_com_blockheadsclub_modloader_Native_install(
     path: JString,
     sha: JString,
     source: JString,
+    native_confirmed: jboolean,
 ) -> jstring {
     let p = jstr(&mut env, &path).unwrap_or_default();
     let sha = jstr(&mut env, &sha);
     let source = jstr(&mut env, &source);
-    let s = crate::api::install(&installed_dir(), &PathBuf::from(p), sha.as_deref(), source.as_deref(), &crate::caps());
+    let s = crate::api::install(
+        &installed_dir(),
+        &PathBuf::from(p),
+        sha.as_deref(),
+        source.as_deref(),
+        native_confirmed != JNI_FALSE,
+        &crate::caps(),
+    );
     out(&mut env, s)
 }
 

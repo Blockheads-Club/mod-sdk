@@ -14,7 +14,8 @@ final class Native {
     static native void setModsLabel(String label);
     static native String listInstalled();
     static native String inspect(String path, String sha256);
-    static native String install(String path, String sha256, String source);
+    /** `nativeConfirmed`: the player confirmed the red native-code warning (honoured for index installs only). */
+    static native String install(String path, String sha256, String source, boolean nativeConfirmed);
     static native boolean setEnabled(String id, boolean on);
     static native boolean remove(String id);
 

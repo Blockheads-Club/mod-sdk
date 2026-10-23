@@ -27,6 +27,7 @@ bhmod-client.workspace = true
 bhmod-content.workspace = true
 bhmod-core = { path = "../bhmod-core" }
 bhmod-manifest.workspace = true
+bhmod-native.workspace = true
 bhmod-proto.workspace = true
 bhmod-wasm = { path = "../bhmod-wasm", optional = true }
 serde_json.workspace = true

@@ -7,6 +7,11 @@ use bhmod_manifest::package::DirSource;
 
 /// A `.bhmod` with a client half: `entry` (a `client/` path) holding `src`; `perms` goes into `[permissions]`.
 pub fn package(id: &str, version: &str, perms: &str, entry: &str, src: &str) -> Vec<u8> {
+    package_files(id, version, perms, entry, src, &[])
+}
+
+/// Like [`package`] with extra files (`path`, bytes).
+pub fn package_files(id: &str, version: &str, perms: &str, entry: &str, src: &str, files: &[(&str, &[u8])]) -> Vec<u8> {
     let t = tempfile::tempdir().unwrap();
     let rt = if entry.ends_with(".wasm") { "wasm" } else { "lua" };
     let toml = format!(
@@ -20,6 +25,11 @@ pub fn package(id: &str, version: &str, perms: &str, entry: &str, src: &str) -> 
     fs::create_dir_all(t.path().join("server")).unwrap();
     fs::write(t.path().join(entry), src).unwrap();
     fs::write(t.path().join("server/main.luau"), "return {}").unwrap();
+    for (path, bytes) in files {
+        let p = t.path().join(path);
+        fs::create_dir_all(p.parent().unwrap()).unwrap();
+        fs::write(p, bytes).unwrap();
+    }
     let mut s = DirSource::open(t.path()).unwrap();
     write_zip(&mut s, std::io::Cursor::new(Vec::new())).unwrap().into_inner()
 }

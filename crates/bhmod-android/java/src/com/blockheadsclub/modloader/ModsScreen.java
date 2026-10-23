@@ -340,10 +340,21 @@ final class ModsScreen {
         body.addView(JoinFlow.chips(a, ps), Kit.fill());
         body.addView(Kit.small(a, Strings.t("st_next")), Kit.margins(Kit.fill(), 0, Kit.u(a, 3), 0, 0));
         final String url = v.optString("mirror", v.optString("url"));
+        final boolean nativeCode = indexPerms(v.optJSONObject("permissions")).optBoolean("native");
+        if (nativeCode) {
+            // Native code: a red warning, and a button that says what the player agrees to.
+            LinearLayout danger = Kit.column(a);
+            danger.setBackground(Kit.danger(a));
+            danger.setPadding(Kit.u(a, 3), Kit.u(a, 2), Kit.u(a, 3), Kit.u(a, 2));
+            danger.addView(Kit.text(a, Strings.t("danger_title"), Kit.TEXT, 15, true), Kit.fill());
+            danger.addView(Kit.body(a, Strings.t("danger_body", "mod", name)), Kit.fill());
+            danger.addView(Kit.small(a, Strings.t("danger_note")), Kit.fill());
+            body.addView(danger, Kit.margins(Kit.fill(), 0, Kit.u(a, 3), 0, 0));
+        }
         View footer = Kit.footer(a,
             Kit.button(a, Strings.t("cancel"), Kit.Kind.SEC, new View.OnClickListener() { public void onClick(View x) { show(LIST); } }),
-            Kit.button(a, Strings.t("install"), Kit.Kind.PRI, new View.OnClickListener() {
-                public void onClick(View x) { download(name, url, v.optString("sha256"), "index:" + url, true); }
+            Kit.button(a, Strings.t(nativeCode ? "install_native" : "install"), nativeCode ? Kit.Kind.DAN : Kit.Kind.PRI, new View.OnClickListener() {
+                public void onClick(View x) { download(name, url, v.optString("sha256"), "index:" + url, true, nativeCode); }
             }));
         Overlay.show(Overlay.onBack(Overlay.frame(Strings.t("install_q", "mod", name), null, body, footer),
             new Runnable() { public void run() { show(LIST); } }));
@@ -368,7 +379,7 @@ final class ModsScreen {
      * Downloads `url` and then installs it (`trusted`: from the index, so no second confirmation) or shows the
      * "Install from a link?" confirmation with what the package asks for.
      */
-    static void download(final String name, final String url, final String sha, final String source, final boolean trusted) {
+    static void download(final String name, final String url, final String sha, final String source, final boolean trusted, final boolean nativeConfirmed) {
         final Activity a = Overlay.activity();
         final AtomicBoolean cancel = new AtomicBoolean(false);
         LinearLayout body = Kit.column(a);
@@ -411,7 +422,7 @@ final class ModsScreen {
                 final String error = err;
                 String out = null;
                 try {
-                    if (error == null) out = trusted ? Native.install(f.getPath(), sha.isEmpty() ? null : sha, source) : Native.inspect(f.getPath(), null);
+                    if (error == null) out = trusted ? Native.install(f.getPath(), sha.isEmpty() ? null : sha, source, nativeConfirmed) : Native.inspect(f.getPath(), null);
                 } catch (Throwable t) {
                     out = "{\"ok\":false,\"code\":\"loader\",\"text\":" + JSONObject.quote(String.valueOf(t)) + "}";
                 }
@@ -497,7 +508,7 @@ final class ModsScreen {
                         url.setError(Strings.t("bad_link"));
                         return;
                     }
-                    download(u.substring(u.lastIndexOf('/') + 1), u, "", u, false);
+                    download(u.substring(u.lastIndexOf('/') + 1), u, "", u, false, false);
                 }
             })), Kit.margins(Kit.fill(), 0, Kit.u(a, 2), 0, 0));
     }
@@ -527,7 +538,7 @@ final class ModsScreen {
             Kit.button(a, Strings.t("cancel"), Kit.Kind.SEC, new View.OnClickListener() { public void onClick(View v) { f.delete(); show(LINK); } }),
             Kit.button(a, Strings.t("install_anyway"), Kit.Kind.PRI, new View.OnClickListener() {
                 public void onClick(View v) {
-                    call(new java.util.concurrent.Callable<String>() { public String call() { return Native.install(f.getPath(), sha, url); } }, new Done() {
+                    call(new java.util.concurrent.Callable<String>() { public String call() { return Native.install(f.getPath(), sha, url, false); } }, new Done() {
                         public void on(String json) {
                             f.delete();
                             JSONObject res = parse(json);

@@ -77,13 +77,21 @@ pub fn inspect(file: &Path, expected_sha: Option<&str>, caps: &Caps) -> String {
     }
 }
 
-/// Installs a downloaded package (checked again; `expected_sha` from the index).
-pub fn install(dir: &Path, file: &Path, expected_sha: Option<&str>, source: Option<&str>, caps: &Caps) -> String {
+/// Installs a downloaded package (checked again; `expected_sha` from the index). `native_confirmed`: the player
+/// confirmed the red native-code warning for this package (only honoured for packages from the index).
+pub fn install(
+    dir: &Path,
+    file: &Path,
+    expected_sha: Option<&str>,
+    source: Option<&str>,
+    native_confirmed: bool,
+    caps: &Caps,
+) -> String {
     let bytes = match read_checked(file, expected_sha) {
         Ok(b) => b,
         Err(e) => return e,
     };
-    match Installed::new(dir, caps.clone()).install(&bytes, source) {
+    match Installed::new(dir, caps.clone()).install_with(&bytes, source, native_confirmed) {
         Ok(m) => json!({"ok": true, "mod": manifest_json(&m.manifest)}).to_string(),
         Err(InstallError::Refused(r)) => error(r.code(), &r.to_string()),
         Err(e @ InstallError::Io(_)) => error("io", &e.to_string()),
@@ -126,8 +134,8 @@ mod tests {
         assert_eq!(i["mod"]["permissions"]["players"][0], "chat");
         assert_eq!(v(inspect(&f, Some("00"), &caps))["code"], "hash-mismatch");
         assert_eq!(v(inspect(&t.path().join("none"), None, &caps))["code"], "io");
-        assert_eq!(v(install(&dir, &t.path().join("none"), None, None, &caps))["code"], "io");
-        assert_eq!(v(install(&dir, &f, Some(&sha), Some("https://x"), &caps))["ok"], true);
+        assert_eq!(v(install(&dir, &t.path().join("none"), None, None, false, &caps))["code"], "io");
+        assert_eq!(v(install(&dir, &f, Some(&sha), Some("https://x"), false, &caps))["ok"], true);
         let l = v(list(&dir, &caps));
         assert_eq!(l["mods"][0]["source"], "https://x");
         assert_eq!(l["mods"][0]["enabled"], true);
@@ -138,11 +146,19 @@ mod tests {
         // refused packages
         fs::write(&f, b"junk").unwrap();
         assert_eq!(v(inspect(&f, None, &caps))["code"], "unreadable");
-        assert_eq!(v(install(&dir, &f, None, None, &caps))["code"], "unreadable");
+        assert_eq!(v(install(&dir, &f, None, None, false, &caps))["code"], "unreadable");
+        // native code: only from the index and only confirmed
+        let nat = crate::testutil::package("nat", "1.0.0", "native = true\n", "client/main.luau", "return {}");
+        fs::write(&f, &nat).unwrap();
+        assert_eq!(v(inspect(&f, None, &caps))["code"], "native");
+        assert_eq!(v(install(&dir, &f, None, Some("https://x"), true, &caps))["code"], "native");
+        assert_eq!(v(install(&dir, &f, None, Some("index:https://x"), false, &caps))["code"], "native-unconfirmed");
+        assert_eq!(v(install(&dir, &f, None, Some("index:https://x"), true, &caps))["ok"], true);
+        assert_eq!(v(list(&dir, &caps))["mods"][0]["permissions"]["native"], true);
         // the installed dir is a file
         fs::write(&f, package("alpha", "1.0.0", "", "client/main.luau", "return {}")).unwrap();
         let file_dir = t.path().join("filedir");
         fs::write(&file_dir, b"x").unwrap();
-        assert_eq!(v(install(&file_dir, &f, None, None, &caps))["code"], "io");
+        assert_eq!(v(install(&file_dir, &f, None, None, false, &caps))["code"], "io");
     }
 }

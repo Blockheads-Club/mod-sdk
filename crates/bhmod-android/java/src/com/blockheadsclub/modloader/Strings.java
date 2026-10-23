@@ -58,6 +58,12 @@ final class Strings {
             "{mod} работает вне песочницы. Он может изменить что угодно в игре и на этом устройстве.",
             "{mod} құмсалғыштан тыс жұмыс істейді. Ойындағы және осы құрылғыдағы кез келген нәрсені өзгерте алады.");
 
+        p("install_native", "I understand, install", "Anladım, yükle", "Понимаю, установить", "Түсіндім, орнату");
+        p("danger_note", "Install it only if you trust the author. You can turn it off or remove it at any time.",
+            "Yalnızca yazarına güveniyorsan yükle. İstediğin zaman kapatabilir ya da kaldırabilirsin.",
+            "Устанавливай, только если доверяешь автору. Мод можно выключить или удалить в любой момент.",
+            "Автордың адалдығына сенсеңіз ғана орнатыңыз. Модты кез келген уақытта өшіруге немесе жоюға болады.");
+
         // join
         p("join_title_one", "{server} uses 1 mod", "{server} 1 mod kullanıyor", "{server} использует 1 мод", "{server} 1 мод пайдаланады");
         p("join_title", "{server} uses {n} mods", "{server} {n} mod kullanıyor", "{server} использует модов: {n}", "{server} {n} мод пайдаланады");

@@ -10,7 +10,9 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 
+use bhmod_client::cache::sha256;
 use bhmod_client::installed::Installed;
+use bhmod_client::native;
 use bhmod_client::session::{Accepted, Output};
 use bhmod_client::{Caps, Options, PackageCache, Session};
 use bhmod_content::Content;
@@ -20,7 +22,7 @@ use bhmod_core::runtime::Runtime;
 use bhmod_core::storage::FileStorage;
 use bhmod_core::types::{ApiError, ChannelSource, ChannelTarget, LogLevel, Role, Side};
 use bhmod_core::GameBridge;
-use bhmod_proto::{Hash, PACKET_TYPE};
+use bhmod_proto::{hex, Hash, PACKET_TYPE};
 
 use crate::inbox::NetEvent;
 use crate::ui;
@@ -44,6 +46,11 @@ pub trait Platform {
     fn abort_join(&self);
     /// Posts a UI command (JSON) to the Java side; never blocks.
     fn ui(&self, json: String);
+    /// Loads a native mod library (`client/native/armeabi-v7a/*.so`) and runs its `bhmod_native_init`. `data_dir` is
+    /// a private writable folder of the mod.
+    fn load_native(&self, mod_id: &str, lib: &Path, data_dir: &Path) -> Result<(), String>;
+    /// Runs the mod's `bhmod_native_shutdown` (if any) and undoes its hooks.
+    fn unload_native(&self, mod_id: &str);
 }
 
 /// Where the loader keeps its files.
@@ -57,6 +64,8 @@ pub struct Dirs {
     pub run: PathBuf,
     /// Mod storage, per world.
     pub storage: PathBuf,
+    /// Native libraries taken out of packages (`<sha256>/<abi>/<name>.so`) and the data folders of native mods.
+    pub native: PathBuf,
 }
 
 impl Dirs {
@@ -67,6 +76,7 @@ impl Dirs {
             installed: root.join("installed"),
             run: root.join("run"),
             storage: root.join("storage"),
+            native: root.join("native"),
         }
     }
 }
@@ -160,6 +170,8 @@ pub struct Loader<P: Platform + 'static> {
     last_progress: u64,
     budgets: Budgets,
     content: Arc<Mutex<Content>>,
+    /// Mods whose native library is loaded (unloaded when the host stops).
+    natives: Vec<String>,
 }
 
 impl<P: Platform + 'static> Loader<P> {
@@ -180,6 +192,7 @@ impl<P: Platform + 'static> Loader<P> {
             last_progress: 0,
             budgets: Budgets::default(),
             content: Arc::new(Mutex::new(Content::new())),
+            natives: Vec::new(),
         }
     }
 
@@ -217,7 +230,9 @@ impl<P: Platform + 'static> Loader<P> {
     /// The server's first packet (0x23) arrived on a new connection to `server` (`host:port`).
     pub fn on_contact(&mut self, server: &str) {
         self.server = server.to_string();
-        let mut s = Session::new(self.opts.clone(), PackageCache::new(&self.dirs.cache), self.caps.clone());
+        let mut opts = self.opts.clone();
+        opts.native_trusted = self.native_trusted();
+        let mut s = Session::new(opts, PackageCache::new(&self.dirs.cache), self.caps.clone());
         let out = s.contact(self.p.now_ms());
         self.session = Some(s);
         self.p.log(LogLevel::Info, &format!("connecting to {server}: HELLO sent"));
@@ -341,7 +356,60 @@ impl<P: Platform + 'static> Loader<P> {
         }
     }
 
+    /// SHA-256 of every installed native package the player confirmed (the only native code that may run).
+    fn native_trusted(&self) -> Vec<Hash> {
+        let natives = self.installed().list().into_iter().filter(|m| m.manifest.permissions.native);
+        natives.filter_map(|m| fs::read(&m.path).ok()).map(|b| sha256(&b)).collect()
+    }
+
+    /// Loads the native libraries of the mods that started: `(id, package path)` of every native candidate.
+    fn start_natives(&mut self, candidates: &[(String, PathBuf)], loaded: &[(String, String)]) {
+        let trusted = self.native_trusted();
+        for (id, path) in candidates.iter().filter(|(id, _)| loaded.iter().any(|(l, _)| l == id)) {
+            let Ok(bytes) = fs::read(path) else { continue };
+            if !trusted.contains(&sha256(&bytes)) {
+                self.p.log(
+                    LogLevel::Warn,
+                    &format!("{id}: native code is not an installed, confirmed package, not loaded"),
+                );
+                continue;
+            }
+            let sha = hex(&sha256(&bytes));
+            let libs = match native::extract(path, &sha, native::ABI, &self.dirs.native) {
+                Ok(l) if !l.is_empty() => l,
+                Ok(_) => {
+                    self.p.log(LogLevel::Warn, &format!("{id}: no {} library in the package", native::ABI));
+                    continue;
+                }
+                Err(e) => {
+                    self.p.log(LogLevel::Error, &format!("{id}: cannot unpack the native library: {e}"));
+                    continue;
+                }
+            };
+            let data = self.dirs.native.join("data").join(id);
+            let _ = fs::create_dir_all(&data);
+            let mut ok = true;
+            for lib in &libs {
+                match self.p.load_native(id, lib, &data) {
+                    Ok(()) => self.p.log(LogLevel::Warn, &format!("{id}: native code loaded ({})", lib.display())),
+                    Err(e) => {
+                        self.p.log(LogLevel::Error, &format!("{id}: native code failed: {e}"));
+                        ok = false;
+                    }
+                }
+            }
+            if ok {
+                self.natives.push(id.clone());
+            } else {
+                self.p.unload_native(id);
+            }
+        }
+    }
+
     fn stop_host(&mut self) {
+        for id in self.natives.drain(..) {
+            self.p.unload_native(&id);
+        }
         if let Some(mut h) = self.host.take() {
             h.disable_all();
         }
@@ -435,6 +503,7 @@ impl<P: Platform + 'static> Loader<P> {
         let mut grants: BTreeMap<String, Vec<String>> = BTreeMap::new();
         let mut ids = BTreeSet::new();
         let mut placed: Vec<PathBuf> = Vec::new();
+        let mut natives: Vec<(String, PathBuf)> = Vec::new();
         let mut copy = |from: &Path, id: &str| -> io::Result<()> {
             fs::create_dir_all(run)?;
             let to = run.join(format!("{id}.bhmod"));
@@ -444,11 +513,17 @@ impl<P: Platform + 'static> Loader<P> {
         };
         for a in server_mods {
             copy(&a.path, &a.manifest.id).map_err(|e| e.to_string())?;
+            if a.manifest.permissions.native {
+                natives.push((a.manifest.id.clone(), a.path.clone()));
+            }
             grants.insert(a.manifest.id.clone(), bhmod_core::config::required_permissions(&a.manifest.permissions));
             ids.insert(a.manifest.id.clone());
         }
         for m in self.installed().list().into_iter().filter(|m| m.enabled && !ids.contains(&m.manifest.id)) {
             if copy(&m.path, &m.manifest.id).is_ok() {
+                if m.manifest.permissions.native {
+                    natives.push((m.manifest.id.clone(), m.path.clone()));
+                }
                 grants.insert(m.manifest.id.clone(), bhmod_core::config::required_permissions(&m.manifest.permissions));
             }
         }
@@ -471,6 +546,7 @@ impl<P: Platform + 'static> Loader<P> {
         let loaded: Vec<(String, String)> =
             host.mods().into_iter().filter(|m| m.state == ModState::Loaded).map(|m| (m.id, m.version)).collect();
         self.host = Some(host);
+        self.start_natives(&natives, &loaded);
         if let Some(missing) = server_mods.iter().find(|a| !loaded.iter().any(|(id, _)| *id == a.manifest.id)) {
             return Err(format!("{} did not start", missing.manifest.id));
         }
