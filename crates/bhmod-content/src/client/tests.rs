@@ -173,3 +173,20 @@ fn wearing_survives_a_reload() {
     assert!(c.is_active());
     assert_eq!(c.resolve("a", "hat", None).unwrap().def.key, "hats:crown");
 }
+
+#[test]
+fn local_registry_for_developer_tests() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path().join("hats-src");
+    source_dir(&dir);
+    let junk = tmp.path().join("junk.bhmod");
+    std::fs::write(&junk, b"nope").unwrap();
+    let wire = local_registry(&[dir.clone(), junk]);
+    // Sorted keys, ids from 1.
+    assert_eq!(
+        wire["cosmetics"],
+        BTreeMap::from([("hats:crown".into(), 1), ("hats:ghost".into(), 2), ("hats:suit".into(), 3)])
+    );
+    assert!(local_registry(&[]).is_empty());
+    assert_eq!(read_manifest(&dir).unwrap().id, "hats");
+}

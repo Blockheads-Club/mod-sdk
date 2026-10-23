@@ -12,7 +12,7 @@ use bhmod_manifest::Manifest;
 use bhmod_proto::Cosmetics;
 
 use crate::cosmetics::{self, Resolved, Table, Wearing};
-use crate::registry::Wire;
+use crate::registry::{self, Registry, Wire};
 use crate::texture::{Gpu, Texture};
 
 /// Which texture of a cosmetic.
@@ -33,6 +33,26 @@ pub fn open_package(path: &Path) -> Result<Box<dyn Source>, String> {
     let file = File::open(path).map_err(fail)?;
     let size = file.metadata().map_err(fail)?.len();
     Ok(Box::new(ZipSource::open(file, size).map_err(fail)?))
+}
+
+/// Reads and validates the `mod.toml` of a package (a `.bhmod` file or a folder).
+pub fn read_manifest(path: &Path) -> Result<Manifest, String> {
+    let mut src = open_package(path)?;
+    let text = src.read("mod.toml", MAX_MANIFEST).map_err(|e| format!("{}: mod.toml: {e}", path.display()))?;
+    Manifest::parse(&String::from_utf8_lossy(&text)).map_err(|issues| {
+        let why: Vec<String> = issues.iter().map(ToString::to_string).collect();
+        format!("{}: {}", path.display(), why.join("; "))
+    })
+}
+
+/// Ids for a client that has no server to give them (single-player developer tests): every key the packages
+/// declare, allocated in memory the way a fresh server world would.
+pub fn local_registry(packages: &[PathBuf]) -> Wire {
+    let manifests: Vec<Manifest> = packages.iter().filter_map(|p| read_manifest(p).ok()).collect();
+    let want = registry::declared(&manifests);
+    let mut reg = Registry::new();
+    reg.allocate(&want).expect("a few keys always fit");
+    reg.wire(&want)
 }
 
 /// A clothing slot of a blockhead, in the order of the game's `clothingItemAtIndex:` (0 shoes, 1 pants, 2 shirt,
@@ -82,15 +102,7 @@ impl Content {
         let mut manifests = Vec::new();
         let mut paths = BTreeMap::new();
         for path in packages {
-            let read = open_package(path).and_then(|mut src| {
-                let text =
-                    src.read("mod.toml", MAX_MANIFEST).map_err(|e| format!("{}: mod.toml: {e}", path.display()))?;
-                Manifest::parse(&String::from_utf8_lossy(&text)).map_err(|issues| {
-                    let why: Vec<String> = issues.iter().map(ToString::to_string).collect();
-                    format!("{}: {}", path.display(), why.join("; "))
-                })
-            });
-            match read {
+            match read_manifest(path) {
                 Ok(m) => {
                     paths.insert(m.id.clone(), path.clone());
                     manifests.push(m);
