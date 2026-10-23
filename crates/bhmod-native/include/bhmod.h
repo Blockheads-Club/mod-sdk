@@ -26,6 +26,9 @@ extern "C" {
 
 #define BHMOD_ABI_VERSION 1
 
+/* The two entry points must stay visible when the library is built with -fvisibility=hidden. */
+#define BHMOD_EXPORT __attribute__((visibility("default")))
+
 /* Log levels of bhmod_api_t.log. */
 #define BHMOD_LOG_TRACE 0
 #define BHMOD_LOG_DEBUG 1
@@ -90,9 +93,9 @@ struct bhmod_api {
 };
 
 /* Required: install hooks and return 0. A non-zero result disables the mod and undoes its hooks. */
-int bhmod_native_init(const bhmod_api_t *api);
+BHMOD_EXPORT int bhmod_native_init(const bhmod_api_t *api);
 /* Optional: called when the mod is disabled, before its hooks are undone. */
-void bhmod_native_shutdown(void);
+BHMOD_EXPORT void bhmod_native_shutdown(void);
 
 #ifdef __cplusplus
 }

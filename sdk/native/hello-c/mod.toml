@@ -1,0 +1,20 @@
+schema = 1
+id = "native-hello"
+version = "0.1.0"
+name = { en = "Native hello (C)", tr = "Yerel merhaba (C)" }
+description = { en = "Counts frames, item lookups and texture binds with native hooks and logs a line every ten seconds. Example native client mod (C, NDK).", tr = "Yerel kancalarla kareleri, eşya sorgularını ve doku bağlamalarını sayar; on saniyede bir günlüğe yazar. Örnek yerel istemci modu (C, NDK)." }
+authors = ["Blockheads Club"]
+license = "MIT OR Apache-2.0"
+homepage = "https://github.com/Blockheads-Club/mod-sdk"
+api = "^0.3"
+
+[sides]
+server = false
+client = true
+
+[entry]
+# A native mod still has a normal entry point; this one does nothing. The hooks live in client/native/.
+client = { runtime = "lua", path = "client/main.luau" }
+
+[permissions]
+native = true

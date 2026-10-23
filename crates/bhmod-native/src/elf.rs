@@ -18,6 +18,8 @@ const R_ARM_GLOB_DAT: u32 = 21;
 const R_ARM_JUMP_SLOT: u32 = 22;
 /// Upper bound for the number of dynamic entries / relocations, so a corrupt table cannot loop for long.
 const LIMIT: u32 = 1 << 20;
+/// Relocation entries read per call.
+const BLOCK: u32 = 512;
 
 /// What kind of relocation owns a slot.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -70,13 +72,19 @@ fn u32_at(read: Read<'_>, addr: u32) -> Result<u32, ElfError> {
 
 fn cstr(read: Read<'_>, addr: u32) -> Result<String, ElfError> {
     let mut out = Vec::new();
-    for i in 0..256u32 {
-        let b = read(addr + i, 1).and_then(|b| b.first().copied()).ok_or(ElfError::Unreadable(addr + i))?;
-        if b == 0 {
-            break;
+    let mut at = addr;
+    while out.len() < 256 {
+        // Up to the end of a 64-byte block, so a name never reads across a page it did not need.
+        let n = (64 - (at % 64)) as usize;
+        let chunk = read(at, n).filter(|b| b.len() == n).ok_or(ElfError::Unreadable(at))?;
+        if let Some(end) = chunk.iter().position(|b| *b == 0) {
+            out.extend_from_slice(&chunk[..end]);
+            return Ok(String::from_utf8_lossy(&out).into_owned());
         }
-        out.push(b);
+        out.extend_from_slice(&chunk);
+        at += n as u32;
     }
+    out.truncate(256);
     Ok(String::from_utf8_lossy(&out).into_owned())
 }
 
@@ -107,9 +115,17 @@ pub fn imports(read: Read<'_>, base: u32, dynamic: u32) -> Result<Vec<Import>, E
         if table == 0 {
             continue;
         }
-        for i in 0..(size / 8).min(LIMIT) {
-            let offset = u32_at(read, table + 8 * i)?;
-            let info = u32_at(read, table + 8 * i + 4)?;
+        // The table is read in blocks: a game library has tens of thousands of relocations.
+        let count = (size / 8).min(LIMIT);
+        let mut block: Vec<u8> = Vec::new();
+        for i in 0..count {
+            if i % BLOCK == 0 {
+                let n = (count - i).min(BLOCK) as usize * 8;
+                block = read(table + 8 * i, n).filter(|b| b.len() == n).ok_or(ElfError::Unreadable(table + 8 * i))?;
+            }
+            let at = (i % BLOCK) as usize * 8;
+            let offset = u32::from_le_bytes(block[at..at + 4].try_into().expect("4 bytes"));
+            let info = u32::from_le_bytes(block[at + 4..at + 8].try_into().expect("4 bytes"));
             let kind = match info & 0xFF {
                 R_ARM_JUMP_SLOT => Kind::JumpSlot,
                 R_ARM_GLOB_DAT => Kind::GlobDat,
