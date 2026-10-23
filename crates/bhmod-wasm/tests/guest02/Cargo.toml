@@ -1,0 +1,19 @@
+# Test guest of bhmod-wasm built against the frozen blockheads:api 0.2.0 (wit/compat), so the runtime's 0.1
+# compatibility is exercised. Built by scripts/build-wasm.sh into tests/guest02/out/guest02.wasm.
+[package]
+name = "bhmod-wasm-test-guest02"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+wit-bindgen = "0.57"
+
+[profile.release]
+opt-level = "s"
+strip = true
+
+[workspace]

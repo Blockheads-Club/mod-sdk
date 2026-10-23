@@ -1,5 +1,6 @@
 //! The bhmod-wasm test guest. `host::mod_id()` picks the behaviour:
 //! - `tour`: calls every import once in `on-enable` and logs the results; prints to stdout/stderr.
+//! - `gear`: calls every `content` import (API 0.3) with the mod's own cosmetic `gear:cap`.
 //! - `fail`: `on-enable` returns an error.
 //! - `trap`: commands panic; events after the trap are refused by the host.
 //! - `spin`: the tick handler never returns (host deadline).
@@ -13,6 +14,21 @@ struct Guest;
 
 fn show<T: std::fmt::Debug>(what: &str, v: T) {
     log::info(&format!("{what} = {v:?}"));
+}
+
+fn gear() -> Result<(), String> {
+    use blockheads_mod::content::{self, Kind};
+    let p = players::get("p1").ok_or("p1 missing")?;
+    show("cosmetics", content::cosmetics());
+    show("id-of", (content::id_of(Kind::Cosmetic, "gear:cap"), content::id_of(Kind::Item, "gear:cap")));
+    show("key-of", (content::key_of(Kind::Cosmetic, 1), content::key_of(Kind::Block, 1)));
+    show("equip", content::equip(&p, "gear:cap"));
+    show("equipped", content::equipped(&p));
+    show("equip-other", content::equip(&p, "other:x").map_err(String::from));
+    show("unequip", content::unequip(&p, "hat"));
+    show("unequip-bad", content::unequip(&p, "cape").map_err(String::from));
+    show("equipped-after", content::equipped(&p));
+    Ok(())
 }
 
 fn tour() -> Result<(), String> {
@@ -156,6 +172,7 @@ impl Mod for Guest {
     fn on_enable() -> Result<(), String> {
         match host::mod_id().as_str() {
             "tour" => tour(),
+            "gear" => gear(),
             "fail" => Err("nope".into()),
             "caller" => {
                 show("echo", services::call("old", "^1", "echo", &[0x81, 0x02]));

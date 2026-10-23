@@ -64,7 +64,7 @@ fn tour_calls_every_import() {
     let log = b.log_text();
     assert_eq!(h.mods()[0].state, ModState::Enabled, "{log}");
     for line in [
-        "api = \"0.2.0\"",
+        "api = \"0.3.0\"",
         "id = \"tour\"",
         "version = \"1.2.3\"",
         "side = Side::Server",
@@ -314,7 +314,7 @@ fn bad_components_are_refused() {
     // A component without the guest export.
     f.files.insert("server/missing.wasm".into(), b"(component)".to_vec());
     let e = rt.instantiate("m", &f, LIMITS).err().unwrap();
-    assert!(e.contains("no exported instance named `blockheads:api/guest@0.2.0`"), "{e}");
+    assert!(e.contains("no exported instance named `blockheads:api/guest@0.3.0`"), "{e}");
 }
 
 #[test]
@@ -424,6 +424,7 @@ macro_rules! conversions {
 
 #[test]
 fn conversions() {
+    conversions!(bhmod_wasm::bindings::v03);
     conversions!(bhmod_wasm::bindings::v02);
     conversions!(bhmod_wasm::bindings::v01);
     use bhmod_core::types::RejectReason as C;
@@ -448,15 +449,30 @@ fn guest01_wasm() -> Vec<u8> {
     fs::read(&p).unwrap_or_else(|e| panic!("{}: {e} (run scripts/build-wasm.sh first)", p.display()))
 }
 
-/// A `blockheads:api@0.1.0` component next to 0.2 ones: every 0.1 import and export, services and channels across
+fn guest02_wasm() -> Vec<u8> {
+    let p = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/guest02/out/guest02.wasm");
+    fs::read(&p).unwrap_or_else(|e| panic!("{}: {e} (run scripts/build-wasm.sh first)", p.display()))
+}
+
+/// A `blockheads:api@0.1.0` component next to 0.3 ones: every 0.1 import and export, services and channels across
 /// versions.
 #[test]
 fn api_0_1_components_still_work() {
+    old_components(guest01_wasm());
+}
+
+/// The same for a frozen `blockheads:api@0.2.0` component.
+#[test]
+fn api_0_2_components_still_work() {
+    old_components(guest02_wasm());
+}
+
+fn old_components(old_wasm: Vec<u8>) {
     let tmp = tempfile::tempdir().unwrap();
     let m = tmp.path();
     wasm_mod(m, "tour", TOUR_TOML, &guest_wasm());
     let old = "[permissions]\nplayers = [\"chat\", \"kick\"]\nchannels = true\n[dependencies]\ntour = \"^1\"\n[provides]\nservices = [{ name = \"old\", version = \"1.0.0\", wit = \"wit/tour.wit\" }]\n";
-    wasm_mod(m, "old", old, &guest01_wasm());
+    wasm_mod(m, "old", old, &old_wasm);
     wasm_mod(m, "caller", "[dependencies]\nold = \"^1\"\n", &guest_wasm());
     fs::write(
         m.join("mods.toml"),
@@ -477,7 +493,7 @@ fn api_0_1_components_still_work() {
         assert_eq!(info.state, ModState::Enabled, "{}: {log}", info.id);
     }
     for line in [
-        "old: api = (\"0.2.0\", \"old\", \"1.0.0\", Side::Server, \"fake-host 1.0\")",
+        "old: api = (\"0.3.0\", \"old\", \"1.0.0\", Side::Server, \"fake-host 1.0\")",
         "[trace] old: lvl",
         "old: p = (\"p1\", \"ALICE\", true, Role::Player, Ok(()), Ok(()))",
         "old: find = Some(\"p1\")",
@@ -539,4 +555,48 @@ fn api_0_1_components_still_work() {
     assert!(b.has_log("old message = (3, \"tour\", "));
     h.disable_all();
     assert!(b.has_log("old disabled"));
+}
+
+/// A mod with `[content]` calls every `content` import (API 0.3) through the WASM bindings.
+#[test]
+fn content_imports() {
+    let tmp = tempfile::tempdir().unwrap();
+    let d = tmp.path().join("gear");
+    for side in ["server", "client"] {
+        fs::create_dir_all(d.join(side)).unwrap();
+        fs::write(d.join(side).join("mod.wasm"), guest_wasm()).unwrap();
+    }
+    fs::create_dir_all(d.join("assets")).unwrap();
+    fs::write(d.join("assets/cap.png"), include_bytes!("../../bhmod-core/tests/cap.png")).unwrap();
+    let toml = WASM_TOML
+        .replace("ID", "gear")
+        .replace("api = \"^0.1\"", "api = \"^0.3\"")
+        .replace("client = false", "client = true")
+        .replace("[entry]\n", "[entry]\nclient = { runtime = \"wasm\", path = \"client/mod.wasm\" }\n");
+    fs::write(
+        d.join("mod.toml"),
+        format!(
+            "{toml}[content]\ncosmetics = [{{ key = \"gear:cap\", slot = \"hat\", texture = \"assets/cap.png\" }}]\n"
+        ),
+    )
+    .unwrap();
+    let (b, mut h) = host(tmp.path(), WasmConfig::default());
+    b.join("p1", "ALICE", Role::Player);
+    b.cosmetic_ids.borrow_mut().push(("gear:cap".into(), 1));
+    h.enable("World", "wid");
+    let log = b.log_text();
+    assert_eq!(h.mods()[0].state, ModState::Enabled, "{log}");
+    for line in [
+        "gear: cosmetics = [CosmeticInfo { key: \"gear:cap\", mod-id: \"gear\", slot: \"hat\", id: Some(1) }]",
+        "gear: id-of = (Some(1), None)",
+        "gear: key-of = (Some(\"gear:cap\"), None)",
+        "gear: equip = Ok(())",
+        "gear: equipped = Ok([(\"hat\", \"gear:cap\")])",
+        "gear: equip-other = Err(\"invalid argument",
+        "gear: unequip = Ok(())",
+        "gear: unequip-bad = Err(\"invalid argument",
+        "gear: equipped-after = Ok([])",
+    ] {
+        assert!(log.contains(line), "missing {line:?} in\n{log}");
+    }
 }

@@ -60,7 +60,7 @@ pub use wit::types::{ApiError, Pos, Priority, Side};
 pub mod prelude {
     pub use crate::commands::{self, Command, Reply, Sender};
     pub use crate::events::{self, EventCtx, EventKind};
-    pub use crate::{channels, host, log, players, scheduler, services, storage};
+    pub use crate::{channels, content, host, log, players, scheduler, services, storage};
     pub use crate::{ApiError, Mod, Player, Priority, Role, Side};
 }
 
@@ -242,6 +242,11 @@ pub mod channels {
 /// Connected players.
 pub mod players {
     pub use crate::wit::players::{broadcast, find_by_alias, from_value_handle, get, online, Player, Role};
+}
+
+/// Content ids and cosmetics (API 0.3).
+pub mod content {
+    pub use crate::wit::content::{cosmetics, equip, equipped, id_of, key_of, unequip, CosmeticInfo, Kind};
 }
 
 /// The per-mod, per-world key-value store.

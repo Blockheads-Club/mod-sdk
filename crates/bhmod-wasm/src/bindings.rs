@@ -1,5 +1,5 @@
 //! The `blockheads:api` imports implemented on top of [`HostApi`], the guest export calls, and the conversions
-//! between the generated WIT types and the core types, for API 0.2 ([`v02`]) and 0.1 ([`v01`]). Public for other
+//! between the generated WIT types and the core types, for API 0.3 ([`v03`]), 0.2 ([`v02`]) and 0.1 ([`v01`]). Public for other
 //! hosts of WASM mods (the client loaders); most users only need [`crate::WasmRuntime`].
 //!
 //! Both versions are generated from one macro, so they cannot drift apart: 0.2 only adds event kinds, mutations
@@ -349,20 +349,19 @@ macro_rules! common_event_to {
     }};
 }
 
-/// `blockheads:api@0.2.0`.
-pub mod v02 {
-    pub use crate::wit::ServerMod;
+macro_rules! players_extra {
+    () => {
+        fn from_value_handle(&mut self, handle: u64) -> R<Option<Resource<PlayerRes>>> {
+            let found = self.api()?.player_of_handle(handle).ok();
+            found.map(|id| self.new_player(id)).transpose()
+        }
+    };
+}
 
-    macro_rules! players_extra {
-        () => {
-            fn from_value_handle(&mut self, handle: u64) -> R<Option<Resource<PlayerRes>>> {
-                let found = self.api()?.player_of_handle(handle).ok();
-                found.map(|id| self.new_player(id)).transpose()
-            }
-        };
-    }
-
-    api_version!(crate::wit::blockheads::api;
+/// Everything API 0.2 and 0.3 share (0.3 only adds the `content` interface).
+macro_rules! api_v02_plus {
+    ($api:path) => {
+    api_version!($api;
     kinds { PlayerJoin, PlayerQuit, Chat, Command, Tick, WorldLoaded, WorldSave, PlayerPreLogin, BlockPlace,
         BlockBreak, BlockChanged, ObjectPlace, Damage, Death, PlayerMove };
     extra {
@@ -457,6 +456,59 @@ pub mod v02 {
             other => return common_event_to!(other, lend),
         })
     }
+    };
+}
+
+/// `blockheads:api@0.3.0`.
+pub mod v03 {
+    pub use crate::wit::ServerMod;
+
+    api_v02_plus!(crate::wit::blockheads::api);
+
+    use crate::wit::blockheads::api::content;
+
+    enum_fn!(content_kind_from: content::Kind => core::ContentKind { Block, Item, Cosmetic });
+
+    impl content::Host for State {
+        fn id_of(&mut self, kind: content::Kind, key: String) -> R<Option<u32>> {
+            let id = self.api()?.content_id(content_kind_from(kind), &key);
+            Ok(id.and_then(|id| u32::try_from(id).ok()))
+        }
+        fn key_of(&mut self, kind: content::Kind, id: u32) -> R<Option<String>> {
+            Ok(self.api()?.content_key(content_kind_from(kind), u64::from(id)))
+        }
+        fn cosmetics(&mut self) -> R<Vec<content::CosmeticInfo>> {
+            let list = self.api()?.content_cosmetics();
+            Ok(list
+                .into_iter()
+                .map(|c| content::CosmeticInfo {
+                    key: c.key,
+                    mod_id: c.mod_id,
+                    slot: c.slot,
+                    id: c.id.and_then(|id| u32::try_from(id).ok()),
+                })
+                .collect())
+        }
+        fn equipped(&mut self, p: Resource<PlayerRes>) -> R<Result<Vec<(String, String)>, types::ApiError>> {
+            let id = self.player_id(&p)?;
+            Ok(self.api()?.content_equipped(&id).map_err(api_error))
+        }
+        fn equip(&mut self, p: Resource<PlayerRes>, key: String) -> R<Result<(), types::ApiError>> {
+            let id = self.player_id(&p)?;
+            Ok(self.api()?.content_equip(&id, &key).map_err(api_error))
+        }
+        fn unequip(&mut self, p: Resource<PlayerRes>, slot: String) -> R<Result<(), types::ApiError>> {
+            let id = self.player_id(&p)?;
+            Ok(self.api()?.content_unequip(&id, &slot).map_err(api_error))
+        }
+    }
+}
+
+/// `blockheads:api@0.2.0` (frozen in `wit/compat/blockheads-api-0.2.0`).
+pub mod v02 {
+    pub use crate::wit::v02::ServerMod;
+
+    api_v02_plus!(crate::wit::v02::blockheads::api);
 }
 
 /// `blockheads:api@0.1.0`: the events of 0.2 that 0.1 does not know are never delivered (0.1 mods cannot

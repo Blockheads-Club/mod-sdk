@@ -16,7 +16,7 @@ for e in hello-rust chat-filter-rust scheduler-rust shop-rust; do
   cp "$CARGO_TARGET_DIR/wasm32-wasip2/release/$(echo "$e" | tr - _).wasm" "$root/examples/$e/server/mod.wasm"
   echo "built examples/$e/server/mod.wasm"
 done
-for g in guest guest01; do
+for g in guest guest01 guest02; do
   d="$root/crates/bhmod-wasm/tests/$g"
   (cd "$d" && cargo build $locked --release --target wasm32-wasip2 -q)
   mkdir -p "$d/out"
