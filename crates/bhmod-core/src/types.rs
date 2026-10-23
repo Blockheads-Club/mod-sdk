@@ -1,4 +1,4 @@
-//! Host-side data types mirroring `blockheads:api@0.2.0` (`types`, `players`, `events`, `commands`, `services`,
+//! Host-side data types mirroring `blockheads:api@0.3.0` (`types`, `players`, `events`, `commands`, `services`,
 //! `channels`, `log`).
 //!
 //! They are plain Rust data so every runtime (Luau now, WASM in M2, JVM in M9) converts from and to the same shapes.
@@ -106,6 +106,19 @@ impl ContentKind {
     pub fn parse(s: &str) -> Option<ContentKind> {
         ContentKind::ALL.into_iter().find(|k| k.name() == s)
     }
+}
+
+/// A cosmetic of a loaded mod (`content.cosmetic-info`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CosmeticInfo {
+    /// `<mod-id>:<name>`.
+    pub key: String,
+    /// The mod that declares it.
+    pub mod_id: String,
+    /// `hat`, `shirt`, `pants`, `shoes`, `hair` or `weapon`.
+    pub slot: String,
+    /// The world's id, when the host keeps a registry.
+    pub id: Option<u64>,
 }
 
 /// Which program the host is (`types.side`).

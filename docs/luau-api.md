@@ -119,12 +119,25 @@ silently; a server mod cannot target `"server"`); client hosts raise `unsupporte
 
 `bh.value.encode(v) -> string` and `bh.value.decode(s) -> any` (handy for `bh.storage`).
 
+### `bh.content` (0.3)
+
+Content declared in `[content]` and cosmetics, see [content.md](content.md). `kind` is `"block"`, `"item"` or
+`"cosmetic"`.
+
+- `bh.content.id_of(kind, key) -> number?` and `bh.content.key_of(kind, id) -> string?`: the world's id of a key and back.
+- `bh.content.cosmetics() -> { {key, mod_id, slot, id} }`: the cosmetics of all loaded mods.
+- `bh.content.equip(player, key)`: puts one of **your mod's** cosmetics on a player (replacing the one in its slot).
+  Another mod's key raises `not-permitted`, an unknown key `invalid-argument`, a player who left `stale-handle`;
+  clients raise `unsupported`.
+- `bh.content.unequip(player, slot)`, `bh.content.equipped(player) -> { [slot]: key }`.
+
 ## API versions
 
-The host implements `blockheads:api@0.2.0` (`bh.host.api_version()`) and also serves 0.1: in 0.x a new minor only
-adds events, functions and fields, so a mod with `api = "^0.1"` keeps loading and running unchanged. A mod that
-uses anything from 0.2 declares `api = "^0.2"`. WASM hosts bind the frozen 0.1 WIT in
-[`../wit/compat/blockheads-api-0.1.0/`](../wit/compat/blockheads-api-0.1.0/) for components built against it.
+The host implements `blockheads:api@0.3.0` (`bh.host.api_version()`) and also serves 0.1 and 0.2: in 0.x a new minor
+only adds events, functions and fields, so a mod with `api = "^0.1"` keeps loading and running unchanged. A mod that
+uses anything from 0.2 declares `api = "^0.2"`, from 0.3 `api = "^0.3"`. WASM hosts bind the frozen WIT in
+[`../wit/compat/blockheads-api-0.1.0/`](../wit/compat/blockheads-api-0.1.0/) and
+[`../wit/compat/blockheads-api-0.2.0/`](../wit/compat/blockheads-api-0.2.0/) for components built against them.
 
 ## Host behaviour (M1)
 

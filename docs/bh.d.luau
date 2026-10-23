@@ -93,6 +93,9 @@ export type CommandSpec = {
 export type CommandOutcome = { handled: boolean?, reply: (string | { string })? }
 export type SubscribeOpts = { priority: Priority?, ignore_cancelled: boolean? }
 export type ChannelOrigin = { mod: string?, server: boolean?, player: Player? }
+export type ContentKind = "block" | "item" | "cosmetic"
+export type CosmeticInfo = { key: string, mod_id: string, slot: string, id: number? }
+
 export type ChannelTarget = "local" | "server" | "all-players" | Player
 
 declare bh: {
@@ -117,6 +120,14 @@ declare bh: {
 		from_value_handle: (handle: number) -> Player?,
 		online: () -> { Player },
 		broadcast: (text: string) -> (),
+	},
+	content: {
+		id_of: (kind: ContentKind, key: string) -> number?,
+		key_of: (kind: ContentKind, id: number) -> string?,
+		cosmetics: () -> { CosmeticInfo },
+		equipped: (player: Player) -> { [string]: string },
+		equip: (player: Player, key: string) -> (),
+		unequip: (player: Player, slot: string) -> (),
 	},
 	events: {
 		on: (kind: EventKind, handler: (ev: Event) -> (), opts: SubscribeOpts?) -> number,

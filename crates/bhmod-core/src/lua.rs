@@ -17,7 +17,7 @@ use crate::channels::ChannelId;
 use crate::runtime::TaskId;
 use crate::runtime::{CallError, CommandId, HostApi, Instance, InstanceLimits, ModFiles, Runtime, SubscriptionId};
 use crate::types::{ApiError, CommandOutcome, CommandSender, CommandSpec, Event, EventKind, LogLevel, Mutation};
-use crate::types::{ChannelSource, ChannelTarget, Outcome, Pos, Priority, RejectReason, Role};
+use crate::types::{ChannelSource, ChannelTarget, ContentKind, Outcome, Pos, Priority, RejectReason, Role};
 use crate::value::{self, Value as Cbor};
 
 /// The Luau runtime.
@@ -668,6 +668,56 @@ impl LuaInstance {
             with_host(&s, |h| h.players_broadcast(&text))?.map_err(api_err)
         });
         bh.set("players", players)?;
+
+        let content = lua.create_table()?;
+        fn kind_of(k: &str) -> mlua::Result<ContentKind> {
+            ContentKind::parse(k).ok_or_else(|| rt_err(format!("invalid argument: unknown content kind {k:?}")))
+        }
+        let s = sh.clone();
+        b.func(&content, "id_of", move |_, (kind, key): (String, String)| {
+            let kind = kind_of(&kind)?;
+            with_host(&s, |h| h.content_id(kind, &key))
+        });
+        let s = sh.clone();
+        b.func(&content, "key_of", move |_, (kind, id): (String, u64)| {
+            let kind = kind_of(&kind)?;
+            with_host(&s, |h| h.content_key(kind, id))
+        });
+        let s = sh.clone();
+        b.func(&content, "cosmetics", move |lua, ()| {
+            let list = with_host(&s, |h| h.content_cosmetics())?;
+            let out = lua.create_table()?;
+            for c in list {
+                let t = lua.create_table()?;
+                t.set("key", c.key)?;
+                t.set("mod_id", c.mod_id)?;
+                t.set("slot", c.slot)?;
+                t.set("id", c.id)?;
+                out.push(t)?;
+            }
+            Ok(out)
+        });
+        let s = sh.clone();
+        b.func(&content, "equipped", move |lua, who: AnyUserData| {
+            let id = who.borrow::<LuaPlayer>().map_err(|_| rt_err("invalid argument: player"))?.id.clone();
+            let pairs = with_host(&s, |h| h.content_equipped(&id))?.map_err(api_err)?;
+            let out = lua.create_table()?;
+            for (slot, key) in pairs {
+                out.set(slot, key)?;
+            }
+            Ok(out)
+        });
+        let s = sh.clone();
+        b.func(&content, "equip", move |_, (who, key): (AnyUserData, String)| {
+            let id = who.borrow::<LuaPlayer>().map_err(|_| rt_err("invalid argument: player"))?.id.clone();
+            with_host(&s, |h| h.content_equip(&id, &key))?.map_err(api_err)
+        });
+        let s = sh.clone();
+        b.func(&content, "unequip", move |_, (who, slot): (AnyUserData, String)| {
+            let id = who.borrow::<LuaPlayer>().map_err(|_| rt_err("invalid argument: player"))?.id.clone();
+            with_host(&s, |h| h.content_unequip(&id, &slot))?.map_err(api_err)
+        });
+        bh.set("content", content)?;
 
         let events = lua.create_table()?;
         let s = sh.clone();

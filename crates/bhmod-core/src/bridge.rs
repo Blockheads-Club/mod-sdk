@@ -58,6 +58,12 @@ pub trait GameBridge {
         None
     }
 
+    /// The key of a content id (API 0.3); the reverse of [`GameBridge::content_id`].
+    fn content_key(&self, kind: ContentKind, id: u64) -> Option<String> {
+        let _ = (kind, id);
+        None
+    }
+
     /// Puts the cosmetic `id` on a player in `slot` (API 0.3); `None` takes the slot's cosmetic off. The host
     /// tells every modded client. The mod host has already checked that the cosmetic belongs to the calling mod and
     /// fits the slot. The default reports [`ApiError::Unsupported`].

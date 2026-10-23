@@ -202,10 +202,10 @@ mod tests {
         let mut p = pkgs(&[("aa", ""), ("bb", "")]);
         let dup = p[0].clone();
         p.push(dup);
-        p[1].manifest.api = "^0.3".into();
+        p[1].manifest.api = "^0.4".into();
         let (order, problems, _) = resolve(p.clone(), &ModsConfig::default(), Side::Server, &[Runtime::Lua]);
         assert_eq!(ids(&order), vec!["aa"]);
-        assert!(problems[0].message.contains("needs API ^0.3"));
+        assert!(problems[0].message.contains("needs API ^0.4"));
         assert!(problems[1].message.contains("same id"));
         let (order, problems, skipped) = resolve(p.clone(), &ModsConfig::default(), Side::Server, &[Runtime::Wasm]);
         assert!(order.is_empty());

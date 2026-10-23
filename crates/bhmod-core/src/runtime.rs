@@ -11,8 +11,8 @@ use std::time::Instant;
 
 use crate::channels::ChannelId;
 use crate::types::{
-    ApiError, ChannelSource, ChannelTarget, CommandOutcome, CommandSender, CommandSpec, Event, EventKind, LogLevel,
-    Outcome, Pos, Priority, ServiceError,
+    ApiError, ChannelSource, ChannelTarget, CommandOutcome, CommandSender, CommandSpec, ContentKind, CosmeticInfo,
+    Event, EventKind, LogLevel, Outcome, Pos, Priority, ServiceError,
 };
 use crate::types::{Role, Side};
 
@@ -236,6 +236,36 @@ pub trait HostApi {
     ) -> Result<Vec<u8>, ServiceError> {
         let _ = (name, version_req, method, args);
         Err(ServiceError::NotFound)
+    }
+
+    /// `content.id-of` (API 0.3).
+    fn content_id(&mut self, kind: ContentKind, key: &str) -> Option<u64> {
+        let _ = (kind, key);
+        None
+    }
+    /// `content.key-of` (API 0.3).
+    fn content_key(&mut self, kind: ContentKind, id: u64) -> Option<String> {
+        let _ = (kind, id);
+        None
+    }
+    /// `content.cosmetics` (API 0.3).
+    fn content_cosmetics(&mut self) -> Vec<CosmeticInfo> {
+        Vec::new()
+    }
+    /// `content.equipped` (API 0.3): `(slot, key)` pairs.
+    fn content_equipped(&mut self, id: &str) -> Result<Vec<(String, String)>, ApiError> {
+        let _ = id;
+        Err(ApiError::Unsupported)
+    }
+    /// `content.equip` (API 0.3).
+    fn content_equip(&mut self, id: &str, key: &str) -> Result<(), ApiError> {
+        let _ = (id, key);
+        Err(ApiError::Unsupported)
+    }
+    /// `content.unequip` (API 0.3).
+    fn content_unequip(&mut self, id: &str, slot: &str) -> Result<(), ApiError> {
+        let _ = (id, slot);
+        Err(ApiError::Unsupported)
     }
 
     /// `channels.open`.

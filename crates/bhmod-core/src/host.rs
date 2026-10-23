@@ -30,8 +30,8 @@ use crate::scheduler::Scheduler;
 use crate::services::ServiceRegistry;
 use crate::storage::{MemoryStorage, StorageProvider, Store};
 use crate::types::{
-    ApiError, ChannelSource, ChannelTarget, CommandOutcome, CommandSender, CommandSpec, Event, EventKind, LogLevel,
-    Pos, Priority, Role, SavePhase, ServiceError, Side,
+    ApiError, ChannelSource, ChannelTarget, CommandOutcome, CommandSender, CommandSpec, ContentKind, CosmeticInfo,
+    Event, EventKind, LogLevel, Pos, Priority, Role, SavePhase, ServiceError, Side,
 };
 use crate::value::Value;
 use crate::API_VERSION;
@@ -104,6 +104,8 @@ struct Slot {
     deps: Vec<String>,
     /// `[provides]` as `(name, version)`.
     provides: Vec<(String, String)>,
+    /// `[content] cosmetics` as `(key, slot)`.
+    cosmetics: Vec<(String, String)>,
     instance: Option<Box<dyn Instance>>,
     store: Option<Store>,
     strikes: Strikes,
@@ -218,6 +220,7 @@ impl ModHost {
                         .iter()
                         .map(|s| (s.name.clone(), s.version.clone()))
                         .collect(),
+                    cosmetics: pkg.manifest.content.cosmetics.iter().map(|c| (c.key.clone(), c.slot.clone())).collect(),
                     instance: Some(instance),
                     store: None,
                     strikes: Strikes::default(),
@@ -599,6 +602,25 @@ impl Ctx<'_> {
         self.host.bridge.log(Some(&self.slot().info.id), level, msg);
     }
 
+    /// Equipping is a server thing: clients get `unsupported`.
+    fn require_content_side(&self) -> Result<(), ApiError> {
+        if self.host.side == Side::Server {
+            Ok(())
+        } else {
+            Err(ApiError::Unsupported)
+        }
+    }
+
+    /// Why `key` cannot be equipped by the calling mod: another mod's key, or no such key.
+    fn unknown_cosmetic(&self, key: &str) -> ApiError {
+        let declared_elsewhere = self.host.slots.iter().any(|s| s.cosmetics.iter().any(|(k, _)| k == key));
+        if declared_elsewhere {
+            ApiError::NotPermitted(format!("`{key}` belongs to another mod"))
+        } else {
+            ApiError::InvalidArgument(format!("`{key}` is not a cosmetic declared by this mod"))
+        }
+    }
+
     /// True when the calling mod is `id` or depends (softly) on it.
     fn may_use(&self, id: &str) -> bool {
         self.slot().info.id == id || self.slot().deps.iter().any(|d| d == id)
@@ -730,6 +752,58 @@ impl HostApi for Ctx<'_> {
     fn player_pos(&mut self, id: &str) -> Result<Option<Pos>, ApiError> {
         self.host.bridge.player_alias(id).ok_or(ApiError::StaleHandle)?;
         Ok(self.host.bridge.player_pos(id))
+    }
+    fn content_id(&mut self, kind: ContentKind, key: &str) -> Option<u64> {
+        self.host.bridge.content_id(kind, key)
+    }
+    fn content_key(&mut self, kind: ContentKind, id: u64) -> Option<String> {
+        self.host.bridge.content_key(kind, id)
+    }
+    fn content_cosmetics(&mut self) -> Vec<CosmeticInfo> {
+        let bridge = &self.host.bridge;
+        let mut out = Vec::new();
+        for slot in &self.host.slots {
+            for (key, cslot) in &slot.cosmetics {
+                let id = bridge.content_id(ContentKind::Cosmetic, key);
+                out.push(CosmeticInfo { key: key.clone(), mod_id: slot.info.id.clone(), slot: cslot.clone(), id });
+            }
+        }
+        out
+    }
+    fn content_equipped(&mut self, id: &str) -> Result<Vec<(String, String)>, ApiError> {
+        self.require_content_side()?;
+        self.host.bridge.player_alias(id).ok_or(ApiError::StaleHandle)?;
+        let bridge = &self.host.bridge;
+        Ok(bridge
+            .cosmetics_of(id)
+            .into_iter()
+            .filter_map(|(slot, cid)| bridge.content_key(ContentKind::Cosmetic, cid).map(|k| (slot, k)))
+            .collect())
+    }
+    fn content_equip(&mut self, id: &str, key: &str) -> Result<(), ApiError> {
+        self.require_content_side()?;
+        let slot = self
+            .slot()
+            .cosmetics
+            .iter()
+            .find(|(k, _)| k == key)
+            .map(|(_, s)| s.clone())
+            .ok_or_else(|| self.unknown_cosmetic(key))?;
+        self.host.bridge.player_alias(id).ok_or(ApiError::StaleHandle)?;
+        let cid = self
+            .host
+            .bridge
+            .content_id(ContentKind::Cosmetic, key)
+            .ok_or_else(|| ApiError::InvalidArgument(format!("`{key}` has no id in this world")))?;
+        self.host.bridge.set_cosmetic(id, &slot, Some(cid))
+    }
+    fn content_unequip(&mut self, id: &str, slot: &str) -> Result<(), ApiError> {
+        self.require_content_side()?;
+        if !bhmod_manifest::content::SLOTS.contains(&slot) {
+            return Err(ApiError::InvalidArgument(format!("`{slot}` is not a cosmetic slot")));
+        }
+        self.host.bridge.player_alias(id).ok_or(ApiError::StaleHandle)?;
+        self.host.bridge.set_cosmetic(id, slot, None)
     }
     fn handle_of_player(&mut self, id: &str) -> u64 {
         self.host.handles.of_player(id)

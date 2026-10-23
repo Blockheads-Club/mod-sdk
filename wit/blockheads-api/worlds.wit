@@ -1,4 +1,4 @@
-package blockheads:api@0.2.0;
+package blockheads:api@0.3.0;
 
 /// The interfaces every mod may import, on both sides.
 world core {
@@ -12,6 +12,7 @@ world core {
     import storage;
     import services;
     import channels;
+    import content;
 }
 
 /// A server mod (`[entry] server` in `mod.toml`). Runs in the dedicated server or the host of a local world.

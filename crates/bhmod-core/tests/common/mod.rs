@@ -8,7 +8,7 @@ use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 use bhmod_core::budget::Clock;
-use bhmod_core::types::{ApiError, ChannelTarget, LogLevel, Pos, Role, Side};
+use bhmod_core::types::{ApiError, ChannelTarget, ContentKind, LogLevel, Pos, Role, Side};
 use bhmod_core::GameBridge;
 
 /// A channel message the bridge was asked to send: (mod, channel, target, data).
@@ -23,6 +23,10 @@ pub struct FakeBridge {
     pub kicks: RefCell<Vec<(String, String)>>,
     pub positions: RefCell<Vec<(String, Pos)>>,
     pub sent: RefCell<Vec<Sent>>,
+    /// The cosmetics registry: (key, id).
+    pub cosmetic_ids: RefCell<Vec<(String, u64)>>,
+    /// Worn cosmetics: (player, slot, id).
+    pub worn: RefCell<Vec<(String, String, u64)>>,
 }
 
 impl FakeBridge {
@@ -94,6 +98,29 @@ impl GameBridge for FakeBridge {
     }
     fn player_pos(&self, id: &str) -> Option<Pos> {
         self.positions.borrow().iter().find(|p| p.0 == id).map(|p| p.1)
+    }
+    fn content_id(&self, kind: ContentKind, key: &str) -> Option<u64> {
+        if kind != ContentKind::Cosmetic {
+            return None;
+        }
+        self.cosmetic_ids.borrow().iter().find(|c| c.0 == key).map(|c| c.1)
+    }
+    fn content_key(&self, kind: ContentKind, id: u64) -> Option<String> {
+        if kind != ContentKind::Cosmetic {
+            return None;
+        }
+        self.cosmetic_ids.borrow().iter().find(|c| c.1 == id).map(|c| c.0.clone())
+    }
+    fn set_cosmetic(&self, player: &str, slot: &str, id: Option<u64>) -> Result<(), ApiError> {
+        let mut worn = self.worn.borrow_mut();
+        worn.retain(|w| !(w.0 == player && w.1 == slot));
+        if let Some(id) = id {
+            worn.push((player.into(), slot.into(), id));
+        }
+        Ok(())
+    }
+    fn cosmetics_of(&self, player: &str) -> Vec<(String, u64)> {
+        self.worn.borrow().iter().filter(|w| w.0 == player).map(|w| (w.1.clone(), w.2)).collect()
     }
     fn channel_send(&self, mod_id: &str, name: &str, target: &ChannelTarget, data: &[u8]) -> Result<(), ApiError> {
         if *target == ChannelTarget::Server {
