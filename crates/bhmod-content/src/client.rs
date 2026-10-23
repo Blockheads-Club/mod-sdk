@@ -68,9 +68,16 @@ pub struct Content {
 }
 
 impl Content {
+    /// An empty state: no cosmetics declared, nobody wearing anything.
+    pub fn new() -> Content {
+        Content::default()
+    }
+
     /// Reads the manifests of the packages the server listed and joins their cosmetics with `registry`
-    /// (`MOD_LIST.registry`). Problems (an unreadable package) are returned as text; that package adds nothing.
-    pub fn load(registry: &Wire, packages: &[PathBuf]) -> (Content, Vec<String>) {
+    /// (`MOD_LIST.registry`), replacing the table and the texture cache. Who wears what is kept: the server's
+    /// `COSMETICS` may arrive before the packages are loaded. Problems (an unreadable package) are returned as
+    /// text; that package adds nothing.
+    pub fn load(&mut self, registry: &Wire, packages: &[PathBuf]) -> Vec<String> {
         let mut problems = Vec::new();
         let mut manifests = Vec::new();
         let mut paths = BTreeMap::new();
@@ -94,7 +101,11 @@ impl Content {
         let table = Table::build(registry, &manifests);
         // Keep only the packages that declare cosmetics.
         paths.retain(|id, _| table.all().any(|c| &c.mod_id == id));
-        (Content { table, packages: paths, ..Content::default() }, problems)
+        self.table = table;
+        self.packages = paths;
+        self.cache.clear();
+        self.serial += 1;
+        problems
     }
 
     /// True when some loaded mod declares a cosmetic the world has an id for.

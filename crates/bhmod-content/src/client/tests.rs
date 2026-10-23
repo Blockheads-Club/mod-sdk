@@ -48,7 +48,8 @@ fn loads_folders_and_zips() {
     let zip = tmp.path().join("hats.bhmod");
     zip_of(&dir, &zip);
     for pkg in [dir, zip] {
-        let (mut c, problems) = Content::load(&registry(), std::slice::from_ref(&pkg));
+        let mut c = Content::new();
+        let problems = c.load(&registry(), std::slice::from_ref(&pkg));
         assert!(problems.is_empty(), "{problems:?}");
         assert!(c.is_active());
         assert_eq!(c.table().all().count(), 3);
@@ -82,7 +83,8 @@ fn reports_unreadable_packages() {
     std::fs::create_dir_all(no_manifest.join("assets")).unwrap();
     let missing = tmp.path().join("missing.bhmod");
     let pkgs = [junk, bad_manifest, no_manifest, missing];
-    let (c, problems) = Content::load(&registry(), &pkgs);
+    let mut c = Content::new();
+    let problems = c.load(&registry(), &pkgs);
     assert_eq!(problems.len(), 4, "{problems:?}");
     assert!(!c.is_active());
     assert!(problems[3].contains("missing.bhmod"));
@@ -93,7 +95,8 @@ fn wearing_and_serial() {
     let tmp = tempfile::tempdir().unwrap();
     let dir = tmp.path().join("hats-src");
     source_dir(&dir);
-    let (mut c, _) = Content::load(&registry(), &[dir]);
+    let mut c = Content::new();
+    c.load(&registry(), &[dir]);
     let msg = |full: bool, rows: &[(&str, &[(&str, u64)])]| Cosmetics {
         full,
         players: rows
@@ -101,19 +104,19 @@ fn wearing_and_serial() {
             .map(|(p, s)| (p.to_string(), s.iter().map(|(a, b)| (a.to_string(), *b)).collect()))
             .collect(),
     };
-    assert_eq!(c.serial(), 0);
+    let base = c.serial();
     assert!(c.apply(&msg(true, &[])).is_empty());
-    assert_eq!(c.serial(), 0);
+    assert_eq!(c.serial(), base);
     assert_eq!(c.apply(&msg(true, &[("a", &[("hat", 1)])])), ["a"]);
-    assert_eq!(c.serial(), 1);
+    assert_eq!(c.serial(), base + 1);
     let r = c.resolve("a", "hat", None).unwrap();
     assert_eq!((r.def.key.as_str(), r.wear), ("hats:crown", Some(115)));
     assert!(c.resolve("b", "hat", None).is_none());
     c.clear();
-    assert_eq!(c.serial(), 2);
+    assert_eq!(c.serial(), base + 2);
     assert!(c.resolve("a", "hat", None).is_none());
     c.clear();
-    assert_eq!(c.serial(), 2);
+    assert_eq!(c.serial(), base + 2);
 }
 
 #[test]
@@ -121,7 +124,8 @@ fn texture_of_an_unloaded_package() {
     let tmp = tempfile::tempdir().unwrap();
     let dir = tmp.path().join("hats-src");
     source_dir(&dir);
-    let (mut c, _) = Content::load(&registry(), &[dir.clone()]);
+    let mut c = Content::new();
+    c.load(&registry(), &[dir.clone()]);
     c.packages.clear();
     assert!(c.texture(1, Part::Main).unwrap_err().contains("not loaded"));
     let _ = dir;
@@ -132,7 +136,8 @@ fn look_of_a_blockhead() {
     let tmp = tempfile::tempdir().unwrap();
     let dir = tmp.path().join("hats-src");
     source_dir(&dir);
-    let (mut c, _) = Content::load(&registry(), &[dir]);
+    let mut c = Content::new();
+    c.load(&registry(), &[dir]);
     let wear = |rows: &[(&str, &[(&str, u64)])]| Cosmetics {
         full: true,
         players: rows
@@ -148,4 +153,23 @@ fn look_of_a_blockhead() {
     assert_eq!(look.hair, None);
     assert!(!look.is_empty());
     assert_eq!(CLOTHING[3], "hat");
+}
+
+#[test]
+fn wearing_survives_a_reload() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path().join("hats-src");
+    source_dir(&dir);
+    let mut c = Content::new();
+    let msg = Cosmetics {
+        full: true,
+        players: BTreeMap::from([("a".to_string(), BTreeMap::from([("hat".to_string(), 1)]))]),
+    };
+    // The server's message arrives before the packages are loaded.
+    c.apply(&msg);
+    assert!(!c.is_active());
+    assert!(c.resolve("a", "hat", None).is_none());
+    c.load(&registry(), &[dir]);
+    assert!(c.is_active());
+    assert_eq!(c.resolve("a", "hat", None).unwrap().def.key, "hats:crown");
 }
