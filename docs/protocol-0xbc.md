@@ -172,6 +172,11 @@ Limits (server-configurable): a package ≤ 32 MiB, all client mods of a server 
 `{acceptedHash: bytes(32), loaded: [{id: text, version: text}]}`: the player accepted, every required file is
 present and verified, and the listed mods are loaded. `acceptedHash` is the `modsHash` from `SERVER_HELLO`.
 
+`loaded` is also how a player's choice among **optional** client mods (`clientRequired = false`) reaches the server:
+it holds every required client mod plus exactly the optional ones the player switched on; a declined optional mod is
+absent. Declining never changes `acceptedHash` (section 7). A server may use the list to skip `CHANNEL` traffic for
+mods a player does not run; a `READY` that was never sent (all mods server-only) means "no client mods".
+
 ### 08 REJECT_TEXT (server -> client)
 
 `{reasonCode: uint ≤ 255, text: text, url?: text}`, sent only to modded clients, immediately followed by the vanilla
