@@ -232,6 +232,7 @@ impl<P: Platform + 'static> Loader<P> {
         self.server = server.to_string();
         let mut opts = self.opts.clone();
         opts.native_trusted = self.native_trusted();
+        self.offer_native_to_cache();
         let mut s = Session::new(opts, PackageCache::new(&self.dirs.cache), self.caps.clone());
         let out = s.contact(self.p.now_ms());
         self.session = Some(s);
@@ -360,6 +361,16 @@ impl<P: Platform + 'static> Loader<P> {
     fn native_trusted(&self) -> Vec<Hash> {
         let natives = self.installed().list().into_iter().filter(|m| m.manifest.permissions.native);
         natives.filter_map(|m| fs::read(&m.path).ok()).map(|b| sha256(&b)).collect()
+    }
+
+    /// Puts the confirmed native packages into the package cache, so a server that lists one (it cannot send it) is
+    /// answered from the player's own copy.
+    fn offer_native_to_cache(&self) {
+        let cache = PackageCache::new(&self.dirs.cache);
+        let natives = self.installed().list().into_iter().filter(|m| m.manifest.permissions.native);
+        for bytes in natives.filter_map(|m| fs::read(&m.path).ok()) {
+            let _ = cache.put(&bytes);
+        }
     }
 
     /// Loads the native libraries of the mods that started: `(id, package path)` of every native candidate.

@@ -526,7 +526,6 @@ fn a_server_may_list_native_code_only_when_the_player_installed_that_file() {
     r.l.on_disconnect();
     // installed and confirmed: the cached file loads
     r.l.installed().install_with(&pkg, index, true).unwrap();
-    PackageCache::new(&r.dirs.cache).put(&pkg).unwrap();
     flow(&mut r);
     assert_eq!(r.p.natives.borrow().len(), 1, "{:?}", r.p.logs.borrow());
 }
