@@ -82,6 +82,14 @@ pub struct Gpu {
     pub pixels: Vec<u8>,
 }
 
+impl Gpu {
+    /// The picture's rectangle inside the padded texture as texture coordinates: `[u, v, width, height]` with the
+    /// origin at the top-left, like the game's own `texCoordsForItemType`.
+    pub fn uv(&self) -> [f32; 4] {
+        [0.0, 0.0, self.content_wide as f32 / self.wide as f32, self.content_high as f32 / self.high as f32]
+    }
+}
+
 impl Texture {
     /// The pixels in the form `CPTexture2D initWithData:pixelFormat:pixelsWide:pixelsHigh:contentSize:mipmap:`
     /// takes them with [`PIXEL_FORMAT`].

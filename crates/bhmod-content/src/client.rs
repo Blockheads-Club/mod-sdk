@@ -157,6 +157,23 @@ impl Content {
         cosmetics::resolve(&self.table, &self.wearing, player, slot, worn)
     }
 
+    /// The weapon cosmetic `player` shows on a held sprite item of type `item` (`ItemType`): the id of the cosmetic
+    /// whose `base` is that item. Drawn by the sprite renderer hooks of the clients.
+    pub fn weapon(&self, player: &str, item: u16) -> Option<u64> {
+        self.resolve(player, "weapon", Some(item)).map(|r| r.def.id)
+    }
+
+    /// The cosmetic `player` wears in `slot`, whatever item is worn or held (a dev aid; the clients use
+    /// [`Content::weapon`] and [`Content::look`]).
+    pub fn worn_in(&self, player: &str, slot: &str) -> Option<u64> {
+        self.wearing.of(player)?.get(slot).copied()
+    }
+
+    /// True when some loaded mod declares a `weapon` cosmetic (the clients then hook the sprite renderer).
+    pub fn has_weapons(&self) -> bool {
+        self.table.all().any(|c| c.slot == "weapon")
+    }
+
     /// Everything `player`'s blockhead shows from cosmetics, given the `ItemType` worn in each clothing slot
     /// ([`CLOTHING`] order; `None` for an empty slot).
     pub fn look(&self, player: &str, worn: [Option<u16>; 4]) -> Look {

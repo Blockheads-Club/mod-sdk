@@ -63,6 +63,12 @@ pub const BASE_ITEMS: &[BaseItem] = &[
     b!("weapon", "bronze-sword", 50),
     b!("weapon", "iron-sword", 68),
     b!("weapon", "titanium-sword", 286),
+    b!("weapon", "gold-pickaxe", 90),
+    b!("weapon", "amethyst-pickaxe", 94),
+    b!("weapon", "sapphire-pickaxe", 95),
+    b!("weapon", "emerald-pickaxe", 96),
+    b!("weapon", "ruby-pickaxe", 97),
+    b!("weapon", "diamond-pickaxe", 98),
 ];
 
 /// The base item with this `base` value.

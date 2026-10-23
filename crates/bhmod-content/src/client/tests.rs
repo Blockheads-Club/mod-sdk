@@ -190,3 +190,34 @@ fn local_registry_for_developer_tests() {
     assert!(local_registry(&[]).is_empty());
     assert_eq!(read_manifest(&dir).unwrap().id, "hats");
 }
+
+#[test]
+fn weapons_follow_the_held_item() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path().join("arms-src");
+    std::fs::create_dir_all(dir.join("assets")).unwrap();
+    std::fs::create_dir_all(dir.join("client")).unwrap();
+    std::fs::write(dir.join("client/main.luau"), "-- x\n").unwrap();
+    std::fs::write(dir.join("assets/blade.png"), png(6, 3, [255, 255, 0, 255])).unwrap();
+    std::fs::write(
+        dir.join("mod.toml"),
+        "schema = 1\nid = \"arms\"\nversion = \"1.0.0\"\nname = { en = \"Arms\" }\nauthors = [\"me\"]\nlicense = \"MIT\"\n\
+         api = \"^0.1\"\n[sides]\nclient = true\n[entry]\nclient = { runtime = \"lua\", path = \"client/main.luau\" }\n\
+         [content]\ncosmetics = [{ key = \"arms:blade\", slot = \"weapon\", texture = \"assets/blade.png\", base = \"iron-sword\" }]\n",
+    )
+    .unwrap();
+    let mut c = Content::new();
+    assert!(!c.has_weapons());
+    let reg = Wire::from([("cosmetics".to_string(), BTreeMap::from([("arms:blade".to_string(), 7)]))]);
+    assert!(c.load(&reg, &[dir]).is_empty());
+    assert!(c.has_weapons());
+    c.apply(&Cosmetics { full: true, players: [("a".to_string(), [("weapon".to_string(), 7)].into())].into() });
+    // the iron sword (item 68) of player a carries the skin; other items and other players do not
+    assert_eq!(c.weapon("a", 68), Some(7));
+    assert_eq!(c.weapon("a", 50), None);
+    assert_eq!(c.weapon("b", 68), None);
+    assert_eq!(c.worn_in("a", "weapon"), Some(7));
+    assert_eq!((c.worn_in("a", "hat"), c.worn_in("b", "weapon")), (None, None));
+    let g = c.texture(7, Part::Main).unwrap().unwrap();
+    assert_eq!(g.uv(), [0.0, 0.0, 6.0 / 8.0, 3.0 / 4.0]);
+}
