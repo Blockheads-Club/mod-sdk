@@ -327,6 +327,10 @@ extern "C" fn hook_setup_net(this: Id, cmd: Sel, data: Id) {
 }
 
 extern "C" fn hook_update_frame(this: Id, cmd: Sel, dt: u32, accurate: u32, simulation: i8) {
+    static FIRST: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
+    if FIRST.swap(false, std::sync::atomic::Ordering::Relaxed) {
+        log(LogLevel::Info, &format!("cosmetics: first Blockhead update (active: {})", active()));
+    }
     if active() {
         let now = serial();
         let seen = st(|s| s.seen.get(&(this as usize)).copied());
@@ -373,6 +377,7 @@ pub fn install() -> bool {
     let setup_net = objc::swizzle("Blockhead", "setupFromNetCreationData:", hook_setup_net as Imp);
     let update_frame = objc::swizzle("Blockhead", "update:accurateDT:isSimulation:", hook_update_frame as Imp);
     let ok = [update_cubes, update_skin, setup_net, update_frame].iter().all(|p| !p.is_null());
+    log(LogLevel::Info, &format!("cosmetics: hooks {:?}", [update_cubes, update_skin, setup_net, update_frame]));
     let _ = ORIG.set(Originals { update_cubes, update_skin, setup_net, update_frame });
     ok
 }

@@ -201,7 +201,7 @@ impl<P: Platform + 'static> Loader<P> {
     }
 
     fn content_lock(&self) -> std::sync::MutexGuard<'_, Content> {
-        self.content.lock().unwrap_or_else(|e| e.into_inner())
+        self.content.lock().expect("the content lock is never held across a panic")
     }
 
     /// True while mods run.
