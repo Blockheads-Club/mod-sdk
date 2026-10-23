@@ -43,6 +43,9 @@ cosmetics = [
   optional on the client side they see the plain vanilla look.
 - Cosmetics are not saved by the server. A mod keeps who owns/wears what in its own storage and re-equips on
   `player-join`.
+- Clothing cosmetics need the vanilla item worn (an empty slot shows nothing yet); hair works on any head. The game
+  tints hats and clothing with the item's colour and hair with the hair colour, so light textures keep their colour
+  best, and the hair texture works as a mask for the hair shape: check it in the game.
 - `weapon` is part of the format but the clients do not draw it yet.
 
 ## API (blockheads:api 0.3)
