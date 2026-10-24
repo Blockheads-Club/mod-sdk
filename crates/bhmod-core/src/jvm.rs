@@ -1510,6 +1510,9 @@ mod tests {
         assert!(h.calls.contains(&"place 1 -2 m:brick".to_string()));
         assert_eq!(call(&mut h, "content.block-at", &[Value::Int(3), Value::Int(-4)]), t("m:brick"));
         assert_eq!(call(&mut h, "content.block-at", &[Value::Int(0), Value::Int(0)]), Value::Null);
+        assert!(call_host(&mut h, "content.block-at", &[Value::Int(i64::MAX), Value::Int(0)])
+            .unwrap_err()
+            .contains("out of range"));
         assert!(call_host(&mut h, "content.id-of", &[t("sound"), t("m:hat")]).unwrap_err().contains("content kind"));
         assert!(call_host(&mut h, "content.key-of", &[t("cosmetic"), Value::Int(-1)]).is_err());
     }

@@ -320,3 +320,37 @@ return mod
     h.enable("World", "wid");
     assert!(b.has_log("client decor ok"), "{}", b.log_text());
 }
+
+#[test]
+fn give_item_stale_player_and_missing_id() {
+    let tmp = tempfile::tempdir().unwrap();
+    let main = r#"
+local mod = {}
+function mod.on_enable()
+    local p = bh.players.get("p1")
+    local ok, err = pcall(bh.content.give_item, p, "decor:lamp", 1)
+    assert(not ok and string.find(tostring(err), "no id in this world", 1, true), tostring(err))
+    bh.log.info("noid ok")
+    bh.events.on("tick", function()
+        local ok2, err2 = pcall(bh.content.give_item, p, "decor:lamp", 1)
+        assert(not ok2 and string.find(tostring(err2), "stale", 1, true), tostring(err2))
+        bh.log.info("stale ok")
+    end)
+end
+return mod
+"#;
+    decor_mod(tmp.path(), "decor", main);
+    let b = FakeBridge::new();
+    b.join("p1", "ALICE", Role::Player);
+    let mut o = HostOptions::new(tmp.path(), Side::Server);
+    o.budgets.hard = std::time::Duration::from_secs(3);
+    o.budgets.soft = o.budgets.hard;
+    o.budgets.step = o.budgets.hard;
+    let mut h = ModHost::load(o, b.clone());
+    h.enable("World", "wid");
+    assert!(b.has_log("noid ok"), "{}", b.log_text());
+    b.item_ids.borrow_mut().extend([("decor:lamp".to_string(), 1107)]);
+    b.leave("p1");
+    h.tick(0.2);
+    assert!(b.has_log("stale ok"), "{}", b.log_text());
+}
