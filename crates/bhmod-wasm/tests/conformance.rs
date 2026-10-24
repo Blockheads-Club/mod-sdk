@@ -61,6 +61,22 @@ fn scheduler_twins() {
 }
 
 #[test]
+fn scheduler_reload_twins() {
+    let out = conform("scheduler-lua", "scheduler-rust", &["players:chat"], wasm, scheduler_reload);
+    assert!(has(&out, "reload: [Reloaded(\"0.1.0\", \"0.1.0\")]"), "{out:#?}");
+    assert!(has(&out, "reload all: [Unchanged]"));
+    assert!(has(&out, "broadcasts: [\"5\", \"4\"]"), "{out:#?}");
+    assert!(has(&out, "broadcasts: [\"2\", \"1\", \"Go!\"]"), "{out:#?}");
+}
+
+#[test]
+fn hud_reload_twins() {
+    let out = conform_on("hud-lua", "hud-rust", &[], Side::Client, wasm, hud_reload);
+    assert!(has_ui(&out, "ClearMod"));
+    assert!(has_ui(&out, "ShowDialog { id: "));
+}
+
+#[test]
 fn hud_twins() {
     let out = conform_on("hud-lua", "hud-rust", &[], Side::Client, wasm, hud);
     assert!(has_ui(&out, "state: Enabled"));

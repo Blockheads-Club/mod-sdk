@@ -53,6 +53,13 @@ fn scheduler_twins() {
 }
 
 #[test]
+fn scheduler_reload_twins() {
+    let out = conform("scheduler-lua", "scheduler-java", GRANTS, jvm, scheduler_reload);
+    assert!(has(&out, "reload: [Reloaded(\"0.1.0\", \"0.1.0\")]"), "{out:#?}");
+    assert!(has(&out, "broadcasts: [\"2\", \"1\", \"Go!\"]"), "{out:#?}");
+}
+
+#[test]
 fn a_jvm_mod_needs_the_native_grant() {
     let tmp = tempfile::tempdir().unwrap();
     copy_dir(&examples().join("hello-java"), &tmp.path().join("hello-java"));

@@ -11,6 +11,9 @@
 //! outermost call has returned, and their outcome is ignored (the event is already decided). A nested call ends at
 //! the earlier of its own hard deadline and the caller's.
 
+use std::collections::hash_map::DefaultHasher;
+use std::fmt;
+use std::hash::{Hash, Hasher};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
@@ -24,7 +27,7 @@ use crate::bus::{EventBus, Subscription};
 use crate::channels::{self, ChannelId, Channels, Message};
 use crate::commands::CommandRegistry;
 use crate::config::{required_permissions, ModsConfig, FILE_NAME};
-use crate::discover::discover;
+use crate::discover::{discover, Package};
 use crate::handles::Handles;
 use crate::remote::{self, Remote, RemoteCall, RemoteCaller, RemoteError, RemoteLimits, RemoteTarget};
 use crate::resolve::resolve;
@@ -32,6 +35,7 @@ use crate::runtime::{CallError, CommandId, HostApi, Instance, InstanceLimits, Ru
 use crate::scheduler::Scheduler;
 use crate::services::ServiceRegistry;
 use crate::storage::{MemoryStorage, StorageProvider, Store};
+use crate::timings::{HandlerKind, ModTimings, Timings};
 use crate::types::{
     ApiError, ChannelSource, ChannelTarget, CommandOutcome, CommandSender, CommandSpec, ContentKind, CosmeticInfo,
     Event, EventKind, LogLevel, Pos, Priority, Role, SavePhase, ServiceError, Side,
@@ -122,6 +126,11 @@ struct Slot {
     instance: Option<Box<dyn Instance>>,
     store: Option<Store>,
     strikes: Strikes,
+    timings: Timings,
+    /// 1 for the first load, one more after every reload (what a service proxy remembers to notice a reload).
+    generation: u32,
+    /// Hash of the package this slot runs (what `reload` compares).
+    fingerprint: u64,
 }
 
 /// The mod host.
@@ -147,6 +156,61 @@ pub struct ModHost {
     clock: Box<dyn Clock>,
     enabled: bool,
     tick: u64,
+    mods_dir: PathBuf,
+    runtimes: Vec<Box<dyn Runtime>>,
+    /// `(world name, world id)` once the world is loaded (a reloaded mod gets `world-loaded` with it).
+    world: Option<(String, String)>,
+}
+
+/// What a reload did to one mod.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ReloadOutcome {
+    /// Stopped and started again from the package on disk (old version, new version).
+    Reloaded(String, String),
+    /// The package on disk is the one that runs (only reported by a reload of everything).
+    Unchanged,
+    /// A package that was not loaded before now runs (its version).
+    Added(String),
+    /// The package is gone (or no longer loadable): the mod was stopped.
+    Removed(String),
+    /// Nothing changed; the text says why. A running mod keeps running when its new package cannot start.
+    Failed(String),
+}
+
+/// The result for one mod of [`ModHost::reload`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReloadResult {
+    /// Mod id (the file name for a package that could not be read).
+    pub id: String,
+    /// What happened.
+    pub outcome: ReloadOutcome,
+}
+
+impl fmt::Display for ReloadResult {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let id = &self.id;
+        match &self.outcome {
+            ReloadOutcome::Reloaded(a, b) if a == b => write!(f, "{id}: reloaded ({a})"),
+            ReloadOutcome::Reloaded(a, b) => write!(f, "{id}: reloaded ({a} -> {b})"),
+            ReloadOutcome::Unchanged => write!(f, "{id}: unchanged"),
+            ReloadOutcome::Added(v) => write!(f, "{id}: loaded ({v})"),
+            ReloadOutcome::Removed(why) => write!(f, "{id}: stopped ({why})"),
+            // A package that could not even be read has no id: the text names the file.
+            ReloadOutcome::Failed(why) if id == "-" => f.write_str(why),
+            ReloadOutcome::Failed(why) => write!(f, "{id}: not reloaded: {why}"),
+        }
+    }
+}
+
+/// The reason shown for a mod whose package vanished.
+const GONE: &str = "its package is gone or no longer loadable";
+
+fn fingerprint(pkg: &Package) -> u64 {
+    let mut h = DefaultHasher::new();
+    pkg.sha256.hash(&mut h);
+    format!("{:?}", pkg.manifest).hash(&mut h);
+    pkg.files.hash(&mut h);
+    h.finish()
 }
 
 fn panic_text(p: Box<dyn std::any::Any + Send>) -> String {
@@ -189,70 +253,20 @@ impl ModHost {
             clock,
             enabled: false,
             tick: 0,
+            mods_dir,
+            runtimes,
+            world: None,
         };
-        let config = host.read_config(&mods_dir);
-        let (packages, problems) = discover(&mods_dir);
+        let (ordered, problems, skipped) = host.scan();
         for p in problems {
-            host.log(LogLevel::Error, &format!("cannot load {}: {}", p.origin.display(), p.message));
-        }
-        let kinds: Vec<_> = runtimes.iter().map(|r| r.kind()).collect();
-        let (ordered, problems, skipped) = resolve(packages, &config, side, &kinds);
-        for p in problems {
-            host.log(LogLevel::Error, &format!("not loading {}: {}", p.origin.display(), p.message));
+            host.log(LogLevel::Error, &p);
         }
         for s in skipped {
             host.log(LogLevel::Debug, &format!("skipping {s}"));
         }
-        let limits = InstanceLimits { memory_bytes: budgets.memory_bytes };
         for pkg in ordered {
-            let files = pkg.side_files(side).expect("resolve keeps only mods with an entry on this side");
-            let entry = match side {
-                Side::Server => &pkg.manifest.entry.server,
-                Side::Client => &pkg.manifest.entry.client,
-            };
-            let kind = entry.as_ref().map(|e| e.runtime);
-            let rt = runtimes.iter().find(|r| Some(r.kind()) == kind).expect("resolve checked the runtime");
-            let id = pkg.manifest.id.clone();
-            match rt.instantiate(&id, &files, limits) {
-                Ok(instance) => host.slots.push(Slot {
-                    info: ModInfo {
-                        id,
-                        version: pkg.manifest.version.clone(),
-                        origin: pkg.origin.clone(),
-                        sha256: pkg.sha256.clone(),
-                        state: ModState::Loaded,
-                    },
-                    permissions: required_permissions(&pkg.manifest.permissions),
-                    deps: pkg
-                        .manifest
-                        .dependencies
-                        .keys()
-                        .chain(pkg.manifest.soft_dependencies.keys())
-                        .cloned()
-                        .collect(),
-                    provides: pkg
-                        .manifest
-                        .provides
-                        .services
-                        .iter()
-                        .map(|s| (s.name.clone(), s.version.clone()))
-                        .collect(),
-                    cosmetics: pkg.manifest.content.cosmetics.iter().map(|c| (c.key.clone(), c.slot.clone())).collect(),
-                    items: pkg.manifest.content.items.iter().map(|i| i.key.clone()).collect(),
-                    blocks: pkg.manifest.content.blocks.iter().map(|b| (b.key.clone(), b.base.is_some())).collect(),
-                    remote: pkg
-                        .manifest
-                        .provides
-                        .services
-                        .iter()
-                        .filter(|s| s.remote)
-                        .map(|s| (s.name.clone(), s.remote_methods.clone()))
-                        .collect(),
-                    instance: Some(instance),
-                    store: None,
-                    strikes: Strikes::default(),
-                }),
-                Err(e) => host.log(LogLevel::Error, &format!("cannot start {id}: {e}")),
+            if let Err(e) = host.add_slot(&pkg) {
+                host.log(LogLevel::Error, &format!("cannot start {}: {e}", pkg.manifest.id));
             }
         }
         if !host.slots.is_empty() {
@@ -260,6 +274,72 @@ impl ModHost {
             host.log(LogLevel::Info, &format!("loaded {} mod(s): {}", names.len(), names.join(", ")));
         }
         host
+    }
+
+    /// Discovers and resolves the packages in the mods directory: the packages in load order, the problems (as log
+    /// lines) and the skipped ones.
+    fn scan(&self) -> (Vec<Package>, Vec<String>, Vec<String>) {
+        let config = self.read_config(&self.mods_dir);
+        let (packages, found) = discover(&self.mods_dir);
+        let mut problems: Vec<String> =
+            found.iter().map(|p| format!("cannot load {}: {}", p.origin.display(), p.message)).collect();
+        let kinds: Vec<_> = self.runtimes.iter().map(|r| r.kind()).collect();
+        let (ordered, bad, skipped) = resolve(packages, &config, self.side, &kinds);
+        problems.extend(bad.iter().map(|p| format!("not loading {}: {}", p.origin.display(), p.message)));
+        (ordered, problems, skipped)
+    }
+
+    /// Instantiates a package on this side (the old state of a mod is not touched).
+    fn instantiate(&self, pkg: &Package) -> Result<Box<dyn Instance>, String> {
+        let files = pkg.side_files(self.side).expect("resolve keeps only mods with an entry on this side");
+        let entry = match self.side {
+            Side::Server => &pkg.manifest.entry.server,
+            Side::Client => &pkg.manifest.entry.client,
+        };
+        let kind = entry.as_ref().map(|e| e.runtime);
+        let rt = self.runtimes.iter().find(|r| Some(r.kind()) == kind).expect("resolve checked the runtime");
+        rt.instantiate(&pkg.manifest.id, &files, InstanceLimits { memory_bytes: self.budgets.memory_bytes })
+    }
+
+    /// A slot in state `Loaded` for a package and its instance.
+    fn make_slot(&self, pkg: &Package, instance: Box<dyn Instance>, generation: u32) -> Slot {
+        Slot {
+            info: ModInfo {
+                id: pkg.manifest.id.clone(),
+                version: pkg.manifest.version.clone(),
+                origin: pkg.origin.clone(),
+                sha256: pkg.sha256.clone(),
+                state: ModState::Loaded,
+            },
+            permissions: required_permissions(&pkg.manifest.permissions),
+            deps: pkg.manifest.dependencies.keys().chain(pkg.manifest.soft_dependencies.keys()).cloned().collect(),
+            provides: pkg.manifest.provides.services.iter().map(|s| (s.name.clone(), s.version.clone())).collect(),
+            cosmetics: pkg.manifest.content.cosmetics.iter().map(|c| (c.key.clone(), c.slot.clone())).collect(),
+            items: pkg.manifest.content.items.iter().map(|i| i.key.clone()).collect(),
+            blocks: pkg.manifest.content.blocks.iter().map(|b| (b.key.clone(), b.base.is_some())).collect(),
+            remote: pkg
+                .manifest
+                .provides
+                .services
+                .iter()
+                .filter(|s| s.remote)
+                .map(|s| (s.name.clone(), s.remote_methods.clone()))
+                .collect(),
+            instance: Some(instance),
+            store: None,
+            strikes: Strikes::default(),
+            timings: Timings::new(self.clock.now()),
+            generation,
+            fingerprint: fingerprint(pkg),
+        }
+    }
+
+    /// Instantiates a package and appends it as a new slot (state `Loaded`).
+    fn add_slot(&mut self, pkg: &Package) -> Result<usize, String> {
+        let instance = self.instantiate(pkg)?;
+        let slot = self.make_slot(pkg, instance, 1);
+        self.slots.push(slot);
+        Ok(self.slots.len() - 1)
     }
 
     fn read_config(&self, dir: &Path) -> ModsConfig {
@@ -295,6 +375,7 @@ impl ModHost {
     fn call<R>(
         &mut self,
         owner: usize,
+        kind: HandlerKind,
         what: &str,
         f: impl FnOnce(&mut dyn Instance, &mut dyn HostApi) -> Result<R, CallError>,
     ) -> Option<Result<R, CallError>> {
@@ -310,10 +391,13 @@ impl ModHost {
                 .unwrap_or_else(|p| Err(CallError::Trap(format!("panic: {}", panic_text(p)))))
         };
         self.stack.pop();
-        let elapsed = self.clock.now().saturating_duration_since(start);
+        let end = self.clock.now();
+        let elapsed = end.saturating_duration_since(start);
         let slot = &mut self.slots[owner];
         let id = slot.info.id.clone();
         slot.instance = Some(instance);
+        slot.timings.record(kind, start, elapsed, self.budgets.soft, result.as_ref().err());
+        slot.timings.prune(end, self.budgets.window);
         if elapsed > self.budgets.soft {
             self.bridge.log(
                 Some(&id),
@@ -328,6 +412,7 @@ impl ModHost {
         if let Err(e @ (CallError::Trap(_) | CallError::Timeout)) = &result {
             self.bridge.log(Some(&id), LogLevel::Error, &format!("{what}: {e}"));
             let slot = &mut self.slots[owner];
+            slot.timings.strike();
             if !matches!(slot.info.state, ModState::Disabled(_)) && slot.strikes.record(self.clock.now(), &self.budgets)
             {
                 let n = self.budgets.strikes;
@@ -351,7 +436,7 @@ impl ModHost {
                 budget = budget.saturating_sub(1);
                 // A mod disabled meanwhile has no instance, so `call` skips it.
                 let what = format!("{} handler", ev.kind().name());
-                self.call(sub.owner, &what, |i, h| i.handle_event(h, sub.id, &ev));
+                self.call(sub.owner, HandlerKind::Event, &what, |i, h| i.handle_event(h, sub.id, &ev));
             }
         }
         if !self.deferred.is_empty() {
@@ -369,7 +454,7 @@ impl ModHost {
         let was_enabled = self.slots[owner].info.state == ModState::Enabled;
         self.slots[owner].info.state = ModState::Disabled(reason.clone());
         if was_enabled {
-            if let Some(Err(e)) = self.call(owner, "on-disable", |i, h| i.on_disable(h)) {
+            if let Some(Err(e)) = self.call(owner, HandlerKind::Lifecycle, "on-disable", |i, h| i.on_disable(h)) {
                 let id = self.slots[owner].info.id.clone();
                 self.bridge.log(Some(&id), LogLevel::Warn, &format!("on-disable failed: {e}"));
             }
@@ -402,25 +487,161 @@ impl ModHost {
             return;
         }
         self.enabled = true;
+        self.world = Some((world_name.to_string(), world_id.to_string()));
         for i in 0..self.slots.len() {
-            if self.slots[i].info.state != ModState::Loaded {
-                continue;
-            }
-            let id = self.slots[i].info.id.clone();
-            match self.storage.open(&id).and_then(Store::open) {
-                Ok(s) => self.slots[i].store = Some(s),
-                Err(e) => self.bridge.log(Some(&id), LogLevel::Error, &format!("storage unavailable: {e}")),
-            }
-            self.slots[i].info.state = ModState::Enabled;
-            match self.call(i, "on-enable", |inst, h| inst.on_enable(h)).unwrap_or(Ok(())) {
-                Ok(()) => self.bridge.log(Some(&id), LogLevel::Info, "enabled"),
-                Err(e) => {
-                    self.slots[i].info.state = ModState::Loaded;
-                    self.disable_slot(i, format!("on-enable failed: {e}"));
-                }
-            }
+            self.enable_slot(i);
         }
         self.fire(Event::WorldLoaded { world_name: world_name.to_string(), world_id: world_id.to_string() });
+    }
+
+    /// Opens the storage of a `Loaded` mod and calls its `on-enable` (a failure disables it).
+    fn enable_slot(&mut self, i: usize) {
+        if self.slots[i].info.state != ModState::Loaded {
+            return;
+        }
+        let id = self.slots[i].info.id.clone();
+        match self.storage.open(&id).and_then(Store::open) {
+            Ok(s) => self.slots[i].store = Some(s),
+            Err(e) => self.bridge.log(Some(&id), LogLevel::Error, &format!("storage unavailable: {e}")),
+        }
+        self.slots[i].info.state = ModState::Enabled;
+        match self.call(i, HandlerKind::Lifecycle, "on-enable", |inst, h| inst.on_enable(h)).unwrap_or(Ok(())) {
+            Ok(()) => self.bridge.log(Some(&id), LogLevel::Info, "enabled"),
+            Err(e) => {
+                self.slots[i].info.state = ModState::Loaded;
+                self.disable_slot(i, format!("on-enable failed: {e}"));
+            }
+        }
+    }
+
+    /// Hot reload (admin command `/mods reload [id]`): reads the packages in the mods directory again and restarts
+    /// the changed mods without touching the world.
+    ///
+    /// - With an `id`, that mod is reloaded whether its package changed or not; a mod that is not loaded yet but has
+    ///   a package is started; a mod whose package is gone is stopped. Without an `id`, every mod whose package
+    ///   changed is reloaded, new packages are started and mods whose package vanished are stopped.
+    /// - A reload is `on-disable`, then everything the mod registered is removed (handlers, commands, scheduled
+    ///   tasks, services, channels, remote calls, UI), its storage flushed, and the new package is started as at
+    ///   boot: storage is kept, `on-enable` runs, then `world-loaded` is delivered to that mod alone. Players who
+    ///   are online are not announced again (use `players.online()` in `on-enable`).
+    /// - A new package that cannot start leaves the old mod running. Budgets, strike counters and timings of the mod
+    ///   start from zero.
+    /// - Services other mods got from `services.get` before the reload are stale: calling them gives a clear error
+    ///   (the proxy has to be fetched again). Calls by name keep working with the new instance.
+    pub fn reload(&mut self, only: Option<&str>) -> Vec<ReloadResult> {
+        let (ordered, problems, skipped) = self.scan();
+        let mut results = Vec::new();
+        let mut present: Vec<String> = Vec::new();
+        for pkg in ordered {
+            let id = pkg.manifest.id.clone();
+            present.push(id.clone());
+            if only.is_some_and(|o| o != id) {
+                continue;
+            }
+            let outcome = match self.slots.iter().position(|s| s.info.id == id) {
+                Some(i) if only.is_none() && self.slots[i].fingerprint == fingerprint(&pkg) => ReloadOutcome::Unchanged,
+                Some(i) => self.replace_slot(i, &pkg),
+                None => self.start_new(&pkg),
+            };
+            results.push(ReloadResult { id, outcome });
+        }
+        for i in 0..self.slots.len() {
+            let id = self.slots[i].info.id.clone();
+            if present.contains(&id) || only.is_some_and(|o| o != id) {
+                continue;
+            }
+            if self.slots[i].info.state == ModState::Disabled(GONE.to_string()) {
+                continue;
+            }
+            let why = skipped.iter().find_map(|s| s.strip_prefix(&format!("{id}: "))).unwrap_or(GONE);
+            self.disable_slot(i, GONE.to_string());
+            results.push(ReloadResult { id, outcome: ReloadOutcome::Removed(why.to_string()) });
+        }
+        match only {
+            Some(o) if !results.iter().any(|r| r.id == o) => {
+                let mut why = format!("no package for {o} in the mods directory");
+                if let Some(p) = problems.iter().find(|p| p.contains(o)) {
+                    why = p.clone();
+                }
+                results.push(ReloadResult { id: o.to_string(), outcome: ReloadOutcome::Failed(why) });
+            }
+            Some(_) => {}
+            None => results.extend(
+                problems.into_iter().map(|p| ReloadResult { id: "-".to_string(), outcome: ReloadOutcome::Failed(p) }),
+            ),
+        }
+        let changed = results.iter().filter(|r| !matches!(r.outcome, ReloadOutcome::Unchanged)).count();
+        if changed > 0 {
+            self.log(LogLevel::Info, &format!("reload: {changed} change(s)"));
+        }
+        results
+    }
+
+    /// Restarts the mod in slot `i` from `pkg`.
+    fn replace_slot(&mut self, i: usize, pkg: &Package) -> ReloadOutcome {
+        let instance = match self.instantiate(pkg) {
+            Ok(inst) => inst,
+            Err(e) => return ReloadOutcome::Failed(format!("cannot start: {e} (the running version stays)")),
+        };
+        let old = self.slots[i].info.version.clone();
+        self.disable_slot(i, "reloading".to_string());
+        let generation = self.slots[i].generation.wrapping_add(1).max(1);
+        self.slots[i] = self.make_slot(pkg, instance, generation);
+        self.start_slot(i).unwrap_or(ReloadOutcome::Reloaded(old, pkg.manifest.version.clone()))
+    }
+
+    /// Starts a package that was not loaded before.
+    fn start_new(&mut self, pkg: &Package) -> ReloadOutcome {
+        match self.add_slot(pkg) {
+            Ok(i) => self.start_slot(i).unwrap_or(ReloadOutcome::Added(pkg.manifest.version.clone())),
+            Err(e) => ReloadOutcome::Failed(format!("cannot start: {e}")),
+        }
+    }
+
+    /// Enables a slot that was added or replaced after the world was loaded, like at boot. `Some(failure)` when the
+    /// mod ended up disabled (its `on-enable` failed).
+    fn start_slot(&mut self, i: usize) -> Option<ReloadOutcome> {
+        let (world_name, world_id) = self.world.clone()?;
+        self.enable_slot(i);
+        self.fire_filtered(Event::WorldLoaded { world_name, world_id }, Some(i));
+        match &self.slots[i].info.state {
+            ModState::Disabled(why) => Some(ReloadOutcome::Failed(format!("the new version is disabled: {why}"))),
+            _ => None,
+        }
+    }
+
+    /// The time accounting of every mod over the rolling window (`budgets.window`), in load order. `only` limits it
+    /// to one mod.
+    pub fn timings(&self, only: Option<&str>) -> Vec<ModTimings> {
+        let now = self.clock.now();
+        self.slots
+            .iter()
+            .filter(|s| only.is_none_or(|o| o == s.info.id))
+            .map(|s| ModTimings {
+                id: s.info.id.clone(),
+                state: match &s.info.state {
+                    ModState::Loaded => "loaded".to_string(),
+                    ModState::Enabled => "enabled".to_string(),
+                    ModState::Disabled(why) => format!("disabled: {why}"),
+                },
+                window: self.budgets.window,
+                kinds: s.timings.snapshot(now, self.budgets.window),
+                strikes: s.strikes.count(),
+                strikes_total: s.timings.strikes_total(),
+            })
+            .collect()
+    }
+
+    /// Clears the time accounting of every mod (or of `only`); false when `only` names no mod. Strikes that count
+    /// towards disabling a mod are not forgiven, only the report is cleared.
+    pub fn reset_timings(&mut self, only: Option<&str>) -> bool {
+        let now = self.clock.now();
+        let mut found = only.is_none();
+        for s in self.slots.iter_mut().filter(|s| only.is_none_or(|o| o == s.info.id)) {
+            s.timings = Timings::new(now);
+            found = true;
+        }
+        found
     }
 
     /// Server stop: `on-disable` for every running mod in reverse load order, storage flushed.
@@ -464,7 +685,7 @@ impl ModHost {
             }
             let snapshot = ev.clone();
             let what = format!("{} handler", custom.as_deref().unwrap_or(kind.name()));
-            let result = self.call(sub.owner, &what, |i, h| i.handle_event(h, sub.id, &snapshot));
+            let result = self.call(sub.owner, HandlerKind::Event, &what, |i, h| i.handle_event(h, sub.id, &snapshot));
             if let Some(Ok(outcome)) = result {
                 if sub.priority != Priority::Monitor && !ev.apply(outcome) {
                     let id = self.slots[sub.owner].info.id.clone();
@@ -570,7 +791,7 @@ impl ModHost {
         };
         self.remote.caller = Some(RemoteCaller { mod_id: caller_mod.to_string(), player });
         let what = format!("remote service {name}.{method}");
-        let out = self.call(provider, &what, |i, h| i.call_service(h, name, method, args));
+        let out = self.call(provider, HandlerKind::Service, &what, |i, h| i.call_service(h, name, method, args));
         self.remote.caller = None;
         match out {
             Some(Ok(bytes)) if bytes.len() > remote::MAX_PAYLOAD => Err(RemoteError::TooLarge),
@@ -622,7 +843,9 @@ impl ModHost {
         for (msg, to) in self.channels.drain() {
             for (owner, ch) in to {
                 // A mod disabled meanwhile has no instance, so `call` skips it.
-                self.call(owner, "channel message", |i, h| i.on_channel_message(h, ch, &msg.source, &msg.data));
+                self.call(owner, HandlerKind::Channel, "channel message", |i, h| {
+                    i.on_channel_message(h, ch, &msg.source, &msg.data)
+                });
             }
         }
     }
@@ -665,7 +888,8 @@ impl ModHost {
             }]);
         }
         let what = format!("command /{name}");
-        match self.call(cmd.owner, &what, |i, h| i.run_command(h, cmd.id, &sender, &name, &args)) {
+        match self.call(cmd.owner, HandlerKind::Command, &what, |i, h| i.run_command(h, cmd.id, &sender, &name, &args))
+        {
             Some(Ok(CommandOutcome { handled: true, reply })) => Some(reply),
             Some(Ok(CommandOutcome { handled: false, mut reply })) => {
                 reply.push(format!("Usage: {}", cmd.spec.usage));
@@ -684,7 +908,7 @@ impl ModHost {
                 }
             }
             if self.slots[owner].info.state == ModState::Enabled {
-                self.call(owner, "scheduled task", |i, h| i.run_task(h, id));
+                self.call(owner, HandlerKind::Task, "scheduled task", |i, h| i.run_task(h, id));
             }
         }
     }
@@ -1048,6 +1272,9 @@ impl HostApi for Ctx<'_> {
         let declared = self.slot().provides.clone();
         self.host.services.provide(self.owner, name, version, &declared)
     }
+    fn service_generation(&mut self, name: &str, req: &str) -> u32 {
+        self.host.services.lookup(name, req).map_or(0, |p| self.host.slots[p.owner].generation)
+    }
     fn call_service(&mut self, name: &str, req: &str, method: &str, args: &[u8]) -> Result<Vec<u8>, ServiceError> {
         let provider = self.host.services.lookup(name, req)?.owner;
         let pid = self.host.slots[provider].info.id.clone();
@@ -1063,7 +1290,7 @@ impl HostApi for Ctx<'_> {
             Err(e) => return Err(ServiceError::BadValue(format!("arguments: {e}"))),
         }
         let what = format!("service {name}.{method}");
-        match self.host.call(provider, &what, |i, h| i.call_service(h, name, method, args)) {
+        match self.host.call(provider, HandlerKind::Service, &what, |i, h| i.call_service(h, name, method, args)) {
             Some(Ok(out)) => match Value::decode(&out) {
                 Ok(_) => Ok(out),
                 Err(e) => Err(ServiceError::BadValue(format!("result: {e}"))),

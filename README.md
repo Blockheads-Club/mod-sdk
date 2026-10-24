@@ -99,6 +99,7 @@ confirmed a red warning: [`docs/native.md`](docs/native.md), example [`sdk/nativ
 | [`sdk/rust/blockheads-mod`](sdk/rust/blockheads-mod) | The Rust SDK (bindings + closures for events, commands, tasks) |
 | [`docs/native.md`](docs/native.md) | Native mods: the `libbhmod` C ABI and header, hook kinds, who may load native code, weapon skins |
 | [`docs/package.md`](docs/package.md) | The `.bhmod` package and its rules |
+| [`docs/hot-reload.md`](docs/hot-reload.md) | Hot reload of single mods, the time accounting (`/mods timings`), the developer watcher |
 | [`schema/`](schema/) | JSON Schemas for `mod.toml`, index entries and the published `index.json` |
 | [`docs/protocol-0xbc.md`](docs/protocol-0xbc.md), [`vectors/`](vectors/) | Client ⇄ server mod protocol and its byte-exact test vectors |
 | `crates/bhmod-manifest` | Reads and checks `mod.toml` and packages |

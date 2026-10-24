@@ -435,3 +435,32 @@ fn tasks_of_a_mod_disabled_mid_step_are_skipped() {
     assert_eq!(*calls.borrow(), 3);
     assert!(matches!(&h.mods()[0].state, ModState::Disabled(_)));
 }
+
+#[test]
+fn reload_keeps_the_old_mod_when_the_new_package_cannot_start() {
+    let s = setup();
+    wasm_mod(&s.mods, "mm", "server", "");
+    s.rt.add("mm", Fake::default());
+    let mut h = s.host(Side::Server, None);
+    h.enable("W", "w");
+    assert_eq!(h.mods()[0].state, ModState::Enabled);
+    // The fake runtime has no instance left for "mm": starting the package again fails, the old one runs on.
+    fs::write(s.mods.join("mm/server/mod.wasm"), [WASM_MAGIC, b"x".as_slice()].concat()).unwrap();
+    let r = h.reload(Some("mm"));
+    assert_eq!(
+        r[0].outcome,
+        bhmod_core::ReloadOutcome::Failed("cannot start: no fake (the running version stays)".into())
+    );
+    assert_eq!(h.mods()[0].state, ModState::Enabled);
+    // A brand new package that cannot start is reported too.
+    wasm_mod(&s.mods, "nn", "server", "");
+    let r = h.reload(None);
+    assert!(
+        r.iter()
+            .any(|x| x.id == "nn" && x.outcome == bhmod_core::ReloadOutcome::Failed("cannot start: no fake".into())),
+        "{r:?}"
+    );
+    s.rt.add("mm", Fake::default());
+    let r = h.reload(Some("mm"));
+    assert!(matches!(r[0].outcome, bhmod_core::ReloadOutcome::Reloaded(..)), "{r:?}");
+}

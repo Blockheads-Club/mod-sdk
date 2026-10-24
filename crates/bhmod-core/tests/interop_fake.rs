@@ -376,6 +376,7 @@ fn trait_defaults_for_0_1_code() {
     assert_eq!(api.player_of_handle(1), Err(ApiError::StaleHandle));
     assert_eq!(api.subscribe_custom("a:b", Priority::Normal, false), Err(ApiError::Unsupported));
     assert_eq!(api.fire_custom("a:b", &[0xf6]), Err(ApiError::Unsupported));
+    assert_eq!(api.service_generation("s", "^1"), 0);
     assert_eq!(api.provide_service("s", "1.0.0"), Err(ApiError::Unsupported));
     assert_eq!(api.call_service("s", "^1", "m", &[0x80]), Err(ServiceError::NotFound));
     assert_eq!(api.channel_open("a:b"), Err(ApiError::Unsupported));

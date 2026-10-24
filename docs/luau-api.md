@@ -90,6 +90,8 @@ local eco = bh.services.get("economy", "^1")
 local coins = eco.balance(player)                     -- or bh.services.call("economy", "^1", "balance", player)
 ```
 
+A proxy from `bh.services.get` goes stale when the providing mod is hot-reloaded ([`hot-reload.md`](hot-reload.md)): calling it raises `stale service handle ...`; fetch a new one. `bh.services.call` always looks the provider up again.
+
 - The name and version given to `provide` must be declared in `mod.toml` `[provides]`.
 - A consumer may only call providers it depends or soft-depends on; the highest matching version wins.
 - Calls are synchronous. A provider method raising `error("msg", 0)` makes the call raise

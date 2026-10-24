@@ -975,9 +975,20 @@ impl LuaInstance {
             let proxy = lua.create_table()?;
             let meta = lua.create_table()?;
             let s = s.clone();
+            // The provider's reload generation: a proxy goes stale when the provider is hot-reloaded.
+            let generation = with_host(&s, |h| h.service_generation(&name, &req))?;
             let index = move |lua: &Lua, (_, method): (Table, String)| {
                 let (s, name, req) = (s.clone(), name.clone(), req.clone());
-                lua.create_function(move |lua, args: MultiValue| call_service(lua, &s, &name, &req, &method, args))
+                lua.create_function(move |lua, args: MultiValue| {
+                    let now = with_host(&s, |h| h.service_generation(&name, &req))?;
+                    if generation != 0 && now != 0 && now != generation {
+                        return Err(rt_err(format!(
+                            "service {name}.{method}: stale service handle (the providing mod was reloaded); \
+                             call services.get again"
+                        )));
+                    }
+                    call_service(lua, &s, &name, &req, &method, args)
+                })
             };
             meta.set("__index", lua.create_function(index)?)?;
             proxy.set_metatable(Some(meta))?;
