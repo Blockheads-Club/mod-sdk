@@ -269,6 +269,11 @@ fn cosmetics_hats() {
         w
     };
 
+    // A fresh player gets the default hat (the crown) on joining, no command needed; no hair.
+    h.fire(Event::PlayerJoin { player: "p1".into() });
+    assert_eq!(worn(&b), vec![("p1".into(), "hat".into(), 1)]);
+    b.worn.borrow_mut().clear();
+
     // /hat and /hair equip, replacing what the slot held; the console cannot wear anything.
     assert_eq!(h.command(player("p1"), "/hat crown"), Some(vec!["Your hat is now crown.".to_string()]));
     assert_eq!(h.command(player("p1"), "/hair ember"), Some(vec!["Your hair is now ember.".to_string()]));
@@ -291,7 +296,7 @@ fn cosmetics_hats() {
     h.fire(Event::PlayerJoin { player: "p1".into() });
     assert_eq!(worn(&b), vec![("p1".into(), "hair".into(), 3), ("p1".into(), "hat".into(), 2)]);
 
-    // none takes it off and forgets it.
+    // none takes it off and the choice is kept: the default hat does not come back.
     assert_eq!(h.command(player("p1"), "/hat none"), Some(vec!["Your hat is back to normal.".to_string()]));
     b.worn.borrow_mut().clear();
     h.fire(Event::PlayerJoin { player: "p1".into() });
