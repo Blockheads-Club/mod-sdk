@@ -154,7 +154,8 @@ impl ItemTable {
     /// another language's plural); else the English plural, else the singular of [`ItemTable::display_name`].
     pub fn plural_name(&self, id: u64, lang: &str) -> Option<String> {
         let def = self.by_id.get(&id)?;
-        let own = def.plural.get(lang).or_else(|| if def.name.contains_key(lang) { None } else { def.plural.get("en") });
+        let own =
+            def.plural.get(lang).or_else(|| if def.name.contains_key(lang) { None } else { def.plural.get("en") });
         own.map(|t| t.to_uppercase()).or_else(|| self.display_name(id, lang))
     }
 }

@@ -46,7 +46,8 @@ fn sent(out: &[Output]) -> Vec<Message> {
 }
 
 fn hello_pkt(hash: Hash, required: bool, count: u64) -> Vec<u8> {
-    Message::ServerHello(ServerHello { proto: 1, mods_hash: hash, client_required: required, count }).encode()
+    Message::ServerHello(ServerHello { proto: 1, mods_hash: hash, client_required: required, count, players: None })
+        .encode()
 }
 
 fn list_pkt(mods: Vec<ModInfo>) -> Vec<u8> {
@@ -112,6 +113,23 @@ fn join_before_contact_is_vanilla() {
     let mut r = rig();
     assert!(matches!(r.s.join_requested()[..], [Output::Join(None)]));
     assert!(r.s.contact(0).is_empty());
+}
+
+#[test]
+fn server_hello_player_count_is_kept() {
+    let mut r = rig();
+    r.s.contact(0);
+    assert_eq!(r.s.players(), None);
+    let pkt = Message::ServerHello(ServerHello {
+        proto: 1,
+        mods_hash: [9; 32],
+        client_required: false,
+        count: 0,
+        players: Some(bhmod_proto::PlayerCount { online: 2, capacity: 8 }),
+    })
+    .encode();
+    assert!(r.s.receive(&pkt, 10).is_empty());
+    assert_eq!(r.s.players(), Some(bhmod_proto::PlayerCount { online: 2, capacity: 8 }));
 }
 
 #[test]

@@ -280,7 +280,10 @@ fn content() {
         "needs an `en`",
     );
     has(
-        &content(CLIENT, "items = [{ key = \"demo:gem\", texture = \"assets/gem.png\", plural = { tr = \"Taşlar\" } }]"),
+        &content(
+            CLIENT,
+            "items = [{ key = \"demo:gem\", texture = \"assets/gem.png\", plural = { tr = \"Taşlar\" } }]",
+        ),
         "plural",
     );
     has(

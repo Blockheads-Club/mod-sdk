@@ -70,7 +70,7 @@ client                                   modded server                  vanilla 
 | Op | Dir | Name | Body |
 | --- | --- | --- | --- |
 | `00` | C->S | `HELLO` | `{proto, loader, platform, api, runtimes, cached}` |
-| `01` | S->C | `SERVER_HELLO` | `{proto, modsHash, clientRequired, count}` |
+| `01` | S->C | `SERVER_HELLO` | `{proto, modsHash, clientRequired, count[, players, maxPlayers]}` |
 | `02` | C->S | `LIST_REQUEST` | `{}` |
 | `03` | S->C | `MOD_LIST` | `{mods, channels, registry}` |
 | `04` | C->S | `FILE_REQUEST` | `{sha256, offset}` |
@@ -105,6 +105,12 @@ Ops `09`, `0a`-`0f` and `15`-`ff` are reserved.
 | `modsHash` | bytes(32) | See section 7. |
 | `clientRequired` | bool | True if a client that does not run the listed client mods is rejected. |
 | `count` | uint | Number of entries the coming `MOD_LIST` will hold. |
+| `players` | uint ≤ 2^32-1, optional | Players in the game when the server answers. |
+| `maxPlayers` | uint ≤ 2^32-1, optional | The server's player capacity. Present exactly when `players` is (a lone `maxPlayers` is ignored; `players` without it is an error). |
+
+`players` / `maxPlayers` are an additive extension (the join dialog shows "3 / 16 players"): the protocol version
+stays 1, a decoder ignores keys it does not know, so older clients simply do not see them; a server that does not know
+its count omits both keys. The count is a snapshot at the time of the answer, before the joiner is counted.
 
 A server whose mods are all server-only still answers (with `clientRequired = false`) so the client may show the
 list; the client may then skip `LIST_REQUEST` and join as usual (it still adds `bhcModLoader` to 0x1f).
