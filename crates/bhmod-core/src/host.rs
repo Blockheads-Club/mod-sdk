@@ -195,6 +195,8 @@ impl fmt::Display for ReloadResult {
             ReloadOutcome::Unchanged => write!(f, "{id}: unchanged"),
             ReloadOutcome::Added(v) => write!(f, "{id}: loaded ({v})"),
             ReloadOutcome::Removed(why) => write!(f, "{id}: stopped ({why})"),
+            // A package that could not even be read has no id: the text names the file.
+            ReloadOutcome::Failed(why) if id == "-" => f.write_str(why),
             ReloadOutcome::Failed(why) => write!(f, "{id}: not reloaded: {why}"),
         }
     }

@@ -150,6 +150,8 @@ fn reload_problems_are_reported() {
     fs::write(broken.join("mod.toml"), "not toml [[[").unwrap();
     let r = h.reload(None);
     assert!(r.iter().any(|x| matches!(&x.outcome, ReloadOutcome::Failed(m) if m.contains("broken"))), "{r:?}");
+    let nameless = r.iter().find(|x| x.id == "-").unwrap().to_string();
+    assert!(nameless.starts_with("cannot load ") && nameless.contains("broken"), "{nameless}");
     let r = h.reload(Some("broken"));
     assert!(matches!(&r[0].outcome, ReloadOutcome::Failed(m) if m.contains("broken")), "{r:?}");
     fs::remove_dir_all(&broken).unwrap();
