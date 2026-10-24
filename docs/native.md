@@ -117,6 +117,10 @@ inventory icon. The PC runner therefore
    texture with the game's own `glBindTexture` and answers with the mod texture's rectangle; every other call tail-calls
    the trampoline.
 
+The swap lasts for the held item's quad only: the host closes the blockhead's draw window after the call and binds the
+game's own texture back, so UI sprites drawn through the same function (the dig-target indicator, HUD icons) are never
+skinned. Pictures to start from: [`examples/weapon-skins`](../examples/weapon-skins) (32x32, transparent, drawn diagonally).
+
 The hook exists only while a loaded mod declares a weapon cosmetic and only on the build whose function prologue
 matches. Dev aid: `BHPC_DEV_COSMETICS=weapon=<key>` with `BHPC_DEV_WEAPON_ITEM=<item type>` shows the cosmetic on that
 item whatever its `base` (single-player testing). Android is not wired yet (the loader has the primitive; the cosmetics

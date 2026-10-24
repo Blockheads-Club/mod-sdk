@@ -298,6 +298,7 @@ fn cosmetic_rules() {
 fn base_item_table() {
     use bhmod_manifest::content::{base_item, base_item_for, BASE_ITEMS, SLOTS};
     assert_eq!(base_item("linen-cap").unwrap().item_type, 115);
+    assert_eq!(base_item_for("weapon", 16).unwrap().slug, "flint-spade");
     assert!(base_item("nope").is_none());
     assert_eq!(base_item_for("pants", 84).unwrap().slug, "linen-pants");
     assert!(base_item_for("hat", 84).is_none());

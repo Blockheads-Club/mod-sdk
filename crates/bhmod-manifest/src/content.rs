@@ -60,6 +60,7 @@ pub const BASE_ITEMS: &[BaseItem] = &[
     b!("shoes", "carbon-fiber-boots", 294),
     b!("shoes", "ice-boots", 198),
     b!("shoes", "south-pole-boots", 143),
+    b!("weapon", "flint-spade", 16),
     b!("weapon", "bronze-sword", 50),
     b!("weapon", "iron-sword", 68),
     b!("weapon", "titanium-sword", 286),

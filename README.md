@@ -74,7 +74,8 @@ A client mod can call a service of a server mod over the network (API 0.3.1, asy
 half (`/price <item>`), [`prices-rust`](examples/prices-rust) is the Rust twin of the client half.
 
 Content mods (API 0.3) declare textures in `[content]`: [`cosmetics-hats`](examples/cosmetics-hats) is a hat and hair
-set worn with `/hat` and `/hair` (see [`docs/content.md`](docs/content.md)).
+set worn with `/hat` and `/hair` (see [`docs/content.md`](docs/content.md)); [`weapon-skins`](examples/weapon-skins) re-skins the held tool
+(a golden spade and a flame pickaxe, PC client, native tier).
 
 Java and Kotlin (milestone M9) are unsandboxed, so they need the `native` permission and a host with JVM support
 turned on: `bhmod new my-mod --lang java`, the examples ending in `-java` (`shop-java` calls the Lua `economy`

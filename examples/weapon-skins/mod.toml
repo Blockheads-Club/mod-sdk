@@ -1,0 +1,22 @@
+schema = 1
+id = "weapon-skins"
+version = "0.1.0"
+name = { en = "Weapon skins", tr = "Silah görünümleri" }
+description = { en = "Two held-tool skins for the PC client: a golden spade and a flame pickaxe (a weapon cosmetic with a picture of the whole item; needs the native tier). Example content mod from the SDK.", tr = "PC istemcisi için iki el aleti görünümü: altın kürek ve alevli kazma. SDK'dan örnek içerik modu." }
+authors = ["Blockheads Club"]
+license = "MIT OR Apache-2.0"
+homepage = "https://github.com/Blockheads-Club/mod-sdk"
+api = "^0.3"
+
+[sides]
+client = true
+
+[entry]
+# Content needs a client half; there is nothing to run, the clients just draw the pictures.
+client = { runtime = "lua", path = "client/main.luau" }
+
+[content]
+cosmetics = [
+  { key = "weapon-skins:golden-spade", slot = "weapon", base = "flint-spade", texture = "assets/golden-spade.png", name = { en = "Golden spade", tr = "Altın kürek" } },
+  { key = "weapon-skins:flame-pickaxe", slot = "weapon", base = "gold-pickaxe", texture = "assets/flame-pickaxe.png", name = { en = "Flame pickaxe", tr = "Alevli kazma" } },
+]
