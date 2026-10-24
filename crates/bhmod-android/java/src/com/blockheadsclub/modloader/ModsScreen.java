@@ -335,8 +335,8 @@ final class ModsScreen {
             final JSONObject e = index.optJSONObject(i);
             final JSONObject v = clientVersion(e);
             if (v == null) continue;
-            String name = e.optString("name", e.optString("id"));
-            String desc = e.optString("description", "");
+            String name = Strings.indexText(e, "name", e.optString("id"));
+            String desc = Strings.indexText(e, "description", "");
             if (!q.isEmpty() && !(name + " " + desc + " " + e.optString("id")).toLowerCase(Locale.ROOT).contains(q)) continue;
             shown++;
             LinearLayout row = Kit.row(a);
@@ -359,7 +359,12 @@ final class ModsScreen {
             }), Kit.margins(Kit.wrap(), Kit.u(a, 2), 0, 0, 0));
             results.addView(row, Kit.margins(Kit.fill(), 0, 0, 0, Kit.u(a, 2)));
         }
-        if (shown == 0) {
+        if (shown == 0 && q.isEmpty()) {
+            LinearLayout saved = content;
+            content = results;
+            state(Strings.t("no_client_mods"), Strings.t("no_client_mods_body"), null);
+            content = saved;
+        } else if (shown == 0) {
             LinearLayout saved = content;
             content = results;
             state(Strings.t("no_results", "q", query), "", null,
@@ -372,7 +377,7 @@ final class ModsScreen {
 
     static void confirmIndex(final JSONObject e, final JSONObject v) {
         Activity a = Overlay.activity();
-        final String name = e.optString("name", e.optString("id"));
+        final String name = Strings.indexText(e, "name", e.optString("id"));
         LinearLayout body = Kit.column(a);
         body.addView(Kit.text(a, name + " " + v.optString("version"), Kit.TEXT, 16, true), Kit.fill());
         body.addView(Kit.small(a, author(e) + " · " + Kit.size(v.optLong("size")) + " · " + Strings.t("reviewed")), Kit.fill());

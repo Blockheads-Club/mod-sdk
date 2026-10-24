@@ -161,6 +161,12 @@ final class Strings {
             "Тізім сервері қате қайтарды. Бір минуттан соң қайталап көр.");
         p("no_results", "No mods match “{q}”", "“{q}” ile eşleşen mod yok", "Нет модов по запросу «{q}»", "«{q}» бойынша мод жоқ");
         p("clear_search", "Clear search", "Aramayı temizle", "Очистить поиск", "Іздеуді тазарту");
+        p("no_client_mods", "No mods to install on your phone yet", "Telefonuna kurulacak mod henüz yok",
+            "Пока нет модов для установки на телефон", "Телефонға орнатылатын мод әзірге жоқ");
+        p("no_client_mods_body", "The mods in the list so far run on servers. Join a modded server and the mods it needs come with it.",
+            "Listedeki modlar şimdilik sunucularda çalışıyor. Modlu bir sunucuya katıldığında gereken modlar kendiliğinden gelir.",
+            "Пока что моды из списка работают на серверах. Зайди на сервер с модами — нужные моды загрузятся сами.",
+            "Тізімдегі модтар әзірге серверлерде жұмыс істейді. Модты серверге қосылсаң, керек модтар өздігінен келеді.");
         p("install_q", "Install {mod}?", "{mod} yüklensin mi?", "Установить {mod}?", "{mod} орнатылсын ба?");
         p("installing", "Installing {mod}", "{mod} yükleniyor", "Установка {mod}", "{mod} орнатылуда");
         p("downloading", "Downloading {mod}… {done} of {total}", "{mod} indiriliyor… {done} / {total}",
@@ -260,6 +266,16 @@ final class Strings {
         String s = names.optString(codes[lang()], "");
         if (s.isEmpty()) s = names.optString("en", "");
         if (s.isEmpty() && names.keys().hasNext()) s = names.optString(names.keys().next(), "");
+        return s.isEmpty() ? fallback : s;
+    }
+
+    /** An index entry's `field` ("name" or "description") in the player's language (`i18n.<lang>`), else English. */
+    static String indexText(org.json.JSONObject entry, String field, String fallback) {
+        String[] codes = {"en", "tr", "ru", "kk"};
+        org.json.JSONObject i18n = entry.optJSONObject("i18n");
+        org.json.JSONObject mine = i18n == null ? null : i18n.optJSONObject(codes[lang()]);
+        String s = mine == null ? "" : mine.optString(field, "");
+        if (s.isEmpty()) s = entry.optString(field, "");
         return s.isEmpty() ? fallback : s;
     }
 }
