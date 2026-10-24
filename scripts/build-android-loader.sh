@@ -36,7 +36,7 @@ if [[ $no_rust == 0 ]]; then
   export RUSTFLAGS="--cfg pulley_assume_llvm_makes_tail_calls -C link-arg=-lc++abi -C link-arg=-Wl,-soname,libbhmodloader.so"
   features=(); [[ $jvm == 1 ]] && features=(--features jvm)
   cargo build --release --locked --target armv7-linux-androideabi -p bhmod-android "${features[@]}"
-  "$tc/llvm-strip" --strip-unneeded -o "$out/libbhmodloader.so" "$root/target/armv7-linux-androideabi/release/libbhmodloader.so"
+  "$tc/llvm-strip" --strip-unneeded -o "$out/libbhmodloader.so" "${CARGO_TARGET_DIR:-$root/target}/armv7-linux-androideabi/release/libbhmodloader.so"
 fi
 
 platform="$(ls -d "$sdk"/platforms/android-* | sort -V | tail -1)"

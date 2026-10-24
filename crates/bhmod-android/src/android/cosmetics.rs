@@ -60,7 +60,7 @@ fn st<R>(f: impl FnOnce(&mut State) -> R) -> R {
 /// The loader's content, set when the loader is created.
 pub static SHARED: OnceLock<Arc<Mutex<Content>>> = OnceLock::new();
 
-fn with_content<R>(f: impl FnOnce(&mut Content) -> R) -> Option<R> {
+pub(super) fn with_content<R>(f: impl FnOnce(&mut Content) -> R) -> Option<R> {
     let c = SHARED.get()?;
     let mut g = c.lock().unwrap_or_else(|e| e.into_inner());
     Some(f(&mut g))
@@ -83,7 +83,7 @@ fn serial() -> u64 {
 
 /// The owner of a blockhead (`clientID`). The game leaves it empty on this client's own blockheads: they belong to
 /// the local player.
-fn player_of(bh: Id) -> String {
+pub(super) fn player_of(bh: Id) -> String {
     let id = objc::string(objc::ivar(bh, "Blockhead", "clientID"));
     if id.is_empty() && !is_net(bh) {
         return super::local_player().unwrap_or_default();
@@ -157,7 +157,7 @@ fn restore(bh: Id, which: Which, keep: bool) {
 }
 
 /// A `CPTexture2D` for a cosmetic's texture (made once; null when it cannot be loaded).
-fn texture(id: u64, part: Part) -> Id {
+pub(super) fn texture(id: u64, part: Part) -> Id {
     let key = (id, part_key(part));
     if let Some(t) = st(|s| s.textures.get(&key).copied()) {
         return t as Id;

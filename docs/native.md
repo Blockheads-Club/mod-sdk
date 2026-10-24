@@ -123,5 +123,16 @@ skinned. Pictures to start from: [`examples/weapon-skins`](../examples/weapon-sk
 
 The hook exists only while a loaded mod declares a weapon cosmetic and only on the build whose function prologue
 matches. Dev aid: `BHPC_DEV_COSMETICS=weapon=<key>` with `BHPC_DEV_WEAPON_ITEM=<item type>` shows the cosmetic on that
-item whatever its `base` (single-player testing). Android is not wired yet (the loader has the primitive; the cosmetics
-code of the other branch owns the blockhead hooks).
+item whatever its `base` (single-player testing).
+
+### Android
+
+The Android loader does the same with the engine of `android/native.rs` (`android/weapons.rs`, the rules in
+`crates/bhmod-android/src/weapons.rs`, which the desktop tests cover). The three draw methods are replaced through the
+engine's Objective-C hooks; they run the original with the same arguments (the `GLKMatrix4` unions are declared as
+words, with the padding word AAPCS puts in `r3`) and close the window afterwards. Rust cannot read the caller's return
+address, so the inline hook of `texCoordsForItemType` jumps to a small ARM shim (`bhmod_weapon_shim`) that passes `lr`
+as a third argument and `bx`es to the Rust function through a position independent pointer. The hooks are installed
+once a loaded mod declares a weapon cosmetic (checked every frame) and taken out when none does. Verified on the
+emulator: the golden spade of `examples/weapon-skins` in the blockhead's hand and in the HUD portrait while digging,
+the dig-target indicator still shows the vanilla spade.
