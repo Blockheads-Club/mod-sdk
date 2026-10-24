@@ -72,6 +72,8 @@ that behave exactly the same (a test checks it): [`hello-lua`](examples/hello-lu
 A client mod can call a service of a server mod over the network (API 0.3.1, asynchronous):
 [`prices-lua`](examples/prices-lua) is a price check with a server half that provides `prices` (`remote = true`) and a client
 half (`/price <item>`), [`prices-rust`](examples/prices-rust) is the Rust twin of the client half.
+The `bhmod new` templates (Luau, Rust, Java) carry a commented-out example of a `remote = true` service in `mod.toml` and the
+entry file, and a README section with the limits.
 
 Content mods (API 0.3) declare textures in `[content]`: [`cosmetics-hats`](examples/cosmetics-hats) is a hat and hair
 set worn with `/hat` and `/hair` (see [`docs/content.md`](docs/content.md)); [`weapon-skins`](examples/weapon-skins) re-skins the held tool

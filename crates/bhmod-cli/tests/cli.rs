@@ -180,6 +180,37 @@ fn new_java_template() {
 }
 
 #[test]
+fn templates_document_remote_services() {
+    let d = tempfile::tempdir().unwrap();
+    for lang in ["lua", "rust", "java"] {
+        let (code, out, _) = run(&["new", "svc", "--lang", lang, "--dir", s(&d.path().join(lang))]);
+        assert_eq!(code, 0, "{out}");
+        let root = d.path().join(lang).join("svc");
+        let toml = fs::read_to_string(root.join("mod.toml")).unwrap();
+        assert!(toml.contains("remote = true"), "{lang}");
+        assert!(fs::read_to_string(root.join("README.md")).unwrap().contains("API 0.3.1"), "{lang}");
+    }
+    // The commented example in mod.toml is valid once it is switched on.
+    let root = d.path().join("lua/svc");
+    let toml = fs::read_to_string(root.join("mod.toml")).unwrap();
+    let on: String = toml
+        .lines()
+        .map(|l| match l.strip_prefix("# ") {
+            Some(rest) if rest.starts_with("[provides]") || rest.starts_with("services = ") => rest.to_string(),
+            _ => l.to_string(),
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+        .replace("api = \"^0.2\"", "api = \"^0.3.1\"")
+        .replace("players = [\"chat\"]", "players = [\"chat\"]\nchannels = true");
+    fs::write(root.join("mod.toml"), on).unwrap();
+    fs::create_dir_all(root.join("wit")).unwrap();
+    fs::write(root.join("wit/svc.wit"), "interface svc { hello: func(name: string) -> string; }\n").unwrap();
+    let (code, out, _) = run(&["check", s(&root)]);
+    assert_eq!(code, 0, "{out}");
+}
+
+#[test]
 fn wit_list_matches_directory() {
     let list = |p: PathBuf| {
         let mut v: Vec<String> =

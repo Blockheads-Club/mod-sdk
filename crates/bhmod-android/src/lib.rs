@@ -14,6 +14,7 @@ pub mod inbox;
 pub mod loader;
 pub mod menus;
 pub mod ui;
+pub mod weapons;
 
 #[cfg(test)]
 mod testutil;

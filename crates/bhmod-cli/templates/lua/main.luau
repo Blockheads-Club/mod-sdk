@@ -12,6 +12,16 @@ function mod.on_enable()
 		return { handled = true, reply = { "Hello from {{id}}!" } }
 	end)
 
+	-- Offer a service to client mods (needs [provides] ... remote = true in mod.toml, see there):
+	-- bh.services.provide("{{id}}", "1.0.0", {
+	-- 	hello = function(name)
+	-- 		local c = bh.services.caller() -- { mod = "<calling mod>", player = <player> }
+	-- 		return "Hello, " .. tostring(name) .. "!"
+	-- 	end,
+	-- })
+	-- Call a service a client mod provides (answer comes later, in the callback):
+	-- bh.services.call_remote(player, "their-service", "^1", "method", { "arg" }, function(ok, v) end, 3000)
+
 	bh.log.info("{{id}} enabled")
 end
 
