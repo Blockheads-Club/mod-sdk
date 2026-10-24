@@ -53,9 +53,9 @@ cosmetics = [
 - Cosmetics are not saved by the server. A mod keeps who owns/wears what in its own storage and re-equips on
   `player-join`.
 - `weapon` re-skins the **held tool or item** (the item in the blockhead's hand while it is used, and the portrait in
-  the HUD) when the player wears it and holds the cosmetic's `base`. The PC client draws it with an inline hook on the
+  the HUD) when the player wears it and holds the cosmetic's `base`. The PC and Android clients draw it with an inline hook on the
   game's sprite code ([native.md](native.md#weapon-skins)); the texture is the whole picture of the item (any size up
-  to 1024 x 1024), not a cell of the vanilla atlas. The Android client does not draw weapons yet.
+  to 1024 x 1024), not a cell of the vanilla atlas.
 
 ## API (blockheads:api 0.3)
 

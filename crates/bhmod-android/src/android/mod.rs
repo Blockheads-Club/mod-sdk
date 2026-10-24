@@ -16,6 +16,7 @@ pub mod cosmetics;
 pub mod menus;
 pub mod native;
 pub mod objc;
+pub mod weapons;
 
 use std::cell::RefCell;
 use std::ffi::{c_char, c_int, c_void, CString};
@@ -307,6 +308,8 @@ extern "C" fn hook_draw_frame(this: Id, cmd: Sel) {
             }
             l.on_frame();
         });
+        // After the loader ran: mods may have just loaded or unloaded their weapon cosmetics.
+        weapons::sync();
     });
     let orig = ORIG.get().expect("hooks").draw_frame;
     unsafe {

@@ -2,7 +2,7 @@ schema = 1
 id = "weapon-skins"
 version = "0.1.0"
 name = { en = "Weapon skins", tr = "Silah görünümleri" }
-description = { en = "Two held-tool skins for the PC client: a golden spade and a flame pickaxe (a weapon cosmetic with a picture of the whole item; needs the native tier). Example content mod from the SDK.", tr = "PC istemcisi için iki el aleti görünümü: altın kürek ve alevli kazma. SDK'dan örnek içerik modu." }
+description = { en = "Two held-tool skins for the PC and Android clients: a golden spade and a flame pickaxe (a weapon cosmetic with a picture of the whole item; needs the native tier). Example content mod from the SDK.", tr = "PC ve Android istemcileri için iki el aleti görünümü: altın kürek ve alevli kazma. SDK'dan örnek içerik modu." }
 authors = ["Blockheads Club"]
 license = "MIT OR Apache-2.0"
 homepage = "https://github.com/Blockheads-Club/mod-sdk"
