@@ -19,8 +19,8 @@ client = { runtime = "lua", path = "client/main.luau" }
 
 [content]
 items = [
-  { key = "decor-items:brass-lamp", texture = "assets/lamp.png", name = { en = "Brass lamp", tr = "Pirinç lamba" } },
-  { key = "decor-items:wall-plaque", texture = "assets/plaque.png", name = { en = "Wall plaque", tr = "Duvar levhası" } },
+  { key = "decor-items:brass-lamp", texture = "assets/lamp.png", name = { en = "Brass lamp", tr = "Pirinç lamba" }, plural = { en = "Brass lamps", tr = "Pirinç lambalar" } },
+  { key = "decor-items:wall-plaque", texture = "assets/plaque.png", name = { en = "Wall plaque", tr = "Duvar levhası" }, plural = { en = "Wall plaques", tr = "Duvar levhaları" } },
 ]
 blocks = [
   { key = "decor-items:warm-brick", texture = "assets/warm-brick.png", base = "red-bricks", drops = "decor-items:wall-plaque", name = { en = "Warm brick", tr = "Sıcak tuğla" } },
