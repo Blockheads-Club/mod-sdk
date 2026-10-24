@@ -161,6 +161,11 @@ impl Content {
         self.items.display_name(id, lang)
     }
 
+    /// The plural name the game shows for item `id` in `lang`; see [`ItemTable::plural_name`].
+    pub fn item_plural(&self, id: u64, lang: &str) -> Option<String> {
+        self.items.plural_name(id, lang)
+    }
+
     /// Applies a `COSMETICS` message. Returns the players whose look changed.
     pub fn apply(&mut self, msg: &Cosmetics) -> Vec<String> {
         let changed = self.wearing.apply(msg);

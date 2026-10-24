@@ -225,7 +225,7 @@ fn weapons_follow_the_held_item() {
 const DECOR: &str = "schema = 1\nid = \"decor\"\nversion = \"1.0.0\"\nname = { en = \"Decor\" }\nauthors = [\"me\"]\n\
     license = \"MIT\"\napi = \"^0.3\"\n[sides]\nclient = true\n[entry]\n\
     client = { runtime = \"lua\", path = \"client/main.luau\" }\n[content]\n\
-    items = [{ key = \"decor:lamp\", texture = \"assets/lamp.png\", name = { en = \"Brass lamp\" } },\n\
+    items = [{ key = \"decor:lamp\", texture = \"assets/lamp.png\", name = { en = \"Brass lamp\" }, plural = { en = \"Brass lamps\" } },\n\
     { key = \"decor:gone\", texture = \"assets/gone.png\" }]\n\
     blocks = [{ key = \"decor:brick\", texture = \"assets/brick.png\", base = \"red-bricks\" }]\n";
 
@@ -258,6 +258,10 @@ fn items_and_blocks_have_names_and_textures() {
     assert_eq!(c.blocks().all().count(), 1);
     assert_eq!(c.item_name(1107, "en").as_deref(), Some("BRASS LAMP"));
     assert_eq!(c.item_name(5, "en"), None);
+    assert_eq!(c.item_plural(1107, "en").as_deref(), Some("BRASS LAMPS"));
+    // No plural declared: the singular (made from the key without a name).
+    assert_eq!(c.item_plural(1108, "en").as_deref(), Some("GONE"));
+    assert_eq!(c.item_plural(5, "en"), None);
     let icon = c.item_texture(1107).unwrap().unwrap();
     assert_eq!((icon.wide, icon.high), (2, 2));
     assert!(Arc::ptr_eq(&c.item_texture(1107).unwrap().unwrap(), &icon));

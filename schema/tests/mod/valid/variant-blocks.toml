@@ -15,5 +15,5 @@ server = { runtime = "lua", path = "server/main.luau" }
 client = { runtime = "lua", path = "client/main.luau" }
 
 [content]
-items = [{ key = "bricks:lamp", texture = "assets/lamp.png", name = { en = "Brass lamp" } }]
+items = [{ key = "bricks:lamp", texture = "assets/lamp.png", name = { en = "Brass lamp" }, plural = { en = "Brass lamps", tr = "Pirinç lambalar" } }]
 blocks = [{ key = "bricks:warm", texture = "assets/warm.png", base = "red-bricks", drops = "bricks:lamp", name = { en = "Warm brick" } }]

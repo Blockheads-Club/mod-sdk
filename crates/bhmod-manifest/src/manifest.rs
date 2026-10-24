@@ -311,6 +311,10 @@ pub struct ItemDecl {
     /// Display name per language.
     #[serde(default)]
     pub name: Localized,
+    /// Plural display name per language, shown where the game asks for the plural ("5 BRASS LAMPS"). A language
+    /// without a plural shows the singular `name`.
+    #[serde(default)]
+    pub plural: Localized,
 }
 
 /// A new cosmetic.
@@ -542,6 +546,7 @@ impl Manifest {
         }
         for i in &self.content.items {
             check_localized(v, &format!("content `{}` name", i.key), &i.name, false, 64);
+            check_localized(v, &format!("content `{}` plural", i.key), &i.plural, false, 64);
         }
         for c in &self.content.cosmetics {
             self.validate_cosmetic(v, c);
