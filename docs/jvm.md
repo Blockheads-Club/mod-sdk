@@ -179,7 +179,7 @@ VM with `bhmod_core::jvm::attach_existing(java_vm, class_loader, config)`. Three
    `bhmod-android` and puts the SDK classes (`sdk/java/src`) into the loader's own `classes.dex`, so the class loader
    of the loader's Java UI also finds `club.blockheads.*`. Without `--jvm` (the default) nothing of this is built.
 2. **The switch.** JVM mods are unsandboxed, so the owner has to ask: the loader turns the runtime on (and puts `jvm`
-   into `HELLO.runtimes`) only when the file `jvm-enabled` exists in its data folder. There is no UI toggle yet.
+   into `HELLO.runtimes`) only when the file `jvm-enabled` exists in its data folder. The Mods screen of the loader has a "Java mods" switch (off by default, with the red unsandboxed warning) that creates or deletes that file; it applies at the next game start and only does something in a loader built with `--jvm`.
 3. **The mod.** A jar for ART carries `classes.dex` next to its class files; the same jar still runs on a desktop JVM,
    which ignores the dex. Make it with the Android SDK's `d8` (the SDK jar is a classpath entry, not part of the dex):
 

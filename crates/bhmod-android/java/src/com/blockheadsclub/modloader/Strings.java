@@ -51,6 +51,12 @@ final class Strings {
         p("perm_channels", "Talks to the server", "Sunucuyla konuşur", "Общается с сервером", "Сервермен байланысады");
         p("perm_net", "Uses the internet", "İnterneti kullanır", "Использует интернет", "Интернетті пайдаланады");
         p("perm_native", "Native · full access", "Yerel kod · tam erişim", "Нативный · полный доступ", "Нативті · толық қатынас");
+        p("jvm_title", "Java mods", "Java modları", "Java-моды", "Java модтары");
+        p("jvm_body", "Java mods run as native, unsandboxed code: they can change anything in the game and on this device, and the loader cannot limit them. Turn this on only for mods you trust. Needs the loader build with Java support.",
+            "Java modları yerel, korumasız kod olarak çalışır: oyunda ve bu cihazda her şeyi değiştirebilirler ve yükleyici onları sınırlayamaz. Bunu yalnızca güvendiğin modlar için aç. Java destekli yükleyici sürümü gerekir.",
+            "Java-моды работают как нативный код без песочницы: они могут изменить что угодно в игре и на этом устройстве, а загрузчик не может их ограничить. Включайте только для модов, которым доверяете. Нужна сборка загрузчика с поддержкой Java.",
+            "Java модтары құмсалғышсыз нативті код ретінде жұмыс істейді: олар ойындағы және осы құрылғыдағы кез келген нәрсені өзгерте алады, жүктегіш оларды шектей алмайды. Тек сенімді модтар үшін қосыңыз. Java қолдауы бар жүктегіш жинағы қажет.");
+        p("jvm_restart", "Applies the next time the game starts.", "Oyun bir sonraki açılışında uygulanır.", "Применится при следующем запуске игры.", "Келесі ойын іске қосылғанда қолданылады.");
         p("what_asks", "What it asks for", "Ne istiyor", "Что ему нужно", "Не сұрайды");
         p("danger_title", "Danger · native code", "Tehlike · yerel kod", "Опасно · нативный код", "Қауіпті · нативті код");
         p("danger_body", "{mod} runs outside the sandbox. It can change anything in the game and on this device.",

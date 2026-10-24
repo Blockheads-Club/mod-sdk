@@ -138,8 +138,49 @@ final class ModsScreen {
                     content.addView(row, Kit.margins(Kit.fill(), 0, 0, 0, Kit.u(a, 2)));
                 }
                 content.addView(Kit.small(a, Strings.t("apply_note")), Kit.fill());
+                jvmSwitch(a);
             }
         });
+    }
+
+    /** The flag file the native loader reads at start; present = JVM mods (unsandboxed) are on. Off by default. */
+    static File jvmFlag() { return new File(Bridge.dataDir(), "jvm-enabled"); }
+
+    static boolean setJvm(boolean on) {
+        File f = jvmFlag();
+        try {
+            if (on) return f.exists() || f.createNewFile();
+            return !f.exists() || f.delete();
+        } catch (java.io.IOException e) {
+            return false;
+        }
+    }
+
+    /** "Java mods" switch with the red warning: JVM code cannot be sandboxed. Applies at the next game start. */
+    static void jvmSwitch(final Activity a) {
+        LinearLayout box = Kit.column(a);
+        box.setBackground(Kit.danger(a));
+        box.setPadding(Kit.u(a, 3), Kit.u(a, 2), Kit.u(a, 3), Kit.u(a, 2));
+        box.addView(Kit.text(a, Strings.t("jvm_title"), Kit.TEXT, 15, true), Kit.fill());
+        box.addView(Kit.body(a, Strings.t("jvm_body")), Kit.fill());
+        final android.widget.Switch s = new android.widget.Switch(a);
+        s.setChecked(jvmFlag().exists());
+        s.setText(Strings.t(s.isChecked() ? "on" : "off"));
+        s.setTextColor(Kit.TEXT);
+        s.setOnCheckedChangeListener(new android.widget.CompoundButton.OnCheckedChangeListener() {
+            public void onCheckedChanged(android.widget.CompoundButton b, boolean v) {
+                if (!setJvm(v)) {
+                    b.setOnCheckedChangeListener(null);
+                    b.setChecked(!v);
+                    Overlay.toast(Strings.t("cant_read"));
+                    return;
+                }
+                b.setText(Strings.t(v ? "on" : "off"));
+                Overlay.toast(Strings.t("jvm_restart"));
+            }
+        });
+        box.addView(s, Kit.margins(Kit.wrap(), 0, Kit.u(a, 1), 0, 0));
+        content.addView(box, Kit.margins(Kit.fill(), 0, Kit.u(a, 3), 0, 0));
     }
 
     static String author(JSONObject m) {
