@@ -13,6 +13,7 @@
 //! - `-[BHNetClientMatch disconnect]`: the session ends.
 
 pub mod cosmetics;
+pub mod items;
 pub mod menus;
 pub mod native;
 pub mod objc;
@@ -306,6 +307,7 @@ extern "C" fn hook_draw_frame(this: Id, cmd: Sel) {
                 }
             }
             l.on_frame();
+            items::sync();
         });
     });
     let orig = ORIG.get().expect("hooks").draw_frame;
