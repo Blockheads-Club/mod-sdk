@@ -143,7 +143,6 @@ impl Which {
 fn restore(bh: Id, which: Which, keep: bool) {
     let mine = which.ivars();
     let saved: Vec<(&'static str, usize)> = st(|s| {
-        let mut s = s;
         let keys: Vec<_> = s.originals.keys().filter(|k| k.0 == bh as usize && mine.contains(&k.1)).copied().collect();
         keys.into_iter().filter_map(|k| s.originals.remove(&k).map(|v| (k.1, v))).collect()
     });

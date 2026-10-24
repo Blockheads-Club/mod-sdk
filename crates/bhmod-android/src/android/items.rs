@@ -10,7 +10,7 @@
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
-use std::sync::{Mutex, RwLock};
+use std::sync::{LazyLock, Mutex, RwLock};
 
 use bhmod_core::types::LogLevel;
 
@@ -29,7 +29,7 @@ pub const NAME_FUNCS: [u32; 12] = [
 pub const NAME_PROLOGUE: [u32; 2] = [0xe24d_d018, 0xe59f_1ffc];
 const VALID_FILL: &str = "_Z23itemTypeIsValidFillItem8ItemType";
 
-static NAMES: RwLock<HashMap<u16, String>> = RwLock::new(HashMap::new());
+static NAMES: LazyLock<RwLock<HashMap<u16, String>>> = LazyLock::new(|| RwLock::new(HashMap::new()));
 /// Retained `NSString`s made for the names (by item type).
 static STRINGS: Mutex<Option<HashMap<u16, usize>>> = Mutex::new(None);
 static ORIGS: [AtomicUsize; 12] = [const { AtomicUsize::new(0) }; 12];
@@ -66,7 +66,7 @@ fn item_name(i: usize, item: u32) -> Id {
 macro_rules! name_fns {
     ($($f:ident = $i:expr),* $(,)?) => {
         $(extern "C" fn $f(item: u32) -> Id { item_name($i, item) })*
-        const NAME_REPLACEMENTS: [usize; 12] = [$($f as usize),*];
+        const NAME_REPLACEMENTS: [extern "C" fn(u32) -> Id; 12] = [$($f),*];
     };
 }
 name_fns!(n0 = 0, n1 = 1, n2 = 2, n3 = 3, n4 = 4, n5 = 5, n6 = 6, n7 = 7, n8 = 8, n9 = 9, n10 = 10, n11 = 11);
@@ -139,7 +139,7 @@ fn install() {
             }
         }
         for (i, f) in NAME_FUNCS.iter().enumerate() {
-            match engine.hook_address(host, OWNER, MODULE, *f, NAME_REPLACEMENTS[i] as u32) {
+            match engine.hook_address(host, OWNER, MODULE, *f, NAME_REPLACEMENTS[i] as usize as u32) {
                 Ok(h) => ORIGS[i].store(h.original as usize, Ordering::Relaxed),
                 Err(e) => {
                     engine.unhook_owner(host, OWNER);
@@ -147,7 +147,13 @@ fn install() {
                 }
             }
         }
-        match engine.hook_symbol(host, OWNER, Some(MODULE), VALID_FILL, item_valid as usize as u32) {
+        match engine.hook_symbol(
+            host,
+            OWNER,
+            Some(MODULE),
+            VALID_FILL,
+            item_valid as extern "C" fn(u32) -> u32 as usize as u32,
+        ) {
             Ok(h) => VALID_ORIG.store(h.original as usize, Ordering::Relaxed),
             Err(e) => {
                 engine.unhook_owner(host, OWNER);
