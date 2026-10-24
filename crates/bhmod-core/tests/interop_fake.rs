@@ -388,6 +388,9 @@ fn trait_defaults_for_0_1_code() {
     assert_eq!(api.content_equipped("p"), Err(ApiError::Unsupported));
     assert_eq!(api.content_equip("p", "a:b"), Err(ApiError::Unsupported));
     assert_eq!(api.content_unequip("p", "hat"), Err(ApiError::Unsupported));
+    assert_eq!(api.content_give_item("p", "a:b", 1), Err(ApiError::Unsupported));
+    assert_eq!(api.content_place_block(0, 0, "a:b"), Err(ApiError::Unsupported));
+    assert_eq!(api.content_block_at(0, 0), None);
     let widget = bhmod_core::ui::Widget {
         slot: bhmod_core::ui::Slot::TopLeft,
         kind: bhmod_core::ui::WidgetKind::Text,

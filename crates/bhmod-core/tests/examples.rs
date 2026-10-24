@@ -343,3 +343,35 @@ fn prices_lua_round_trip() {
     );
     let _ = sb;
 }
+
+#[test]
+fn decor_items() {
+    let (_t, b, mut h) = host_with(&["decor-items"], "");
+    assert_eq!(h.mods().len(), 1, "{}", b.log_text());
+    *b.item_ids.borrow_mut() = vec![("decor-items:brass-lamp".into(), 1107), ("decor-items:wall-plaque".into(), 1108)];
+    *b.block_ids.borrow_mut() = vec![("decor-items:warm-brick".into(), 1)];
+    h.enable("World", "wid");
+    assert_eq!(h.mods()[0].state, ModState::Enabled, "{}", b.log_text());
+    b.join("p1", "ALICE", Role::Player);
+
+    assert_eq!(h.command(player("p1"), "/decor"), Some(vec!["You got 1 x lamp.".to_string()]));
+    assert_eq!(h.command(player("p1"), "/decor plaque 500"), Some(vec!["You got 64 x plaque.".to_string()]));
+    assert_eq!(h.command(player("p1"), "/decor lamp 3"), Some(vec!["You got 3 x lamp.".to_string()]));
+    assert_eq!(
+        *b.given.borrow(),
+        [("p1".to_string(), 1107, 1), ("p1".to_string(), 1108, 64), ("p1".to_string(), 1107, 3)]
+    );
+    assert_eq!(
+        h.command(player("p1"), "/decor sofa"),
+        Some(vec!["Unknown item \"sofa\". Try: lamp, plaque".to_string()])
+    );
+    assert_eq!(h.command(CommandSender::Console, "/decor"), Some(vec!["Only players carry items.".to_string()]));
+
+    // /warm needs a position, then replaces the block under the player.
+    assert_eq!(h.command(player("p1"), "/warm"), Some(vec!["Stand somewhere first.".to_string()]));
+    assert_eq!(h.command(CommandSender::Console, "/warm"), Some(vec!["Stand somewhere first.".to_string()]));
+    b.positions.borrow_mut().push(("p1".into(), bhmod_core::types::Pos { x: 40, y: 80 }));
+    assert_eq!(h.command(player("p1"), "/warm"), Some(vec!["The ground under you is a warm brick now.".to_string()]));
+    assert_eq!(*b.placed.borrow(), [(40, 79, 1)]);
+    h.disable_all();
+}

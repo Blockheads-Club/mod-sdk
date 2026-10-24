@@ -221,3 +221,55 @@ fn weapons_follow_the_held_item() {
     let g = c.texture(7, Part::Main).unwrap().unwrap();
     assert_eq!(g.uv(), [0.0, 0.0, 6.0 / 8.0, 3.0 / 4.0]);
 }
+
+const DECOR: &str = "schema = 1\nid = \"decor\"\nversion = \"1.0.0\"\nname = { en = \"Decor\" }\nauthors = [\"me\"]\n\
+    license = \"MIT\"\napi = \"^0.3\"\n[sides]\nclient = true\n[entry]\n\
+    client = { runtime = \"lua\", path = \"client/main.luau\" }\n[content]\n\
+    items = [{ key = \"decor:lamp\", texture = \"assets/lamp.png\", name = { en = \"Brass lamp\" } },\n\
+    { key = \"decor:gone\", texture = \"assets/gone.png\" }]\n\
+    blocks = [{ key = \"decor:brick\", texture = \"assets/brick.png\", base = \"red-bricks\" }]\n";
+
+fn decor_dir(dir: &Path) {
+    std::fs::create_dir_all(dir.join("assets")).unwrap();
+    std::fs::create_dir_all(dir.join("client")).unwrap();
+    std::fs::write(dir.join("mod.toml"), DECOR).unwrap();
+    std::fs::write(dir.join("client/main.luau"), "-- x\n").unwrap();
+    std::fs::write(dir.join("assets/lamp.png"), png(2, 2, [200, 100, 0, 255])).unwrap();
+    std::fs::write(dir.join("assets/brick.png"), png(4, 4, [160, 40, 30, 255])).unwrap();
+}
+
+fn decor_registry() -> Wire {
+    Wire::from([
+        ("items".to_string(), BTreeMap::from([("decor:lamp".to_string(), 1107), ("decor:gone".to_string(), 1108)])),
+        ("blocks".to_string(), BTreeMap::from([("decor:brick".to_string(), 1)])),
+    ])
+}
+
+#[test]
+fn items_and_blocks_have_names_and_textures() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path().join("decor-src");
+    decor_dir(&dir);
+    let mut c = Content::new();
+    assert!(c.load(&decor_registry(), &[dir]).is_empty());
+    // Items and blocks alone do not turn the cosmetics on.
+    assert!(!c.is_active());
+    assert_eq!(c.items().all().count(), 2);
+    assert_eq!(c.blocks().all().count(), 1);
+    assert_eq!(c.item_name(1107, "en").as_deref(), Some("BRASS LAMP"));
+    assert_eq!(c.item_name(5, "en"), None);
+    let icon = c.item_texture(1107).unwrap().unwrap();
+    assert_eq!((icon.wide, icon.high), (2, 2));
+    assert!(Arc::ptr_eq(&c.item_texture(1107).unwrap().unwrap(), &icon));
+    let block = c.block_texture(1).unwrap().unwrap();
+    assert_eq!((block.wide, block.content_wide), (4, 4));
+    assert!(c.block_texture(2).unwrap().is_none());
+    assert!(c.item_texture(5).unwrap().is_none());
+    // A missing file is reported once, then cached as absent.
+    assert!(c.item_texture(1108).unwrap_err().contains("assets/gone.png"));
+    assert!(c.item_texture(1108).unwrap().is_none());
+    c.packages.clear();
+    assert!(c.block_texture(1).unwrap().is_some());
+    c.extra_cache.clear();
+    assert!(c.block_texture(1).unwrap_err().contains("not loaded"));
+}

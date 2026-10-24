@@ -29,6 +29,10 @@ fn gear() -> Result<(), String> {
     show("unequip", content::unequip(&p, "hat"));
     show("unequip-bad", content::unequip(&p, "cape").map_err(String::from));
     show("equipped-after", content::equipped(&p));
+    show("give-item", content::give_item(&p, "gear:lamp", 2));
+    show("give-other", content::give_item(&p, "other:lamp", 1).map_err(String::from));
+    show("place-block", content::place_block(4, -5, "gear:brick"));
+    show("block-at", (content::block_at(4, -5), content::block_at(0, 0)));
     Ok(())
 }
 

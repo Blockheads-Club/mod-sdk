@@ -29,6 +29,14 @@ pub struct FakeBridge {
     pub sent: RefCell<Vec<Sent>>,
     /// The cosmetics registry: (key, id).
     pub cosmetic_ids: RefCell<Vec<(String, u64)>>,
+    /// The items registry: (key, id).
+    pub item_ids: RefCell<Vec<(String, u64)>>,
+    /// The variant blocks registry: (key, id).
+    pub block_ids: RefCell<Vec<(String, u64)>>,
+    /// `give_item` calls: (player, item id, count).
+    pub given: RefCell<Vec<(String, u64, u32)>>,
+    /// Variant blocks in the world: (x, y, id).
+    pub placed: RefCell<Vec<(i32, i32, u64)>>,
     /// Worn cosmetics: (player, slot, id).
     pub worn: RefCell<Vec<(String, String, u64)>>,
     /// Makes `online_players` panic (a host bug that must not cross into the JVM).
@@ -44,6 +52,13 @@ pub struct FakeBridge {
 }
 
 impl FakeBridge {
+    fn ids(&self, kind: ContentKind) -> &RefCell<Vec<(String, u64)>> {
+        match kind {
+            ContentKind::Cosmetic => &self.cosmetic_ids,
+            ContentKind::Item => &self.item_ids,
+            ContentKind::Block => &self.block_ids,
+        }
+    }
     pub fn new() -> Rc<FakeBridge> {
         Rc::new(FakeBridge::default())
     }
@@ -125,16 +140,21 @@ impl GameBridge for FakeBridge {
         self.positions.borrow().iter().find(|p| p.0 == id).map(|p| p.1)
     }
     fn content_id(&self, kind: ContentKind, key: &str) -> Option<u64> {
-        if kind != ContentKind::Cosmetic {
-            return None;
-        }
-        self.cosmetic_ids.borrow().iter().find(|c| c.0 == key).map(|c| c.1)
+        self.ids(kind).borrow().iter().find(|c| c.0 == key).map(|c| c.1)
     }
     fn content_key(&self, kind: ContentKind, id: u64) -> Option<String> {
-        if kind != ContentKind::Cosmetic {
-            return None;
-        }
-        self.cosmetic_ids.borrow().iter().find(|c| c.1 == id).map(|c| c.0.clone())
+        self.ids(kind).borrow().iter().find(|c| c.1 == id).map(|c| c.0.clone())
+    }
+    fn give_item(&self, player: &str, item: u64, count: u32) -> Result<(), ApiError> {
+        self.given.borrow_mut().push((player.into(), item, count));
+        Ok(())
+    }
+    fn place_block(&self, x: i32, y: i32, block: u64) -> Result<(), ApiError> {
+        self.placed.borrow_mut().push((x, y, block));
+        Ok(())
+    }
+    fn block_at(&self, x: i32, y: i32) -> Option<u64> {
+        self.placed.borrow().iter().rev().find(|p| p.0 == x && p.1 == y).map(|p| p.2)
     }
     fn set_cosmetic(&self, player: &str, slot: &str, id: Option<u64>) -> Result<(), ApiError> {
         let mut worn = self.worn.borrow_mut();

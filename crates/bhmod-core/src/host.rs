@@ -113,6 +113,10 @@ struct Slot {
     provides: Vec<(String, String)>,
     /// `[content] cosmetics` as `(key, slot)`.
     cosmetics: Vec<(String, String)>,
+    /// `[content] items` keys.
+    items: Vec<String>,
+    /// `[content] blocks` as `(key, has a known base)`.
+    blocks: Vec<(String, bool)>,
     /// The `[provides]` services that are `remote = true`, as `(name, allowed methods)`; no methods = all.
     remote: Vec<(String, Vec<String>)>,
     instance: Option<Box<dyn Instance>>,
@@ -234,6 +238,8 @@ impl ModHost {
                         .map(|s| (s.name.clone(), s.version.clone()))
                         .collect(),
                     cosmetics: pkg.manifest.content.cosmetics.iter().map(|c| (c.key.clone(), c.slot.clone())).collect(),
+                    items: pkg.manifest.content.items.iter().map(|i| i.key.clone()).collect(),
+                    blocks: pkg.manifest.content.blocks.iter().map(|b| (b.key.clone(), b.base.is_some())).collect(),
                     remote: pkg
                         .manifest
                         .provides
@@ -786,11 +792,34 @@ impl Ctx<'_> {
         }
     }
 
+    /// The id of content `key` of `kind` that the calling mod declares itself (`not-permitted` for another mod's key,
+    /// `invalid-argument` for an unknown one or one without an id in this world).
+    fn own_content_id(&self, kind: ContentKind, key: &str) -> Result<u64, ApiError> {
+        let declared = |slot: &Slot| match kind {
+            ContentKind::Item => slot.items.iter().any(|k| k == key),
+            _ => slot.blocks.iter().any(|(k, _)| k == key),
+        };
+        if !declared(self.slot()) {
+            return Err(if self.host.slots.iter().any(declared) {
+                ApiError::NotPermitted(format!("`{key}` belongs to another mod"))
+            } else {
+                ApiError::InvalidArgument(format!("`{key}` is not declared by this mod"))
+            });
+        }
+        self.host
+            .bridge
+            .content_id(kind, key)
+            .ok_or_else(|| ApiError::InvalidArgument(format!("`{key}` has no id in this world")))
+    }
+
     /// True when the calling mod is `id` or depends (softly) on it.
     fn may_use(&self, id: &str) -> bool {
         self.slot().info.id == id || self.slot().deps.iter().any(|d| d == id)
     }
 }
+
+/// Most items one `content.give-item` call hands out.
+const MAX_GIVE: u32 = 64;
 
 fn limit(what: &str) -> ApiError {
     ApiError::LimitExceeded(what.to_string())
@@ -969,6 +998,28 @@ impl HostApi for Ctx<'_> {
         }
         self.host.bridge.player_alias(id).ok_or(ApiError::StaleHandle)?;
         self.host.bridge.set_cosmetic(id, slot, None)
+    }
+    fn content_give_item(&mut self, id: &str, key: &str, count: u32) -> Result<(), ApiError> {
+        self.require_content_side()?;
+        let item = self.own_content_id(ContentKind::Item, key)?;
+        self.host.bridge.player_alias(id).ok_or(ApiError::StaleHandle)?;
+        if count == 0 || count > MAX_GIVE {
+            return Err(limit("items per give-item call"));
+        }
+        self.host.bridge.give_item(id, item, count)
+    }
+    fn content_place_block(&mut self, x: i32, y: i32, key: &str) -> Result<(), ApiError> {
+        self.require_content_side()?;
+        let block = self.own_content_id(ContentKind::Block, key)?;
+        let has_base = self.slot().blocks.iter().any(|(k, base)| k == key && *base);
+        if !has_base {
+            return Err(ApiError::InvalidArgument(format!("`{key}` declares no base block")));
+        }
+        self.host.bridge.place_block(x, y, block)
+    }
+    fn content_block_at(&mut self, x: i32, y: i32) -> Option<String> {
+        let id = self.host.bridge.block_at(x, y)?;
+        self.host.bridge.content_key(ContentKind::Block, id)
     }
     fn handle_of_player(&mut self, id: &str) -> u64 {
         self.host.handles.of_player(id)

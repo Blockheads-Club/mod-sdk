@@ -194,15 +194,21 @@ Content declared in `[content]` and cosmetics, see [content.md](content.md). `ki
   Another mod's key raises `not-permitted`, an unknown key `invalid-argument`, a player who left `stale-handle`;
   clients raise `unsupported`.
 - `bh.content.unequip(player, slot)`, `bh.content.equipped(player) -> { [slot]: key }`.
+- `bh.content.give_item(player, key, count?)` (0.3.2): gives a player `count` (default 1, at most 64) of **your mod's** item.
+  It goes into the inventory of the player's blockhead, or drops next to it when that is full. Server only.
+- `bh.content.place_block(x, y, key)` (0.3.2): replaces the block at the tile with **your mod's** variant block `key`
+  (its `base` block carrying the variant's id). Server only; the tile must be loaded.
+- `bh.content.block_at(x, y) -> string?` (0.3.2): the variant block key at a tile, `nil` for a plain block.
 
 ## API versions
 
-The host implements `blockheads:api@0.3.1` (`bh.host.api_version()`) and also serves 0.3.0, 0.2 and 0.1: in 0.x a new
+The host implements `blockheads:api@0.3.2` (`bh.host.api_version()`) and also serves 0.3.1, 0.3.0, 0.2 and 0.1: in 0.x a new
 minor only adds events, functions and fields, so a mod with `api = "^0.1"` keeps loading and running unchanged. A mod
 that uses anything from 0.2 declares `api = "^0.2"`, one that uses `bh.ui` or `bh.content` declares `api = "^0.3"`, one
 that uses remote services (`bh.services.call_remote`) or `remote = true` declares `api = "^0.3.1"`. 0.3.1 is a patch
 release because it only adds (a function group in `services`, no new export, no changed type): components built for
-0.3.0 link and run on a 0.3.1 host without a new binding, which wasmtime matches semver-compatibly. WASM hosts bind the
+0.3.0 link and run on a 0.3.1 host without a new binding, which wasmtime matches semver-compatibly. 0.3.2 adds the
+same way `bh.content.give_item`, `place_block` and `block_at` (a mod that uses them declares `api = "^0.3.2"`). WASM hosts bind the
 frozen 0.2 and 0.1 WIT in [`../wit/compat/blockheads-api-0.2.0/`](../wit/compat/blockheads-api-0.2.0/) and
 [`../wit/compat/blockheads-api-0.1.0/`](../wit/compat/blockheads-api-0.1.0/) for components built against them.
 

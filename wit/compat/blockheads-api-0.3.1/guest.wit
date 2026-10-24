@@ -1,0 +1,33 @@
+package blockheads:api@0.3.1;
+
+/// Callbacks every mod exports. The host calls them on the main thread; a trap or a run over the time budget
+/// (5 ms soft, 25 ms hard per call) counts against the mod, and three hard traps within 60 s disable it.
+interface guest {
+    use types.{value};
+    use events.{subscription, event, outcome, command-sender};
+    use commands.{command-id, command-outcome};
+    use scheduler.{task-id};
+    use channels.{channel-id, source};
+
+    /// Called once when the mod is enabled (on the server: when the world has loaded). Subscribe to events and
+    /// register commands here. An error disables the mod and is logged.
+    on-enable: func() -> result<_, string>;
+
+    /// Called once when the mod is disabled (server stop, reload). Flush state here.
+    on-disable: func();
+
+    /// Called for every event matching one of the mod's subscriptions.
+    handle-event: func(sub: subscription, ev: event) -> outcome;
+
+    /// Called when one of the mod's commands is used. `label` is the name or alias that was typed.
+    run-command: func(id: command-id, sender: command-sender, label: string, args: list<string>) -> command-outcome;
+
+    /// Called when a scheduled task is due.
+    run-task: func(id: task-id);
+
+    /// Called when another mod calls a service this mod provides. `args` and the result are canonical CBOR.
+    call-service: func(name: string, method: string, args: value) -> result<value, string>;
+
+    /// Called when a message arrives on a channel this mod opened.
+    on-channel-message: func(channel: channel-id, origin: source, data: list<u8>);
+}

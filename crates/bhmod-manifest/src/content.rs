@@ -81,3 +81,52 @@ pub fn base_item(slug: &str) -> Option<&'static BaseItem> {
 pub fn base_item_for(slot: &str, item_type: u16) -> Option<&'static BaseItem> {
     BASE_ITEMS.iter().find(|b| b.slot == slot && b.item_type == item_type)
 }
+
+/// A vanilla block a variant block can be based on (`base` in `[[content.blocks]]`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BaseTile {
+    /// The `base` value.
+    pub slug: &'static str,
+    /// The game's `TileType` (`Tile.typeIndex`).
+    pub tile_type: u8,
+    /// The `ItemType` of the block item mining the base block gives (what a variant without `drops` gives).
+    pub item_type: u16,
+}
+
+macro_rules! t {
+    ($slug:literal, $tile:literal, $item:literal) => {
+        BaseTile { slug: $slug, tile_type: $tile, item_type: $item }
+    };
+}
+
+/// Every `base` value of a block: whole solid building blocks without special behaviour.
+pub const BASE_TILES: &[BaseTile] = &[
+    t!("wood", 9, 0x419),
+    t!("cobblestone", 10, 0x400),
+    t!("red-bricks", 11, 0x402),
+    t!("limestone-block", 13, 0x404),
+    t!("marble-block", 15, 0x406),
+    t!("sandstone-block", 18, 0x40C),
+    t!("red-marble-block", 20, 0x40E),
+    t!("glass", 24, 0x412),
+    t!("gold-block", 26, 0x415),
+    t!("lapis-block", 30, 0x41E),
+    t!("basalt-block", 52, 0x427),
+    t!("copper-block", 53, 0x42A),
+    t!("tin-block", 54, 0x42B),
+    t!("bronze-block", 55, 0x42C),
+    t!("iron-block", 56, 0x42D),
+    t!("steel-block", 57, 0x42E),
+    t!("black-glass", 59, 0x434),
+    t!("plaster", 76, 0x44F),
+];
+
+/// The vanilla block with this `base` value.
+pub fn base_tile(slug: &str) -> Option<&'static BaseTile> {
+    BASE_TILES.iter().find(|b| b.slug == slug)
+}
+
+/// The vanilla block of a `Tile.typeIndex`, if it can be a variant's base.
+pub fn base_tile_of(tile_type: u8) -> Option<&'static BaseTile> {
+    BASE_TILES.iter().find(|b| b.tile_type == tile_type)
+}

@@ -1,0 +1,19 @@
+schema = 1
+id = "bricks"
+version = "0.1.0"
+name = { en = "Bricks" }
+authors = ["me"]
+license = "MIT"
+api = "^0.3.2"
+
+[sides]
+server = true
+client = true
+
+[entry]
+server = { runtime = "lua", path = "server/main.luau" }
+client = { runtime = "lua", path = "client/main.luau" }
+
+[content]
+items = [{ key = "bricks:lamp", texture = "assets/lamp.png", name = { en = "Brass lamp" } }]
+blocks = [{ key = "bricks:warm", texture = "assets/warm.png", base = "red-bricks", drops = "bricks:lamp", name = { en = "Warm brick" } }]

@@ -145,6 +145,10 @@ declare bh: {
 		equipped: (player: Player) -> { [string]: string },
 		equip: (player: Player, key: string) -> (),
 		unequip: (player: Player, slot: string) -> (),
+		-- API 0.3.2
+		give_item: (player: Player, key: string, count: number?) -> (),
+		place_block: (x: number, y: number, key: string) -> (),
+		block_at: (x: number, y: number) -> string?,
 	},
 	events: {
 		on: (kind: EventKind, handler: (ev: Event) -> (), opts: SubscribeOpts?) -> number,

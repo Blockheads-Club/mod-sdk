@@ -2,7 +2,7 @@
 //! with the world's registry, who wears what, and the textures prepared for the game. The platform glue asks
 //! [`Content::resolve`] what a blockhead should show and [`Content::texture`] for the pixels.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs::File;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -12,6 +12,7 @@ use bhmod_manifest::Manifest;
 use bhmod_proto::Cosmetics;
 
 use crate::cosmetics::{self, Resolved, Table, Wearing};
+use crate::items::{BlockDef, BlockTable, ItemDef, ItemTable};
 use crate::registry::{self, Registry, Wire};
 use crate::texture::{Gpu, Texture};
 
@@ -84,6 +85,10 @@ pub struct Content {
     /// Package of each mod id.
     packages: BTreeMap<String, PathBuf>,
     cache: BTreeMap<(u64, Part), Option<Arc<Gpu>>>,
+    items: ItemTable,
+    blocks: BlockTable,
+    /// Icons of items (0) and textures of variant blocks (1), by id.
+    extra_cache: BTreeMap<(u8, u64), Option<Arc<Gpu>>>,
     serial: u64,
 }
 
@@ -111,11 +116,22 @@ impl Content {
             }
         }
         let table = Table::build(registry, &manifests);
-        // Keep only the packages that declare cosmetics.
-        paths.retain(|id, _| table.all().any(|c| &c.mod_id == id));
+        let items = ItemTable::build(registry, &manifests);
+        let blocks = BlockTable::build(registry, &manifests);
+        // Keep only the packages that declare content the world has ids for.
+        let used: BTreeSet<&str> = table
+            .all()
+            .map(|c| c.mod_id.as_str())
+            .chain(items.all().map(|i| i.mod_id.as_str()))
+            .chain(blocks.all().map(|b| b.mod_id.as_str()))
+            .collect();
+        paths.retain(|id, _| used.contains(id.as_str()));
         self.table = table;
+        self.items = items;
+        self.blocks = blocks;
         self.packages = paths;
         self.cache.clear();
+        self.extra_cache.clear();
         self.serial += 1;
         problems
     }
@@ -128,6 +144,21 @@ impl Content {
     /// The declared cosmetics.
     pub fn table(&self) -> &Table {
         &self.table
+    }
+
+    /// The declared items.
+    pub fn items(&self) -> &ItemTable {
+        &self.items
+    }
+
+    /// The declared variant blocks.
+    pub fn blocks(&self) -> &BlockTable {
+        &self.blocks
+    }
+
+    /// The name the game shows for item `id` in `lang`; see [`ItemTable::display_name`].
+    pub fn item_name(&self, id: u64, lang: &str) -> Option<String> {
+        self.items.display_name(id, lang)
     }
 
     /// Applies a `COSMETICS` message. Returns the players whose look changed.
@@ -208,6 +239,41 @@ impl Content {
             .and_then(|mut src| Texture::read(src.as_mut(), &path));
         let gpu = loaded.as_ref().ok().map(|t| Arc::new(t.for_gpu()));
         self.cache.insert((id, part), gpu.clone());
+        loaded.map(|_| gpu)
+    }
+}
+
+impl Content {
+    /// The icon of item `id`, prepared for the game and cached (`None` for an id that is no item of a loaded mod).
+    pub fn item_texture(&mut self, id: u64) -> Result<Option<Arc<Gpu>>, String> {
+        let source = self.items.get(id).map(ItemDef::source);
+        self.cached_texture((0, id), source)
+    }
+
+    /// The texture of variant block `id`, prepared for the game and cached.
+    pub fn block_texture(&mut self, id: u64) -> Result<Option<Arc<Gpu>>, String> {
+        let source = self.blocks.get(id).map(BlockDef::source);
+        self.cached_texture((1, id), source)
+    }
+
+    /// `key` is (0 item | 1 block, id); `source` is (mod id, path in its package).
+    fn cached_texture(
+        &mut self,
+        key: (u8, u64),
+        source: Option<(String, String)>,
+    ) -> Result<Option<Arc<Gpu>>, String> {
+        if let Some(t) = self.extra_cache.get(&key) {
+            return Ok(t.clone());
+        }
+        let Some((mod_id, path)) = source else { return Ok(None) };
+        let loaded = self
+            .packages
+            .get(&mod_id)
+            .ok_or_else(|| format!("{mod_id}: the package is not loaded"))
+            .and_then(|p| open_package(p))
+            .and_then(|mut src| Texture::read(src.as_mut(), &path));
+        let gpu = loaded.as_ref().ok().map(|t| Arc::new(t.for_gpu()));
+        self.extra_cache.insert(key, gpu.clone());
         loaded.map(|_| gpu)
     }
 }

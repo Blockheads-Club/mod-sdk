@@ -1,4 +1,4 @@
-package blockheads:api@0.3.1;
+package blockheads:api@0.3.2;
 
 /// A small per-mod, per-world key-value store. It never touches the vanilla world save.
 ///

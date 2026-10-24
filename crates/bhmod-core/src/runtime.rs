@@ -293,6 +293,21 @@ pub trait HostApi {
         let _ = (id, slot);
         Err(ApiError::Unsupported)
     }
+    /// `content.give-item` (API 0.3.2).
+    fn content_give_item(&mut self, id: &str, key: &str, count: u32) -> Result<(), ApiError> {
+        let _ = (id, key, count);
+        Err(ApiError::Unsupported)
+    }
+    /// `content.place-block` (API 0.3.2).
+    fn content_place_block(&mut self, x: i32, y: i32, key: &str) -> Result<(), ApiError> {
+        let _ = (x, y, key);
+        Err(ApiError::Unsupported)
+    }
+    /// `content.block-at` (API 0.3.2).
+    fn content_block_at(&mut self, x: i32, y: i32) -> Option<String> {
+        let _ = (x, y);
+        None
+    }
 
     /// `channels.open`.
     fn channel_open(&mut self, name: &str) -> Result<ChannelId, ApiError> {

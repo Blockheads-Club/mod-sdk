@@ -1,0 +1,61 @@
+package blockheads:api@0.3.1;
+
+/// Shared types used by every other interface.
+interface types {
+    /// A mod id as written in `mod.toml` (`[a-z0-9_-]{2,40}`).
+    type mod-id = string;
+
+    /// A dynamic value crossing a language boundary (service arguments and results, custom event payloads).
+    ///
+    /// Always canonical CBOR (RFC 8949 section 4.2.1, "core deterministic encoding"). Records are CBOR maps with
+    /// kebab-case text keys, variants are one-entry maps `{tag: value}`, enums are text, `option` is null or the
+    /// value, host handles are `{"$h": u64}`. Each SDK offers typed helpers so authors rarely touch the bytes.
+    type value = list<u8>;
+
+    /// A tile position in the world. `x` wraps around the world width, `y` grows upwards from bedrock.
+    record pos {
+        x: s32,
+        y: s32,
+    }
+
+    /// Which program a piece of mod code runs in.
+    enum side {
+        /// The dedicated server (or the host of a local world).
+        server,
+        /// A game client (PC port or Android loader).
+        client,
+    }
+
+    /// Event handler priority, in Spigot order. Handlers run from `lowest` to `highest`, then `monitor`.
+    /// Inside one priority they run in mod load order (dependencies first).
+    enum priority {
+        /// Runs first. Use it when you want later handlers to see and override your decision.
+        lowest,
+        /// Runs after `lowest`.
+        low,
+        /// The default.
+        normal,
+        /// Runs after `normal`.
+        high,
+        /// Runs last among handlers that may still cancel or modify the event.
+        highest,
+        /// Sees the final state. A `monitor` handler can neither cancel nor modify the event; its outcome is ignored.
+        monitor,
+    }
+
+    /// Errors returned by host functions.
+    variant api-error {
+        /// The mod lacks the permission named in the payload (for example `players:kick`).
+        not-permitted(string),
+        /// An argument was malformed; the payload says which one and why.
+        invalid-argument(string),
+        /// A size or count limit was hit (key too long, too many tasks, ...); the payload names the limit.
+        limit-exceeded(string),
+        /// The handle refers to something that no longer exists (for example a player who left).
+        stale-handle,
+        /// The function is not available on this side or in this host version.
+        unsupported,
+        /// The host failed for a reason the mod cannot fix; the payload is a human readable message.
+        internal(string),
+    }
+}

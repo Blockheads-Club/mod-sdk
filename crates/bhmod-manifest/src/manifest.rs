@@ -287,6 +287,17 @@ pub struct BlockDecl {
     /// Mining hardness (>= 0).
     #[serde(default)]
     pub hardness: Option<f64>,
+    /// (API 0.3.2) The vanilla block this one is a variant of (`cobblestone`, `red-bricks`, ...: see
+    /// [`crate::content::BASE_TILES`]). A variant block is a vanilla block of that type that carries the variant's id
+    /// in its tile; physics, light and fluids are the base block's. Needed to place the block with the content API.
+    #[serde(default)]
+    pub base: Option<String>,
+    /// (API 0.3.2) What mining the block gives instead of the base block: the key of an item of this mod.
+    #[serde(default)]
+    pub drops: Option<String>,
+    /// (API 0.3.2) Display name per language.
+    #[serde(default)]
+    pub name: Localized,
 }
 
 /// A new item.
@@ -516,6 +527,17 @@ impl Manifest {
         for b in &self.content.blocks {
             if b.hardness.is_some_and(|h| !h.is_finite() || h < 0.0) {
                 v.push(Issue::new("content", format!("hardness of `{}` must be a finite number >= 0", b.key)));
+            }
+            check_localized(v, &format!("content `{}` name", b.key), &b.name, false, 64);
+            if let Some(base) = &b.base {
+                if crate::content::base_tile(base).is_none() {
+                    v.push(Issue::new("content", format!("base `{base}` of `{}` is not a known vanilla block", b.key)));
+                }
+            }
+            if let Some(drops) = &b.drops {
+                if !self.content.items.iter().any(|i| &i.key == drops) {
+                    v.push(Issue::new("content", format!("drops `{drops}` of `{}` is not an item of this mod", b.key)));
+                }
             }
         }
         for i in &self.content.items {

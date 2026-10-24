@@ -617,6 +617,16 @@ pub mod v03 {
             let id = self.player_id(&p)?;
             Ok(self.api()?.content_unequip(&id, &slot).map_err(api_error))
         }
+        fn give_item(&mut self, p: Resource<PlayerRes>, key: String, count: u32) -> R<Result<(), types::ApiError>> {
+            let id = self.player_id(&p)?;
+            Ok(self.api()?.content_give_item(&id, &key, count).map_err(api_error))
+        }
+        fn place_block(&mut self, tx: i32, ty: i32, key: String) -> R<Result<(), types::ApiError>> {
+            Ok(self.api()?.content_place_block(tx, ty, &key).map_err(api_error))
+        }
+        fn block_at(&mut self, tx: i32, ty: i32) -> R<Option<String>> {
+            Ok(self.api()?.content_block_at(tx, ty))
+        }
     }
 }
 

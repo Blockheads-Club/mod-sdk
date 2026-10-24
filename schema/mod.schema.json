@@ -99,7 +99,10 @@
             "properties": {
               "key": { "$ref": "#/$defs/contentKey" },
               "texture": { "$ref": "#/$defs/texture" },
-              "hardness": { "type": "number", "minimum": 0 }
+              "hardness": { "type": "number", "minimum": 0 },
+              "base": { "type": "string", "pattern": "^[a-z0-9-]{3,32}$", "description": "The vanilla block it is a variant of (see the BASE_TILES table)." },
+              "drops": { "$ref": "#/$defs/contentKey" },
+              "name": { "$ref": "#/$defs/localized64" }
             }
           }
         },

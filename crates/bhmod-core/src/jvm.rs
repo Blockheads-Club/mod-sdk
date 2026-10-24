@@ -474,6 +474,10 @@ fn unsigned(a: &[Value], i: usize) -> Result<u32, String> {
     u32::try_from(int(a, i)?).map_err(|_| format!("argument {i} is out of range"))
 }
 
+fn signed(a: &[Value], i: usize) -> Result<i32, String> {
+    i32::try_from(int(a, i)?).map_err(|_| format!("argument {i} is out of range"))
+}
+
 fn flag(a: &[Value], i: usize) -> Result<bool, String> {
     match arg(a, i)? {
         Value::Bool(b) => Ok(*b),
@@ -750,6 +754,13 @@ fn call_host(h: &mut dyn HostApi, f: &str, a: &[Value]) -> Result<Value, String>
         }),
         "content.equip" => api_result(h.content_equip(text(a, 0)?, text(a, 1)?), |()| Value::Null),
         "content.unequip" => api_result(h.content_unequip(text(a, 0)?, text(a, 1)?), |()| Value::Null),
+        "content.give-item" => {
+            api_result(h.content_give_item(text(a, 0)?, text(a, 1)?, unsigned(a, 2)?), |()| Value::Null)
+        }
+        "content.place-block" => {
+            api_result(h.content_place_block(signed(a, 0)?, signed(a, 1)?, text(a, 2)?), |()| Value::Null)
+        }
+        "content.block-at" => opt_text(h.content_block_at(signed(a, 0)?, signed(a, 1)?)),
 
         "ui.set-widget" => api_result(h.ui_set_widget(text(a, 0)?, widget_of(arg(a, 1)?)?), |()| Value::Null),
         "ui.remove-widget" => Value::Bool(h.ui_remove_widget(text(a, 0)?)),
@@ -1345,6 +1356,15 @@ mod tests {
         fn content_unequip(&mut self, id: &str, slot: &str) -> Result<(), ApiError> {
             self.res(&format!("unequip {id} {slot}"), ())
         }
+        fn content_give_item(&mut self, id: &str, key: &str, count: u32) -> Result<(), ApiError> {
+            self.res(&format!("give {id} {key} {count}"), ())
+        }
+        fn content_place_block(&mut self, x: i32, y: i32, key: &str) -> Result<(), ApiError> {
+            self.res(&format!("place {x} {y} {key}"), ())
+        }
+        fn content_block_at(&mut self, x: i32, y: i32) -> Option<String> {
+            (x == 3 && y == -4).then(|| "m:brick".to_string())
+        }
         fn ui_toast(&mut self, text: &str) -> Result<(), ApiError> {
             self.res(&format!("toast {text}"), ())
         }
@@ -1481,6 +1501,15 @@ mod tests {
         assert_eq!(call(&mut h, "content.equip", &[t("p"), t("m:hat")]), ok(Value::Null));
         assert_eq!(call(&mut h, "content.unequip", &[t("p"), t("hat")]), ok(Value::Null));
         assert!(h.calls.contains(&"equip p m:hat".to_string()));
+        assert_eq!(call(&mut h, "content.give-item", &[t("p"), t("m:lamp"), Value::Int(3)]), ok(Value::Null));
+        assert!(h.calls.contains(&"give p m:lamp 3".to_string()));
+        assert_eq!(
+            call(&mut h, "content.place-block", &[Value::Int(1), Value::Int(-2), t("m:brick")]),
+            ok(Value::Null)
+        );
+        assert!(h.calls.contains(&"place 1 -2 m:brick".to_string()));
+        assert_eq!(call(&mut h, "content.block-at", &[Value::Int(3), Value::Int(-4)]), t("m:brick"));
+        assert_eq!(call(&mut h, "content.block-at", &[Value::Int(0), Value::Int(0)]), Value::Null);
         assert!(call_host(&mut h, "content.id-of", &[t("sound"), t("m:hat")]).unwrap_err().contains("content kind"));
         assert!(call_host(&mut h, "content.key-of", &[t("cosmetic"), Value::Int(-1)]).is_err());
     }

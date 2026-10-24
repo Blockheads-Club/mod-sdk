@@ -1,0 +1,16 @@
+schema = 1
+id = "bad"
+version = "0.1.0"
+name = { en = "Bad" }
+authors = ["me"]
+license = "MIT"
+api = "^0.3.2"
+
+[sides]
+client = true
+
+[entry]
+client = { runtime = "lua", path = "client/main.luau" }
+
+[content]
+blocks = [{ key = "bad:b", texture = "assets/b.png", base = "Red Bricks" }]

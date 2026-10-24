@@ -1,0 +1,313 @@
+package blockheads:api@0.3.1;
+
+/// Game events with priorities and cancellation.
+///
+/// A mod subscribes with `subscribe`; the host then calls the exported `guest.handle-event` once per event and
+/// subscription. Handlers run on the game / server main thread, one at a time.
+interface events {
+    use types.{mod-id, priority, value, api-error, pos};
+    use players.{player};
+
+    /// Identifies one subscription of the calling mod.
+    type subscription = u32;
+
+    /// The built-in events. Cases are only ever appended (0.1: player-join .. world-save; 0.2: player-pre-login ..
+    /// player-move).
+    enum event-kind {
+        /// A player finished joining (after approval and the world summary). Server only.
+        player-join,
+        /// A player left or was kicked. Server only.
+        player-quit,
+        /// A chat message, before it is shown or broadcast. Cancellable; the text can be replaced.
+        chat,
+        /// A `/command` line, before any command handler runs. Cancellable (cancel = swallow the command).
+        command,
+        /// One world step (0.2 s on the server). Fires after the world update.
+        tick,
+        /// The world finished loading; world functions are usable from now on.
+        world-loaded,
+        /// The world is being saved (fires before and after, see `save-phase`).
+        world-save,
+        /// (0.2) A player passed every vanilla join check and is about to be approved. Cancellable: the player is
+        /// rejected with `reject-reason` (vanilla clients show their own text for it). Server only.
+        player-pre-login,
+        /// (0.2) A player places a block or item into a tile. Cancellable: the tile stays as it is and the client is
+        /// resynced exactly as for a protected tile. Server only.
+        block-place,
+        /// (0.2) A player removes a block, its contents, water or a back wall. Cancellable (same resync). Server only.
+        block-break,
+        /// (0.2) A tile changed, by a player or by the simulation (growth, physics, NPCs). Monitor only: the outcome
+        /// is ignored because cancelling simulation changes would desync clients. Server only.
+        block-changed,
+        /// (0.2) A player places a workbench or an interaction object (chest, sign, door, bed, ...). Cancellable.
+        /// Server only.
+        object-place,
+        /// (0.2) A blockhead is about to take damage. Cancellable; the amount can be replaced. Server only.
+        damage,
+        /// (0.2) A blockhead died. Server only.
+        death,
+        /// (0.2) A player's blockhead entered another tile. Server only.
+        player-move,
+    }
+
+    /// Fired as `player-join`.
+    record player-join-event {
+        player: borrow<player>,
+    }
+
+    /// Fired as `player-quit`.
+    record player-quit-event {
+        player: borrow<player>,
+        /// True when the player was kicked or banned rather than leaving.
+        was-kick: bool,
+    }
+
+    /// Fired as `chat`. The handler may cancel the message or return replacement text in its outcome.
+    record chat-event {
+        player: borrow<player>,
+        /// The message after the server's profanity filter and after earlier handlers' changes.
+        text: string,
+        /// True if an earlier handler cancelled it.
+        cancelled: bool,
+    }
+
+    /// Who issued a command.
+    variant command-sender {
+        /// The server console (or the host app's console box).
+        console,
+        /// A player in chat.
+        player(borrow<player>),
+    }
+
+    /// Fired as `command`.
+    record command-event {
+        sender: command-sender,
+        /// The command name without the leading `/`, lower-cased.
+        name: string,
+        /// The rest of the line split on spaces.
+        args: list<string>,
+        /// The full line as typed, including the `/`.
+        raw: string,
+        cancelled: bool,
+    }
+
+    /// Fired as `tick`.
+    record tick-event {
+        /// Steps since the world was loaded, starting at 1.
+        tick: u64,
+        /// Step length in seconds (0.2 on the server).
+        dt: f32,
+    }
+
+    /// Fired as `world-loaded`.
+    record world-loaded-event {
+        /// The world's display name.
+        world-name: string,
+        /// The world's save id (directory name on the server).
+        world-id: string,
+    }
+
+    /// Before or after a save.
+    enum save-phase {
+        pre,
+        post,
+    }
+
+    /// Fired as `world-save`. Flush your storage on `pre`.
+    record world-save-event {
+        phase: save-phase,
+    }
+
+    /// (0.2) Vanilla rejection reasons a `player-pre-login` handler may choose (the 0x26 reason byte in brackets).
+    enum reject-reason {
+        /// [3] The client is too old.
+        client-too-old,
+        /// [5] The server is full.
+        server-full,
+        /// [6] Blacklisted.
+        blacklisted,
+        /// [7] Not on the whitelist.
+        not-whitelisted,
+        /// [10] Wrong password.
+        incorrect-password,
+        /// [11] Kicked. The default when a handler cancels without choosing.
+        kicked,
+        /// [12] Banned.
+        banned,
+        /// [14] Invalid user name.
+        invalid-username,
+        /// [15] The server is still loading.
+        still-loading,
+    }
+
+    /// (0.2) Fired as `player-pre-login`. The player is not online yet, so it is identified by id, not by handle.
+    record player-pre-login-event {
+        /// The player's id (the vanilla `playerID`).
+        player-id: string,
+        /// The alias the player joins with.
+        alias: string,
+        cancelled: bool,
+        /// The reason sent if the event ends up cancelled (set it with the `reject-reason` mutation).
+        reason: reject-reason,
+    }
+
+    /// (0.2) Fired as `block-place`.
+    record block-place-event {
+        player: borrow<player>,
+        /// The target tile.
+        at: pos,
+        /// The item type being placed (vanilla item ids).
+        item: u32,
+        /// Item data A (for example the paint colour or rotation).
+        data-a: u16,
+        /// Item data B.
+        data-b: u16,
+        cancelled: bool,
+    }
+
+    /// (0.2) What a `block-break` removes.
+    enum break-layer {
+        /// The tile, its contents or water.
+        block,
+        /// The back wall.
+        back-wall,
+    }
+
+    /// (0.2) Fired as `block-break`.
+    record block-break-event {
+        player: borrow<player>,
+        at: pos,
+        layer: break-layer,
+        /// The tile type before the removal.
+        tile: u32,
+        cancelled: bool,
+    }
+
+    /// (0.2) Fired as `block-changed` (monitor only).
+    record block-changed-event {
+        at: pos,
+        /// The new tile type.
+        tile: u32,
+        /// The player who caused the change, when known.
+        player: option<borrow<player>>,
+    }
+
+    /// (0.2) What an `object-place` places.
+    enum object-kind {
+        /// A workbench / crafting station; `item` is the workbench type.
+        workbench,
+        /// An interaction object (chest, sign, door, bed, ...); `item` is its item type.
+        interaction-object,
+    }
+
+    /// (0.2) Fired as `object-place`.
+    record object-place-event {
+        player: borrow<player>,
+        at: pos,
+        object: object-kind,
+        item: u32,
+        cancelled: bool,
+    }
+
+    /// (0.2) Fired as `damage`.
+    record damage-event {
+        /// The owner of the damaged blockhead.
+        player: option<borrow<player>>,
+        /// The blockhead's unique id.
+        blockhead: u64,
+        /// The damage (1.0 = a full health bar) after earlier handlers' changes, before armour and world rules.
+        amount: f32,
+        /// The attacking player for PvP damage.
+        attacker: option<borrow<player>>,
+        cancelled: bool,
+    }
+
+    /// (0.2) Fired as `death`.
+    record death-event {
+        /// The owner of the blockhead.
+        player: option<borrow<player>>,
+        /// The blockhead's unique id.
+        blockhead: u64,
+    }
+
+    /// (0.2) Fired as `player-move`.
+    record player-move-event {
+        player: borrow<player>,
+        %from: pos,
+        to: pos,
+    }
+
+    /// A custom event fired by a mod with `fire-custom`.
+    record custom-event {
+        /// Namespaced name, `<mod-id>:<name>`.
+        name: string,
+        /// The mod that fired it.
+        source: mod-id,
+        /// Canonical CBOR payload; its shape is documented by the firing mod (usually in its `wit/`).
+        payload: value,
+        cancelled: bool,
+    }
+
+    /// One event delivered to `guest.handle-event`.
+    variant event {
+        player-join(player-join-event),
+        player-quit(player-quit-event),
+        chat(chat-event),
+        command(command-event),
+        tick(tick-event),
+        world-loaded(world-loaded-event),
+        world-save(world-save-event),
+        custom(custom-event),
+        /// (0.2)
+        player-pre-login(player-pre-login-event),
+        /// (0.2)
+        block-place(block-place-event),
+        /// (0.2)
+        block-break(block-break-event),
+        /// (0.2)
+        block-changed(block-changed-event),
+        /// (0.2)
+        object-place(object-place-event),
+        /// (0.2)
+        damage(damage-event),
+        /// (0.2)
+        death(death-event),
+        /// (0.2)
+        player-move(player-move-event),
+    }
+
+    /// A change a handler wants to make to a mutable event.
+    variant mutation {
+        /// Replace the chat text (only for `chat`).
+        chat-text(string),
+        /// Replace the custom payload (only for `custom`).
+        custom-payload(value),
+        /// (0.2) The rejection reason (only for `player-pre-login`).
+        reject-reason(reject-reason),
+        /// (0.2) The damage amount, finite and >= 0 (only for `damage`).
+        damage-amount(f32),
+    }
+
+    /// What a handler returns. Ignored for `monitor` handlers and for events that are not cancellable.
+    record outcome {
+        /// The new cancelled state. Returning `false` on a cancelled event un-cancels it.
+        cancelled: bool,
+        /// An optional change; a mutation that does not fit the event is ignored with a warning.
+        mutation: option<mutation>,
+    }
+
+    /// Subscribes to a built-in event. `ignore-cancelled` skips this handler while the event is cancelled.
+    subscribe: func(kind: event-kind, priority: priority, ignore-cancelled: bool) -> result<subscription, api-error>;
+
+    /// Subscribes to a custom event by its full name (`<mod-id>:<name>`). Any mod's events may be subscribed.
+    subscribe-custom: func(name: string, priority: priority, ignore-cancelled: bool) -> result<subscription, api-error>;
+
+    /// Removes a subscription. Returns false if it did not exist.
+    unsubscribe: func(sub: subscription) -> bool;
+
+    /// Fires a custom event. `name` must start with the caller's mod id and a colon. Listeners run synchronously
+    /// with the normal priority rules; the result is true if the event ended up cancelled. Handlers of mods that
+    /// are on the call stack (including the caller) get the event after the outermost call returns, with their
+    /// outcome ignored.
+    fire-custom: func(name: string, payload: value) -> result<bool, api-error>;
+}

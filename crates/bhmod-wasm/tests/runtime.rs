@@ -64,7 +64,7 @@ fn tour_calls_every_import() {
     let log = b.log_text();
     assert_eq!(h.mods()[0].state, ModState::Enabled, "{log}");
     for line in [
-        "api = \"0.3.1\"",
+        "api = \"0.3.2\"",
         "id = \"tour\"",
         "version = \"1.2.3\"",
         "side = Side::Server",
@@ -342,7 +342,7 @@ fn bad_components_are_refused() {
     // A component without the guest export.
     f.files.insert("server/missing.wasm".into(), b"(component)".to_vec());
     let e = rt.instantiate("m", &f, LIMITS).err().unwrap();
-    assert!(e.contains("no exported instance named `blockheads:api/guest@0.3.1`"), "{e}");
+    assert!(e.contains("no exported instance named `blockheads:api/guest@0.3.2`"), "{e}");
 }
 
 #[test]
@@ -515,7 +515,7 @@ fn old_components(old_wasm: Vec<u8>) {
         assert_eq!(info.state, ModState::Enabled, "{}: {log}", info.id);
     }
     for line in [
-        "old: api = (\"0.3.1\", \"old\", \"1.0.0\", Side::Server, \"fake-host 1.0\")",
+        "old: api = (\"0.3.2\", \"old\", \"1.0.0\", Side::Server, \"fake-host 1.0\")",
         "[trace] old: lvl",
         "old: p = (\"p1\", \"ALICE\", true, Role::Player, Ok(()), Ok(()))",
         "old: find = Some(\"p1\")",
@@ -592,23 +592,33 @@ fn content_imports() {
     fs::write(d.join("assets/cap.png"), include_bytes!("../../bhmod-core/tests/cap.png")).unwrap();
     let toml = WASM_TOML
         .replace("ID", "gear")
-        .replace("api = \"^0.1\"", "api = \"^0.3\"")
+        .replace("api = \"^0.1\"", "api = \"^0.3.2\"")
         .replace("client = false", "client = true")
         .replace("[entry]\n", "[entry]\nclient = { runtime = \"wasm\", path = \"client/mod.wasm\" }\n");
     fs::write(
         d.join("mod.toml"),
         format!(
-            "{toml}[content]\ncosmetics = [{{ key = \"gear:cap\", slot = \"hat\", texture = \"assets/cap.png\" }}]\n"
+            "{toml}[content]\ncosmetics = [{{ key = \"gear:cap\", slot = \"hat\", texture = \"assets/cap.png\" }}]\n\
+             items = [{{ key = \"gear:lamp\", texture = \"assets/cap.png\" }}]\n\
+             blocks = [{{ key = \"gear:brick\", texture = \"assets/cap.png\", base = \"red-bricks\" }}]\n"
         ),
     )
     .unwrap();
     let (b, mut h) = host(tmp.path(), WasmConfig::default());
     b.join("p1", "ALICE", Role::Player);
     b.cosmetic_ids.borrow_mut().push(("gear:cap".into(), 1));
+    b.item_ids.borrow_mut().push(("gear:lamp".into(), 1107));
+    b.block_ids.borrow_mut().push(("gear:brick".into(), 2));
     h.enable("World", "wid");
     let log = b.log_text();
     assert_eq!(h.mods()[0].state, ModState::Enabled, "{log}");
+    assert_eq!(*b.given.borrow(), [("p1".to_string(), 1107, 2)]);
+    assert_eq!(*b.placed.borrow(), [(4, -5, 2)]);
     for line in [
+        "gear: give-item = Ok(())",
+        "gear: give-other = Err(\"invalid argument",
+        "gear: place-block = Ok(())",
+        "gear: block-at = (Some(\"gear:brick\"), None)",
         "gear: cosmetics = [CosmeticInfo { key: \"gear:cap\", mod-id: \"gear\", slot: \"hat\", id: Some(1) }]",
         "gear: id-of = (Some(1), None)",
         "gear: key-of = (Some(\"gear:cap\"), None)",
@@ -668,7 +678,7 @@ fn newer_than_0_2_components(old_wasm: Vec<u8>) {
         assert_eq!(info.state, ModState::Enabled, "{}: {log}", info.id);
     }
     for line in [
-        "old: api = (\"0.3.1\", \"old\"",
+        "old: api = (\"0.3.2\", \"old\"",
         "old: pos = (Some(Pos { x: 7, y: 9 }), true, Some(\"p1\"))",
         "old: call = Ok([129, 1])",
         "old: send = Ok(())",

@@ -121,6 +121,29 @@ fn content_forces_client_required() {
 }
 
 #[test]
+fn variant_block_declarations() {
+    let m = parse(&format!(
+        "{CLIENT}\n[content]\nblocks = [{{ key = \"demo:brick\", texture = \"assets/b.png\", base = \"red-bricks\", \
+         drops = \"demo:gem\", name = {{ en = \"Brick\" }} }}]\n\
+         items = [{{ key = \"demo:gem\", texture = \"assets/gem.png\" }}]\n"
+    ))
+    .unwrap();
+    let b = &m.content.blocks[0];
+    assert_eq!(
+        (b.base.as_deref(), b.drops.as_deref(), b.name["en"].as_str()),
+        (Some("red-bricks"), Some("demo:gem"), "Brick")
+    );
+    use bhmod_manifest::content::{base_tile, base_tile_of, BASE_TILES};
+    assert_eq!(base_tile("red-bricks").map(|t| (t.tile_type, t.item_type)), Some((11, 0x402)));
+    assert_eq!(base_tile_of(11).map(|t| t.slug), Some("red-bricks"));
+    assert!(base_tile("lava").is_none() && base_tile_of(31).is_none());
+    // Slugs and types are unique.
+    for (i, t) in BASE_TILES.iter().enumerate() {
+        assert!(BASE_TILES[i + 1..].iter().all(|o| o.slug != t.slug && o.tile_type != t.tile_type));
+    }
+}
+
+#[test]
 fn toml_errors() {
     let errs = Manifest::parse("this is not toml").unwrap_err();
     assert_eq!(errs.len(), 1);
@@ -254,6 +277,21 @@ fn content() {
     );
     has(
         &content(CLIENT, "items = [{ key = \"demo:gem\", texture = \"assets/gem.png\", name = { tr = \"Taş\" } }]"),
+        "needs an `en`",
+    );
+    has(
+        &content(CLIENT, "blocks = [{ key = \"demo:lamp\", texture = \"assets/lamp.png\", base = \"lava\" }]"),
+        "is not a known vanilla block",
+    );
+    has(
+        &content(CLIENT, "blocks = [{ key = \"demo:lamp\", texture = \"assets/lamp.png\", drops = \"demo:gem\" }]"),
+        "is not an item of this mod",
+    );
+    has(
+        &content(
+            CLIENT,
+            "blocks = [{ key = \"demo:lamp\", texture = \"assets/lamp.png\", name = { tr = \"Lamba\" } }]",
+        ),
         "needs an `en`",
     );
     has(

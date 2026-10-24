@@ -17,7 +17,7 @@ pub mod rules;
 pub use manifest::Manifest;
 
 /// The `blockheads:api` version this SDK describes.
-pub const API_VERSION: &str = "0.3.1";
+pub const API_VERSION: &str = "0.3.2";
 
 /// Every `blockheads:api` version a host of this SDK serves (oldest first).
 ///
@@ -27,8 +27,10 @@ pub const API_VERSION: &str = "0.3.1";
 /// working on a 0.2 host; a mod that uses 0.2 additions declares `api = "^0.2"`. From 1.0 on, plain semver applies.
 ///
 /// 0.3.1 is a patch release that only adds (cross-side service calls); components built for 0.3.0 link and run
-/// unchanged. A mod that uses the addition declares `api = "^0.3.1"`.
-pub const SUPPORTED_API_VERSIONS: &[&str] = &["0.1.0", "0.2.0", "0.3.0", "0.3.1"];
+/// unchanged. A mod that uses the addition declares `api = "^0.3.1"`. 0.3.2 likewise only adds (`content.give-item`,
+/// `place-block`, `block-at`, and the `base`, `drops` and `name` of `[[content.blocks]]`); a mod that uses them
+/// declares `api = "^0.3.2"`.
+pub const SUPPORTED_API_VERSIONS: &[&str] = &["0.1.0", "0.2.0", "0.3.0", "0.3.1", "0.3.2"];
 
 /// True when the requirement `req` (from `mod.toml` `api`) matches a version in [`SUPPORTED_API_VERSIONS`].
 pub fn api_supported(req: &semver::VersionReq) -> bool {

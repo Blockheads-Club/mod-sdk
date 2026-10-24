@@ -855,6 +855,17 @@ impl LuaInstance {
             let id = player_arg(&who)?;
             with_host(&s, |h| h.content_unequip(&id, &slot))?.map_err(api_err)
         });
+        let s = sh.clone();
+        b.func(&content, "give_item", move |_, (who, key, count): (Value, String, Option<u32>)| {
+            let id = player_arg(&who)?;
+            with_host(&s, |h| h.content_give_item(&id, &key, count.unwrap_or(1)))?.map_err(api_err)
+        });
+        let s = sh.clone();
+        b.func(&content, "place_block", move |_, (x, y, key): (i32, i32, String)| {
+            with_host(&s, |h| h.content_place_block(x, y, &key))?.map_err(api_err)
+        });
+        let s = sh.clone();
+        b.func(&content, "block_at", move |_, (x, y): (i32, i32)| with_host(&s, |h| h.content_block_at(x, y)));
         bh.set("content", content)?;
 
         let events = lua.create_table()?;

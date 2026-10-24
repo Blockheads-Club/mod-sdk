@@ -1,4 +1,4 @@
-package blockheads:api@0.3.1;
+package blockheads:api@0.3.2;
 
 /// Facts about the running host and the calling mod.
 interface host {

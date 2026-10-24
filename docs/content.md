@@ -1,12 +1,12 @@
-# Content: cosmetics (milestone M8, part 1)
+# Content: cosmetics, items and variant blocks (milestone M8)
 
 A mod declares new content in `[content]` of `mod.toml` by string key, `<mod-id>:<name>`. The server gives every
 key a number for its world ([registry in the 0xBC protocol](protocol-0xbc.md#content-registry)), the mod's client half
 ships the textures in `assets/`, and the clients draw them. Any mod with `[content]` is **client-required**: players
 install it (the join prompt downloads it), or they cannot join.
 
-This part covers **cosmetics**. Blocks and items are declared today (they get ids) but the clients do not draw them
-yet; see the resume note `notes/resume/m8-content.md` of the project for the plan.
+This page covers **cosmetics** (re-skins of what a player wears), **items** (real new `ItemType`s) and **variant
+blocks** (a vanilla block carrying a variant id). Items and blocks are described at the end.
 
 ## Declaring a cosmetic
 
@@ -70,3 +70,69 @@ cosmetics = [
 
 A mod can equip only keys it declares itself (`not-permitted` otherwise); a stale player handle gives `stale-handle`.
 On a client `equip` and `unequip` return `unsupported`.
+
+## Items (API 0.3.2)
+
+```toml
+[content]
+items = [
+  { key = "decor:lamp", texture = "assets/lamp.png", name = { en = "Brass lamp", tr = "Pirinç lamba" } },
+]
+```
+
+An item is a **real `ItemType`**: the world gives the key an id from 1107 up (`bh.content.id_of("item", key)`), the id
+is stored in inventories, chests and the save like any vanilla item, and stacks like one. What makes it work:
+
+- **Only on sessions where every peer runs the mod.** Mods with `[content]` are client-required, so a vanilla
+  client cannot join the server at all, and the server never hands out a mod item id to anybody else.
+- **Names.** Both clients ask the mod table for the name wherever the game builds an item's title (inventory, chests,
+  crafting, trade, tooltips). `name` is shown in capitals like the game's own names, in the player's language, else
+  `en`; an item without `name` shows its key's name part (`decor:brass-lamp` shows `BRASS LAMP`).
+- **Icons.** `texture` is a square PNG (up to 256 x 256). The clients copy it into a free cell of the game's item atlas
+  (`Items.png`, about 167 cells are free), scaled to the atlas's cell size.
+- **Behaviour on the server** is the mod's: it can `bh.content.give_item(player, key, count)` (a command, a shop, a
+  reward), and a mod may react to inventory events. A mod item is not placeable, not wearable, has no recipe and does
+  nothing when used by itself: the vanilla rules do not know it. A variant block's `drops` is the way to get one by
+  mining.
+
+## Variant blocks (API 0.3.2)
+
+```toml
+[content]
+blocks = [
+  { key = "decor:warm-brick", texture = "assets/warm-brick.png", base = "red-bricks", drops = "decor:wall-plaque",
+    name = { en = "Warm brick" } },
+]
+```
+
+A variant block is a **vanilla block of its `base` type that also carries the variant id** in the 16 spare bytes of
+its tile (`Tile.padding`, see [`bhmod_content::variant`](../crates/bhmod-content/src/variant.rs)): a magic, the id, the
+base `typeIndex`, a layer, 2 bytes of mod data and a checksum over the bytes and the tile's coordinates. Physics,
+light, fluids and everything else are the base block's, so a world with variant blocks loads in vanilla (they show as
+their base block). The tile bytes travel in saves and in the block packet like every other tile byte.
+
+- **The server owns the record.** It clears it on every change of a tile's block type (mining, placing, the generator),
+  and a record is valid only while the tile still has the base type and the coordinates it was written for.
+- `bh.content.place_block(x, y, key)` puts the variant at a tile; `bh.content.block_at(x, y)` reads it. Mining a
+  variant gives `drops` (an item of the same mod) instead of the base block's item.
+- **Clients** draw the variant's `texture` (a square PNG, one cell of the tile atlas, scaled to its cell size) where
+  the record is valid.
+- **Off by default.** The server writes variant records only when `mods.variant-blocks = true` is set in its
+  configuration, until the check that no vanilla client path reads or clears the tile bytes has been done on a device
+  (see `notes/mod-research/content-ids.md` section 5.3).
+
+`base` is one of: `wood`, `cobblestone`, `red-bricks`, `limestone-block`, `marble-block`, `sandstone-block`,
+`red-marble-block`, `glass`, `gold-block`, `lapis-block`, `basalt-block`, `copper-block`, `tin-block`, `bronze-block`,
+`iron-block`, `steel-block`, `black-glass`, `plaster` ([`BASE_TILES`](../crates/bhmod-manifest/src/content.rs)).
+
+Example: [`examples/decor-items`](../examples/decor-items).
+
+### API (blockheads:api 0.3.2)
+
+| WIT `content` | Luau | |
+| --- | --- | --- |
+| `give-item(who, key, count)` | `bh.content.give_item(player, key, count?)` | Gives a player one of **your mod's** items (1 to 64). |
+| `place-block(x, y, key)` | `bh.content.place_block(x, y, key)` | Puts **your mod's** variant block at a loaded tile. |
+| `block-at(x, y) -> option<string>` | `bh.content.block_at(x, y)` | The variant block key at a tile. |
+
+Clients get `unsupported` from `give-item` and `place-block`.

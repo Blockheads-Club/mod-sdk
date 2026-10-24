@@ -37,4 +37,26 @@ public interface Content {
      * Takes the cosmetic of `slot` off a player.
      */
     void unequip(club.blockheads.api.players.Player who, String slot);
+
+    /**
+     * (0.3.2) Gives a player `count` of one of the calling mod's items. The item is an ordinary inventory item with
+     * the id the world gave the key; only players who run the mod can use it. It goes into the inventory of the
+     * player's blockhead, or drops next to it when that is full. Other mods' keys give `not-permitted`, unknown keys
+     * `invalid-argument`, a player who left `stale-handle`; clients get `unsupported`.
+     */
+    void giveItem(club.blockheads.api.players.Player who, String key, long count);
+
+    /**
+     * (0.3.2) Replaces the block at tile `(tx, ty)` with one of the calling mod's variant blocks: the vanilla `base`
+     * block carrying the variant's id. Mining it gives the block's `drops` item (else the base block's own drop).
+     * A key without a `base`, other mods' keys, or unknown keys give `invalid-argument`/`not-permitted`; a tile
+     * that is not loaded gives `invalid-argument`; clients get `unsupported`.
+     */
+    void placeBlock(int tx, int ty, String key);
+
+    /**
+     * (0.3.2) The variant block at tile `(tx, ty)` as its key; `none` for a plain block, an unloaded tile, and on hosts
+     * that keep no registry.
+     */
+    String blockAt(int tx, int ty);
 }

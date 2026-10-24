@@ -338,7 +338,9 @@ pub mod players {
 
 /// Content ids and cosmetics (API 0.3).
 pub mod content {
-    pub use crate::wit::content::{cosmetics, equip, equipped, id_of, key_of, unequip, CosmeticInfo, Kind};
+    pub use crate::wit::content::{
+        block_at, cosmetics, equip, equipped, give_item, id_of, key_of, place_block, unequip, CosmeticInfo, Kind,
+    };
 }
 
 /// HUD widgets, toasts, notices and dialogs on the client (API 0.3). A host without UI (the server) answers every call

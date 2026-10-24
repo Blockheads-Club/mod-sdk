@@ -88,6 +88,27 @@ pub trait GameBridge {
         let _ = player;
         Vec::new()
     }
+    /// Gives a player `count` of item `item` (an `ItemType` of the registry's `items`, API 0.3.2). The mod host has
+    /// already checked that the item belongs to the calling mod. The default reports [`ApiError::Unsupported`].
+    fn give_item(&self, player: &str, item: u64, count: u32) -> Result<(), ApiError> {
+        let _ = (player, item, count);
+        Err(ApiError::Unsupported)
+    }
+
+    /// Replaces the block at `(x, y)` with variant block `block` (registry `blocks`, API 0.3.2). The mod host has
+    /// already checked that the block belongs to the calling mod and has a base. The default reports
+    /// [`ApiError::Unsupported`].
+    fn place_block(&self, x: i32, y: i32, block: u64) -> Result<(), ApiError> {
+        let _ = (x, y, block);
+        Err(ApiError::Unsupported)
+    }
+
+    /// The variant block id at `(x, y)` (API 0.3.2); `None` for a plain block or an unloaded tile.
+    fn block_at(&self, x: i32, y: i32) -> Option<u64> {
+        let _ = (x, y);
+        None
+    }
+
     /// Draws mod UI (API 0.3 `ui`; clients only). The command is already validated and limited
     /// ([`crate::ui`]); the default, for hosts without a UI such as the server, reports [`ApiError::Unsupported`].
     fn ui(&self, mod_id: &str, command: &UiCommand) -> Result<(), ApiError> {

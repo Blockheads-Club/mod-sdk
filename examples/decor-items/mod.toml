@@ -1,0 +1,27 @@
+schema = 1
+id = "decor-items"
+version = "0.1.0"
+name = { en = "Decor items", tr = "Dekor eşyaları" }
+description = { en = "Two new items (brass lamp, wall plaque) and a warm brick variant block. Type /decor to get the items and /warm to turn the block under you into a warm brick. Players need the mod; example content mod from the SDK." }
+authors = ["Blockheads Club"]
+license = "MIT OR Apache-2.0"
+homepage = "https://github.com/Blockheads-Club/mod-sdk"
+api = "^0.3.2"
+
+[sides]
+server = true
+client = true
+
+[entry]
+server = { runtime = "lua", path = "server/main.luau" }
+# Content needs a client half; there is nothing to run, the clients just draw the icons and textures.
+client = { runtime = "lua", path = "client/main.luau" }
+
+[content]
+items = [
+  { key = "decor-items:brass-lamp", texture = "assets/lamp.png", name = { en = "Brass lamp", tr = "Pirinç lamba" } },
+  { key = "decor-items:wall-plaque", texture = "assets/plaque.png", name = { en = "Wall plaque", tr = "Duvar levhası" } },
+]
+blocks = [
+  { key = "decor-items:warm-brick", texture = "assets/warm-brick.png", base = "red-bricks", drops = "decor-items:wall-plaque", name = { en = "Warm brick", tr = "Sıcak tuğla" } },
+]

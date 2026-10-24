@@ -56,7 +56,7 @@ pub use remote::{RemoteCall, RemoteCaller, RemoteError, RemoteLimits, RemoteTarg
 pub use runtime::{CallError, HostApi, Instance, Runtime};
 
 /// The `blockheads:api` version this host implements.
-pub const API_VERSION: &str = "0.3.1";
+pub const API_VERSION: &str = "0.3.2";
 
 /// The runtimes compiled into this build.
 pub fn default_runtimes() -> Vec<Box<dyn Runtime>> {

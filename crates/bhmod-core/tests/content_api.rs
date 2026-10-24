@@ -214,7 +214,109 @@ fn default_bridge_has_no_registry() {
     assert_eq!(b.content_key(ContentKind::Item, 1), None);
     assert_eq!(b.set_cosmetic("p", "hat", Some(1)), Err(ApiError::Unsupported));
     assert!(b.cosmetics_of("p").is_empty());
+    assert_eq!(b.give_item("p", 1107, 1), Err(ApiError::Unsupported));
+    assert_eq!(b.place_block(0, 0, 1), Err(ApiError::Unsupported));
+    assert_eq!(b.block_at(0, 0), None);
     assert_eq!(ContentKind::parse("item"), Some(ContentKind::Item));
     assert_eq!(ContentKind::parse("x"), None);
     assert_eq!(ContentKind::Block.name(), "block");
+}
+
+const DECOR: &str = "[content]\n\
+  items = [{ key = \"MID:lamp\", texture = \"assets/crown.png\", name = { en = \"Lamp\" } }]\n\
+  blocks = [{ key = \"MID:brick\", texture = \"assets/crown.png\", base = \"red-bricks\", drops = \"MID:lamp\" },\n\
+  { key = \"MID:plain\", texture = \"assets/crown.png\" }]\n";
+
+fn decor_mod(dir: &std::path::Path, id: &str, main: &str) {
+    let d = dir.join(id);
+    for side in ["server", "client"] {
+        fs::create_dir_all(d.join(side)).unwrap();
+        fs::write(d.join(format!("{side}/main.luau")), main).unwrap();
+    }
+    fs::create_dir_all(d.join("assets")).unwrap();
+    fs::write(d.join("assets/crown.png"), PNG).unwrap();
+    let toml = LUA_TOML
+        .replace("ID", id)
+        .replace("client = false", "client = true")
+        .replace("api = \"^0.1\"", "api = \"^0.3.2\"")
+        .replace("[entry]\n", "[entry]\nclient = { runtime = \"lua\", path = \"client/main.luau\" }\n");
+    fs::write(d.join("mod.toml"), format!("{toml}{}", DECOR.replace("MID", id))).unwrap();
+}
+
+#[test]
+fn items_and_blocks_through_the_bridge() {
+    let tmp = tempfile::tempdir().unwrap();
+    let main = r#"
+local mod = {}
+local function fails(f, what)
+    local ok, err = pcall(f)
+    assert(not ok and string.find(tostring(err), what, 1, true), tostring(err))
+end
+function mod.on_enable()
+    local p = bh.players.get("p1")
+    assert(bh.content.id_of("item", "decor:lamp") == 1107)
+    assert(bh.content.id_of("block", "decor:brick") == 3)
+    bh.content.give_item(p, "decor:lamp", 5)
+    bh.content.give_item(p, "decor:lamp")
+    fails(function() bh.content.give_item(p, "decor:lamp", 0) end, "limit exceeded")
+    fails(function() bh.content.give_item(p, "decor:lamp", 5000) end, "limit exceeded")
+    fails(function() bh.content.give_item(p, "decor:nothing", 1) end, "invalid argument")
+    fails(function() bh.content.give_item(p, "rival:lamp", 1) end, "not permitted")
+    fails(function() bh.content.give_item(p, "decor:brick", 1) end, "invalid argument")
+    fails(function() bh.content.give_item("p1", "decor:lamp", 1) end, "invalid argument: player")
+    assert(bh.content.block_at(10, 20) == nil)
+    bh.content.place_block(10, 20, "decor:brick")
+    assert(bh.content.block_at(10, 20) == "decor:brick")
+    fails(function() bh.content.place_block(1, 2, "decor:plain") end, "declares no base")
+    fails(function() bh.content.place_block(1, 2, "decor:nothing") end, "invalid argument")
+    fails(function() bh.content.place_block(1, 2, "rival:brick") end, "not permitted")
+    bh.log.info("decor ok")
+end
+return mod
+"#;
+    decor_mod(tmp.path(), "decor", main);
+    let rival = r#"local mod = {} function mod.on_enable() end return mod"#;
+    decor_mod(tmp.path(), "rival", rival);
+    let b = FakeBridge::new();
+    b.join("p1", "ALICE", Role::Player);
+    b.item_ids.borrow_mut().extend([("decor:lamp".to_string(), 1107)]);
+    b.block_ids.borrow_mut().extend([("decor:brick".to_string(), 3), ("decor:plain".to_string(), 4)]);
+    let mut o = HostOptions::new(tmp.path(), Side::Server);
+    o.budgets.hard = std::time::Duration::from_secs(3);
+    o.budgets.soft = o.budgets.hard;
+    o.budgets.step = o.budgets.hard;
+    let mut h = ModHost::load(o, b.clone());
+    h.enable("World", "wid");
+    assert!(b.has_log("decor ok"), "{}", b.log_text());
+    assert_eq!(*b.given.borrow(), [("p1".to_string(), 1107, 5), ("p1".to_string(), 1107, 1)]);
+    assert_eq!(*b.placed.borrow(), [(10, 20, 3)]);
+    // Clients cannot give or place.
+    let client = r#"
+local mod = {}
+function mod.on_enable()
+    local p = bh.players.get("p1")
+    for _, f in ipairs({
+        function() bh.content.give_item(p, "decor:lamp", 1) end,
+        function() bh.content.place_block(1, 2, "decor:brick") end,
+    }) do
+        local ok, err = pcall(f)
+        assert(not ok and string.find(tostring(err), "unsupported", 1, true), tostring(err))
+    end
+    assert(bh.content.block_at(10, 20) == nil)
+    bh.log.info("client decor ok")
+end
+return mod
+"#;
+    decor_mod(tmp.path(), "decor", client);
+    let b = FakeBridge::new();
+    b.join("p1", "ALICE", Role::Player);
+    b.item_ids.borrow_mut().extend([("decor:lamp".to_string(), 1107)]);
+    b.block_ids.borrow_mut().extend([("decor:brick".to_string(), 3), ("decor:plain".to_string(), 4)]);
+    let mut o = HostOptions::new(tmp.path(), Side::Client);
+    o.budgets.hard = std::time::Duration::from_secs(3);
+    o.budgets.soft = o.budgets.hard;
+    o.budgets.step = o.budgets.hard;
+    let mut h = ModHost::load(o, b.clone());
+    h.enable("World", "wid");
+    assert!(b.has_log("client decor ok"), "{}", b.log_text());
 }
