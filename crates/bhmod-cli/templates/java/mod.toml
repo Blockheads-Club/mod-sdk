@@ -20,3 +20,8 @@ server = { runtime = "jvm", path = "server/mod.jar" }
 # when its JVM feature is switched on and the owner grants `native` in mods.toml.
 native = true
 players = ["chat"]
+
+# Talk to client mods over the network (API 0.3.1): raise `api` to "^0.3.1", add `channels = true` above, and let
+# clients call a service of yours (add `wit/{{id}}.wit` describing it; `remote-methods` is optional, empty = all):
+# [provides]
+# services = [{ name = "{{id}}", version = "1.0.0", wit = "wit/{{id}}.wit", remote = true, remote-methods = ["hello"] }]

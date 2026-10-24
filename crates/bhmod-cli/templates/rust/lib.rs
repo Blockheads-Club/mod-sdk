@@ -27,6 +27,11 @@ impl Guest for Mod {
             console: true,
         })
         .map_err(|e| format!("{e:?}"))?;
+        // Offer a service to client mods: add `[provides] ... remote = true` to mod.toml (see there), then
+        //     blockheads::api::services::provide("{{id}}", "1.0.0").map_err(|e| format!("{e:?}"))?;
+        // and answer it in `call_service` below (arguments and result are canonical CBOR bytes).
+        // Calling a client mod's service: `services::call_remote(RemoteTarget::Player(..), ..)`; the answer arrives
+        // as the custom event `<mod-id>:service-result` (subscribe with `events::subscribe_custom`).
         log::log(Level::Info, "{{id}} enabled");
         Ok(())
     }
