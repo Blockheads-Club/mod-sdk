@@ -115,7 +115,8 @@
             "properties": {
               "key": { "$ref": "#/$defs/contentKey" },
               "texture": { "$ref": "#/$defs/texture" },
-              "name": { "$ref": "#/$defs/localized64" }
+              "name": { "$ref": "#/$defs/localized64" },
+              "plural": { "$ref": "#/$defs/localized64", "description": "Plural display name per language; a language without one shows `name`." }
             }
           }
         },

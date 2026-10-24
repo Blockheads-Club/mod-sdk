@@ -4,8 +4,8 @@ const MANIFEST: &str = "schema = 1\nid = \"decor\"\nversion = \"1.0.0\"\nname = 
     license = \"MIT\"\napi = \"^0.3\"\n[sides]\nclient = true\n[entry]\n\
     client = { runtime = \"lua\", path = \"client/main.luau\" }\n[content]\n\
     items = [\n\
-    { key = \"decor:lamp\", texture = \"assets/lamp.png\", name = { en = \"Brass lamp\", tr = \"Pirinç lamba\" } },\n\
-    { key = \"decor:wall-plate\", texture = \"assets/plate.png\" },\n\
+    { key = \"decor:lamp\", texture = \"assets/lamp.png\", name = { en = \"Brass lamp\", tr = \"Pirinç lamba\" }, plural = { en = \"Brass lamps\" } },\n\
+    { key = \"decor:wall-plate\", texture = \"assets/plate.png\", plural = { en = \"Wall plates\", tr = \"Duvar plakaları\" } },\n\
     { key = \"decor:unlisted\", texture = \"assets/unlisted.png\" },\n]\n\
     blocks = [\n\
     { key = \"decor:warm-brick\", texture = \"assets/brick.png\", base = \"red-bricks\", name = { en = \"Warm brick\" } },\n\
@@ -49,6 +49,20 @@ fn names_follow_the_language_then_english_then_the_key() {
     let only_tr: Localized = [("tr".to_string(), "x".to_string())].into();
     assert_eq!(pick_name(&only_tr, "de"), Some("x"));
     assert_eq!(pick_name(&Localized::new(), "en"), None);
+}
+
+#[test]
+fn plurals_fall_back_to_the_singular() {
+    let m = manifest();
+    let t = ItemTable::build(&registry(), [&m]);
+    assert_eq!(t.plural_name(1107, "en").as_deref(), Some("BRASS LAMPS"));
+    // The mod names the item in Turkish but has no Turkish plural: its own singular, not the English plural.
+    assert_eq!(t.plural_name(1107, "tr").as_deref(), Some("PIRINÇ LAMBA"));
+    // No name in German either: the English plural.
+    assert_eq!(t.plural_name(1107, "de").as_deref(), Some("BRASS LAMPS"));
+    assert_eq!(t.plural_name(1108, "tr").as_deref(), Some("DUVAR PLAKALARI"));
+    assert_eq!(t.plural_name(1108, "de").as_deref(), Some("WALL PLATES"));
+    assert_eq!(t.plural_name(1, "en"), None);
 }
 
 #[test]

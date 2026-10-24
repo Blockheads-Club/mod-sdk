@@ -52,6 +52,8 @@ pub struct ItemDef {
     pub texture: String,
     /// Display name per language.
     pub name: Localized,
+    /// Plural display name per language (may be empty).
+    pub plural: Localized,
 }
 
 impl ItemDef {
@@ -113,6 +115,7 @@ impl ItemTable {
                         mod_id: m.id.clone(),
                         texture: i.texture.clone(),
                         name: i.name.clone(),
+                        plural: i.plural.clone(),
                     },
                 );
             }
@@ -144,6 +147,16 @@ impl ItemTable {
             str::to_string,
         );
         Some(text.to_uppercase())
+    }
+
+    /// What the game shows where it asks for the plural of item `id` in `lang`: the declared `plural` in capitals;
+    /// when the mod has none for `lang` but has a singular name for it, that singular (the mod's own words beat
+    /// another language's plural); else the English plural, else the singular of [`ItemTable::display_name`].
+    pub fn plural_name(&self, id: u64, lang: &str) -> Option<String> {
+        let def = self.by_id.get(&id)?;
+        let own =
+            def.plural.get(lang).or_else(|| if def.name.contains_key(lang) { None } else { def.plural.get("en") });
+        own.map(|t| t.to_uppercase()).or_else(|| self.display_name(id, lang))
     }
 }
 

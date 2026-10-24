@@ -197,6 +197,18 @@ pub struct ServerHello {
     pub client_required: bool,
     /// Number of entries in the coming `MOD_LIST`.
     pub count: u64,
+    /// Players in the game and the server's capacity at the time of the answer (optional; older servers omit it
+    /// and older clients ignore it).
+    pub players: Option<PlayerCount>,
+}
+
+/// The optional player count of `SERVER_HELLO` (CBOR keys `players` and `maxPlayers`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PlayerCount {
+    /// Players in the game.
+    pub online: u32,
+    /// How many players the server takes.
+    pub capacity: u32,
 }
 
 /// Permissions of a listed mod, as shown in the accept dialog.
@@ -472,12 +484,19 @@ impl Message {
                 ("runtimes", texts(&h.runtimes)),
                 ("cached", Value::Array(h.cached.iter().map(hash).collect())),
             ]),
-            Message::ServerHello(s) => map(vec![
-                ("proto", Value::Uint(s.proto)),
-                ("modsHash", hash(&s.mods_hash)),
-                ("clientRequired", Value::Bool(s.client_required)),
-                ("count", Value::Uint(s.count)),
-            ]),
+            Message::ServerHello(s) => {
+                let mut e = vec![
+                    ("proto", Value::Uint(s.proto)),
+                    ("modsHash", hash(&s.mods_hash)),
+                    ("clientRequired", Value::Bool(s.client_required)),
+                    ("count", Value::Uint(s.count)),
+                ];
+                if let Some(p) = &s.players {
+                    e.push(("players", Value::Uint(u64::from(p.online))));
+                    e.push(("maxPlayers", Value::Uint(u64::from(p.capacity))));
+                }
+                map(e)
+            }
             Message::ListRequest => map(vec![]),
             Message::ModList(l) => map(vec![
                 ("mods", Value::Array(l.mods.iter().map(mod_info).collect())),
@@ -601,6 +620,7 @@ fn decode_cbor(op: Op, f: &Fields) -> Result<Message, Error> {
             mods_hash: f.hash("modsHash")?,
             client_required: f.bool("clientRequired")?,
             count: f.uint("count")?,
+            players: f.player_count()?,
         }),
         Op::ListRequest => Message::ListRequest,
         Op::ModList => Message::ModList(ModList {
@@ -797,6 +817,15 @@ impl Fields {
             Value::Bytes(b) => Ok(b.clone()),
             _ => Err(Error::Type(key)),
         }
+    }
+
+    /// `players` + `maxPlayers` of `SERVER_HELLO`: both or neither (a lone `maxPlayers` is ignored).
+    fn player_count(&self) -> Result<Option<PlayerCount>, Error> {
+        if self.get("players").is_none() {
+            return Ok(None);
+        }
+        let n = |key: &'static str| u32::try_from(self.uint(key)?).map_err(|_| Error::Type(key));
+        Ok(Some(PlayerCount { online: n("players")?, capacity: n("maxPlayers")? }))
     }
 
     fn opt_text(&self, key: &'static str) -> Result<Option<String>, Error> {

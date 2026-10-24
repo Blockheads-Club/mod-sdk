@@ -109,7 +109,7 @@ services = [{ name = "demo-svc", version = "1.0.0", wit = "wit/demo.wit" }]
 fn content_forces_client_required() {
     let m = parse(&format!(
         "{CLIENT}\n[content]\nblocks = [{{ key = \"demo:lamp\", texture = \"assets/lamp.png\", hardness = 1.5 }}]\n\
-         items = [{{ key = \"demo:gem\", texture = \"assets/gem.png\", name = {{ en = \"Gem\" }} }}]\n\
+         items = [{{ key = \"demo:gem\", texture = \"assets/gem.png\", name = {{ en = \"Gem\" }}, plural = {{ en = \"Gems\" }} }}]\n\
          cosmetics = [{{ key = \"demo:hat\", slot = \"hat\", texture = \"assets/hat.png\" }}]\n"
     ))
     .unwrap();
@@ -280,6 +280,13 @@ fn content() {
         "needs an `en`",
     );
     has(
+        &content(
+            CLIENT,
+            "items = [{ key = \"demo:gem\", texture = \"assets/gem.png\", plural = { tr = \"Taşlar\" } }]",
+        ),
+        "plural",
+    );
+    has(
         &content(CLIENT, "blocks = [{ key = \"demo:lamp\", texture = \"assets/lamp.png\", base = \"lava\" }]"),
         "is not a known vanilla block",
     );
@@ -341,6 +348,17 @@ fn base_item_table() {
     assert_eq!(base_item_for("pants", 84).unwrap().slug, "linen-pants");
     assert!(base_item_for("hat", 84).is_none());
     assert!(BASE_ITEMS.iter().all(|b| SLOTS.contains(&b.slot)));
+    // Slugs and (slot, item type) pairs are unique; every slug is a valid `base` value.
+    let mut slugs: Vec<_> = BASE_ITEMS.iter().map(|b| b.slug).collect();
+    slugs.sort_unstable();
+    slugs.dedup();
+    assert_eq!(slugs.len(), BASE_ITEMS.len());
+    let mut types: Vec<_> = BASE_ITEMS.iter().map(|b| (b.slot, b.item_type)).collect();
+    types.sort_unstable();
+    types.dedup();
+    assert_eq!(types.len(), BASE_ITEMS.len());
+    assert_eq!(base_item_for("weapon", 209).unwrap().slug, "crowbar");
+    assert_eq!(BASE_ITEMS.iter().filter(|b| b.slot == "weapon").count(), 31);
 }
 
 #[test]

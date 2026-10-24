@@ -127,13 +127,37 @@ fn valid() -> Vec<(&'static str, &'static str, &'static str, Message)> {
             "01-server-hello",
             "S->C",
             "Server with one client-required mod (landclaim 1.4.0).",
-            Message::ServerHello(ServerHello { proto: 1, mods_hash: landclaim_hash, client_required: true, count: 2 }),
+            Message::ServerHello(ServerHello {
+                proto: 1,
+                mods_hash: landclaim_hash,
+                client_required: true,
+                count: 2,
+                players: None,
+            }),
         ),
         (
             "01-server-hello-server-only",
             "S->C",
             "Server whose mods are all server-only: empty modsHash set.",
-            Message::ServerHello(ServerHello { proto: 1, mods_hash: mods_hash([]), client_required: false, count: 1 }),
+            Message::ServerHello(ServerHello {
+                proto: 1,
+                mods_hash: mods_hash([]),
+                client_required: false,
+                count: 1,
+                players: None,
+            }),
+        ),
+        (
+            "01-server-hello-players",
+            "S->C",
+            "Server with the optional player count (3 of 16 players).",
+            Message::ServerHello(ServerHello {
+                proto: 1,
+                mods_hash: mods_hash([]),
+                client_required: false,
+                count: 1,
+                players: Some(PlayerCount { online: 3, capacity: 16 }),
+            }),
         ),
         ("02-list-request", "C->S", "Empty map body.", Message::ListRequest),
         (
@@ -441,6 +465,35 @@ fn invalid() -> Vec<(&'static str, String, &'static str)> {
                     (Value::text("ok"), Value::Bool(false)),
                     (Value::text("code"), Value::Uint(256)),
                     (Value::text("message"), Value::text("x")),
+                ]))
+            ),
+            "type",
+        ),
+        (
+            "server-hello-players-without-max",
+            format!(
+                "bc01{}",
+                cbor_hex(Value::Map(vec![
+                    (Value::text("count"), Value::Uint(0)),
+                    (Value::text("proto"), Value::Uint(1)),
+                    (Value::text("players"), Value::Uint(3)),
+                    (Value::text("modsHash"), Value::Bytes(h("x").to_vec())),
+                    (Value::text("clientRequired"), Value::Bool(false)),
+                ]))
+            ),
+            "missing",
+        ),
+        (
+            "server-hello-players-too-big",
+            format!(
+                "bc01{}",
+                cbor_hex(Value::Map(vec![
+                    (Value::text("count"), Value::Uint(0)),
+                    (Value::text("proto"), Value::Uint(1)),
+                    (Value::text("players"), Value::Uint(1 << 32)),
+                    (Value::text("modsHash"), Value::Bytes(h("x").to_vec())),
+                    (Value::text("maxPlayers"), Value::Uint(1)),
+                    (Value::text("clientRequired"), Value::Bool(false)),
                 ]))
             ),
             "type",

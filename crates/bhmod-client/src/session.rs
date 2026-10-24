@@ -13,8 +13,8 @@ use std::path::PathBuf;
 use bhmod_content::registry::Wire;
 use bhmod_manifest::Manifest;
 use bhmod_proto::{
-    file_error, Channel, Cosmetics, FileRequest, Hash, Hello, Message, ModInfo, ModList, Ready, RejectText,
-    ServerHello, ServiceCall, ServiceResult, CHUNK_SIZE, HELLO_TIMEOUT_MS, MAX_CHANNEL_PAYLOAD, PROTO,
+    file_error, Channel, Cosmetics, FileRequest, Hash, Hello, Message, ModInfo, ModList, PlayerCount, Ready,
+    RejectText, ServerHello, ServiceCall, ServiceResult, CHUNK_SIZE, HELLO_TIMEOUT_MS, MAX_CHANNEL_PAYLOAD, PROTO,
 };
 
 use crate::cache::PackageCache;
@@ -236,6 +236,7 @@ pub struct Session {
     joined: bool,
     channels: BTreeMap<String, u16>,
     registry: Wire,
+    players: Option<PlayerCount>,
 }
 
 fn client_side(m: &ModInfo) -> bool {
@@ -255,7 +256,13 @@ impl Session {
             joined: false,
             channels: BTreeMap::new(),
             registry: Wire::new(),
+            players: None,
         }
+    }
+
+    /// The player count the server put into `SERVER_HELLO`, if it did.
+    pub fn players(&self) -> Option<PlayerCount> {
+        self.players
     }
 
     /// The content id map of the server's `MOD_LIST` (empty until it arrived or without content).
@@ -407,6 +414,7 @@ impl Session {
         if !matches!(self.state, State::AwaitHello { .. }) {
             return Vec::new();
         }
+        self.players = h.players;
         if h.count == 0 {
             return self.modded(h.mods_hash);
         }

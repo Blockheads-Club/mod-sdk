@@ -56,6 +56,14 @@ cosmetics = [
   the HUD) when the player wears it and holds the cosmetic's `base`. The PC and Android clients draw it with an inline hook on the
   game's sprite code ([native.md](native.md#weapon-skins)); the texture is the whole picture of the item (any size up
   to 1024 x 1024), not a cell of the vanilla atlas.
+  `base` for a `weapon` is one of the held tools and weapons: `flint-axe`, `flint-spear`, `flint-pickaxe`,
+  `flint-spade`, `flint-machete`, `stone-axe`, `stone-pickaxe`, `stone-spade`, `copper-spear`, `copper-bow`,
+  `tin-spade`, `bronze-pickaxe`, `bronze-machete`, `bronze-sword`, `iron-pickaxe`, `iron-machete`, `iron-sword`,
+  `iron-axe`, `gold-spade`, `gold-pickaxe`, `steel-pickaxe`, `amethyst-pickaxe`, `sapphire-pickaxe`,
+  `emerald-pickaxe`, `ruby-pickaxe`, `diamond-pickaxe`, `titanium-pickaxe`, `titanium-sword`, `crowbar`,
+  `fishing-rod`, `poison-bow` (the gold bow). All of them go through the same sprite code; only the flint spade, a
+  sword and a pickaxe were checked on screen, and a tool the game draws some other way simply never shows the skin.
+  The hook itself exists only on game 1.7.6 (see [native.md](native.md#weapon-skins)).
 
 ## API (blockheads:api 0.3)
 
@@ -76,7 +84,8 @@ On a client `equip` and `unequip` return `unsupported`.
 ```toml
 [content]
 items = [
-  { key = "decor:lamp", texture = "assets/lamp.png", name = { en = "Brass lamp", tr = "Pirinç lamba" } },
+  { key = "decor:lamp", texture = "assets/lamp.png", name = { en = "Brass lamp", tr = "Pirinç lamba" },
+    plural = { en = "Brass lamps", tr = "Pirinç lambalar" } },
 ]
 ```
 
@@ -88,6 +97,11 @@ is stored in inventories, chests and the save like any vanilla item, and stacks 
 - **Names.** Both clients ask the mod table for the name wherever the game builds an item's title (inventory, chests,
   crafting, trade, tooltips). `name` is shown in capitals like the game's own names, in the player's language, else
   `en`; an item without `name` shows its key's name part (`decor:brass-lamp` shows `BRASS LAMP`).
+- **Plural names.** The game also asks for a plural ("5 BRASS LAMPS" in stacks and trades). `plural` is an optional
+  table like `name` (needs `en` when present, up to 64 characters). Lookup for the player's language: that language's
+  `plural`; else the singular `name` when the mod has one in that language (its own words beat another language's
+  plural); else the `en` plural; else the singular. The PC client hooks the game's plural functions; the Android
+  client still shows the singular.
 - **Icons.** `texture` is a square PNG (up to 256 x 256). The clients copy it into a free cell of the game's item atlas
   (`Items.png`, about 167 cells are free), scaled to the atlas's cell size.
 - **Behaviour on the server** is the mod's: it can `bh.content.give_item(player, key, count)` (a command, a shop, a

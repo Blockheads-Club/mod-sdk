@@ -97,6 +97,14 @@
       "file": "invalid/service-result-big-code.hex"
     },
     {
+      "error": "missing",
+      "file": "invalid/server-hello-players-without-max.hex"
+    },
+    {
+      "error": "type",
+      "file": "invalid/server-hello-players-too-big.hex"
+    },
+    {
       "error": "type",
       "file": "invalid/reject-text-big-reason.hex"
     }
@@ -207,6 +215,23 @@
       "direction": "S->C",
       "file": "01-server-hello-server-only.hex",
       "length": 76,
+      "op": "0x01"
+    },
+    {
+      "body": {
+        "clientRequired": false,
+        "count": 1,
+        "maxPlayers": 16,
+        "modsHash": {
+          "$bytes": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "players": 3,
+        "proto": 1
+      },
+      "description": "Server with the optional player count (3 of 16 players).",
+      "direction": "S->C",
+      "file": "01-server-hello-players.hex",
+      "length": 97,
       "op": "0x01"
     },
     {
