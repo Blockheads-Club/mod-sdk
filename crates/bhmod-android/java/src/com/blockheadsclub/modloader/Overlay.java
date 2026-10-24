@@ -148,7 +148,8 @@ final class Overlay {
         if (mark == null) return;
         mark.setTypeface(Kit.title);
         mark.setText(Strings.t("mark", "v", version));
-        mark.setVisibility(ready && !inWorld && dialog == null ? View.VISIBLE : View.GONE);
+        // The game's main and pause menus carry a Mods button; the title mark only duplicated it.
+        mark.setVisibility(View.GONE);
     }
 
     /** A command from the native side. */

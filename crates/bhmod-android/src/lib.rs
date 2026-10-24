@@ -26,7 +26,7 @@ use bhmod_client::{Caps, Options};
 use bhmod_core::runtime::Runtime;
 use bhmod_manifest::manifest::Runtime as Kind;
 
-/// Loader version (`HELLO.loader`, the title mark).
+/// Loader version (`HELLO.loader`, shown in the Mods screen).
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 /// `HELLO.platform`.
 pub const PLATFORM: &str = "android-armv7";

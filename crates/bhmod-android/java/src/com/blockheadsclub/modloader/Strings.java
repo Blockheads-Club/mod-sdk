@@ -208,8 +208,8 @@ final class Strings {
         p("w1_body2", "Nothing is installed yet. Your worlds are not changed.", "Henüz hiçbir şey yüklenmedi. Dünyaların değişmedi.",
             "Пока ничего не установлено. Твои миры не изменены.", "Әзірге ештеңе орнатылмаған. Әлемдерің өзгермеген.");
         p("w2_title", "Find them in Mods", "Onları Modlar’da bul", "Ищи их в разделе «Моды»", "Оларды «Модтар» бөлімінен тап");
-        p("w2_l1", "Tap the Mods mark on the title screen.", "Başlık ekranındaki Modlar işaretine dokun.",
-            "Нажми на значок «Моды» на титульном экране.", "Басты экрандағы «Модтар» белгісін бас.");
+        p("w2_l1", "Tap Mods in the main menu or the pause menu.", "Ana menüde ya da duraklatma menüsünde Modlar’a dokun.",
+            "Нажми «Моды» в главном меню или в меню паузы.", "Басты мәзірде не үзіліс мәзірінде «Модтар» бөлімін бас.");
         p("w2_l2", "Mod list: mods checked by Blockheads Club maintainers.", "Mod listesi: Blockheads Club bakımcılarının kontrol ettiği modlar.",
             "Список модов: моды, проверенные командой Blockheads Club.", "Модтар тізімі: Blockheads Club жүргізушілері тексерген модтар.");
         p("w2_l3", "Servers can use mods. You see them and agree before anything downloads.",
