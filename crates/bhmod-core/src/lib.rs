@@ -46,12 +46,14 @@ pub mod runtime;
 pub mod scheduler;
 pub mod services;
 pub mod storage;
+pub mod timings;
 pub mod types;
 pub mod ui;
 pub mod value;
+pub mod watch;
 
 pub use bridge::GameBridge;
-pub use host::{HostOptions, ModHost, ModInfo, ModState};
+pub use host::{HostOptions, ModHost, ModInfo, ModState, ReloadOutcome, ReloadResult};
 pub use remote::{RemoteCall, RemoteCaller, RemoteError, RemoteLimits, RemoteTarget};
 pub use runtime::{CallError, HostApi, Instance, Runtime};
 

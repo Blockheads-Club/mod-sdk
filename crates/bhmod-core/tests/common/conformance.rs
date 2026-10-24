@@ -206,6 +206,46 @@ pub fn scheduler(r: &mut Run) {
     ticks(r, 1500);
 }
 
+/// Hot reload in the middle of a countdown: the old scheduled task is gone, the new instance starts clean.
+pub fn scheduler_reload(r: &mut Run) {
+    r.h.enable("World", "wid");
+    r.b.join("p1", "CAROL", Role::Player);
+    r.command(player("p1"), "/countdown 5");
+    ticks(r, 8);
+    r.flush();
+    let id = r.id.clone();
+    let res: Vec<_> = r.h.reload(Some(&id)).into_iter().map(|x| x.outcome).collect();
+    r.note("reload", res);
+    r.note("state", r.state());
+    r.flush();
+    // The old countdown must not continue; a new one can start (the old one was still "running" in the old instance).
+    ticks(r, 60);
+    r.flush();
+    r.command(player("p1"), "/countdown 2");
+    ticks(r, 15);
+    r.flush();
+    let unchanged: Vec<_> = r.h.reload(None).into_iter().map(|x| x.outcome).collect();
+    r.note("reload all", unchanged);
+    r.h.disable_all();
+    r.note("state", r.state());
+}
+
+/// Hot reload of a client mod with UI: its widgets are cleared and drawn again.
+pub fn hud_reload(r: &mut Run) {
+    r.h.enable("World", "wid");
+    r.flush();
+    let id = r.id.clone();
+    let res: Vec<_> = r.h.reload(Some(&id)).into_iter().map(|x| x.outcome).collect();
+    r.note("reload", res);
+    r.flush();
+    ticks(r, 5);
+    r.flush();
+    // The dialog of the old instance is gone; the new one has its own.
+    let old = r.h.ui_result(1, 1, Some("25".into()));
+    r.note("old dialog", old);
+    r.flush();
+}
+
 pub fn hud(r: &mut Run) {
     r.h.enable("World", "wid");
     r.note("state", r.state());

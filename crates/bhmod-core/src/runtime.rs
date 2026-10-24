@@ -228,6 +228,14 @@ pub trait HostApi {
         let _ = (name, version);
         Err(ApiError::Unsupported)
     }
+    /// The reload generation of the best provider of `name` for `version_req` (1 at boot, one more after each hot
+    /// reload of the provider; 0 when there is no provider). A runtime that hands out service proxies remembers it
+    /// and refuses a proxy whose provider was reloaded since (`stale`), so callers fetch a fresh one. The default
+    /// is 0 (never stale).
+    fn service_generation(&mut self, name: &str, version_req: &str) -> u32 {
+        let _ = (name, version_req);
+        0
+    }
     /// `services.call`.
     fn call_service(
         &mut self,

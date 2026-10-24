@@ -17,10 +17,11 @@ use bhmod_client::session::{Accepted, Output};
 use bhmod_client::{Caps, Options, PackageCache, Session};
 use bhmod_content::Content;
 use bhmod_core::budget::Budgets;
-use bhmod_core::host::{HostOptions, ModHost, ModState};
+use bhmod_core::host::{HostOptions, ModHost, ModState, ReloadResult};
 use bhmod_core::remote::{RemoteCall, RemoteError, RemoteTarget};
 use bhmod_core::runtime::Runtime;
 use bhmod_core::storage::FileStorage;
+use bhmod_core::timings::ModTimings;
 use bhmod_core::types::{ApiError, ChannelSource, ChannelTarget, LogLevel, Role, Side};
 use bhmod_core::GameBridge;
 use bhmod_proto::{hex, Hash, ServiceCall, ServiceFailure, ServiceResult, PACKET_TYPE};
@@ -184,6 +185,8 @@ pub struct Loader<P: Platform + 'static> {
     content: Arc<Mutex<Content>>,
     /// Mods whose native library is loaded (unloaded when the host stops).
     natives: Vec<String>,
+    /// The mods the server sent for the current connection (what a hot reload places again).
+    accepted: Vec<Accepted>,
 }
 
 impl<P: Platform + 'static> Loader<P> {
@@ -205,6 +208,7 @@ impl<P: Platform + 'static> Loader<P> {
             budgets: Budgets::default(),
             content: Arc::new(Mutex::new(Content::new())),
             natives: Vec::new(),
+            accepted: Vec::new(),
         }
     }
 
@@ -570,13 +574,11 @@ impl<P: Platform + 'static> Loader<P> {
         }
     }
 
-    /// Builds the run directory from the server's packages plus the player's enabled installed mods (server
-    /// versions win) and starts a host. Returns the `(id, version)` of every loaded mod, or an error when a server
-    /// mod did not start.
-    fn start_host(&mut self, server_mods: &[Accepted]) -> Result<Vec<(String, String)>, String> {
-        self.stop_host();
-        let run_dir = self.dirs.run.clone();
-        let run = &run_dir;
+    /// Fills the run directory from the server's packages plus the player's enabled installed mods (server versions
+    /// win) and writes `mods.toml`. Returns the packages placed, the mods that need their native library, and
+    /// whether there is anything to run.
+    fn place(&self, server_mods: &[Accepted]) -> Result<Placement, String> {
+        let run = &self.dirs.run;
         let _ = fs::remove_dir_all(run);
         let mut grants: BTreeMap<String, Vec<String>> = BTreeMap::new();
         let mut ids = BTreeSet::new();
@@ -605,9 +607,8 @@ impl<P: Platform + 'static> Loader<P> {
                 grants.insert(m.manifest.id.clone(), bhmod_core::config::required_permissions(&m.manifest.permissions));
             }
         }
-        self.load_content(&placed);
         if grants.is_empty() {
-            return Ok(Vec::new());
+            return Ok(Placement { placed, natives, any: false });
         }
         let mut toml = String::new();
         for (id, g) in &grants {
@@ -615,7 +616,20 @@ impl<P: Platform + 'static> Loader<P> {
             toml.push_str(&format!("[{id}]\ngrant = [{}]\n\n", list.join(", ")));
         }
         fs::write(run.join(bhmod_core::config::FILE_NAME), toml).map_err(|e| e.to_string())?;
-        let mut opts = HostOptions::new(run, Side::Client);
+        Ok(Placement { placed, natives, any: true })
+    }
+
+    /// Builds the run directory (see [`Loader::place`]) and starts a host. Returns the `(id, version)` of every
+    /// loaded mod, or an error when a server mod did not start.
+    fn start_host(&mut self, server_mods: &[Accepted]) -> Result<Vec<(String, String)>, String> {
+        self.stop_host();
+        let Placement { placed, natives, any } = self.place(server_mods)?;
+        self.load_content(&placed);
+        self.accepted = server_mods.to_vec();
+        if !any {
+            return Ok(Vec::new());
+        }
+        let mut opts = HostOptions::new(&self.dirs.run, Side::Client);
         opts.runtimes = (self.runtimes)();
         opts.budgets = self.budgets;
         opts.storage = Box::new(FileStorage::new(&self.dirs.storage));
@@ -630,6 +644,37 @@ impl<P: Platform + 'static> Loader<P> {
         }
         Ok(loaded)
     }
+
+    /// Hot reload: puts the current packages (the server's, and the installed mods that are enabled now) in the run
+    /// directory again and lets the host restart the mods whose package changed, or just `only`, without leaving the
+    /// world. Native libraries and content (cosmetics, items, blocks) are not reloaded; those need a new connection.
+    pub fn reload(&mut self, only: Option<&str>) -> Result<Vec<ReloadResult>, String> {
+        if self.host.is_none() {
+            return Err("no mods are running".to_string());
+        }
+        let accepted = self.accepted.clone();
+        self.place(&accepted)?;
+        let results = self.host.as_mut().map(|h| h.reload(only)).unwrap_or_default();
+        self.flush_outbox();
+        Ok(results)
+    }
+
+    /// The time accounting of the running mods (see [`ModHost::timings`]).
+    pub fn timings(&self, only: Option<&str>) -> Vec<ModTimings> {
+        self.host.as_ref().map(|h| h.timings(only)).unwrap_or_default()
+    }
+
+    /// Clears the time accounting; false when `only` names no running mod.
+    pub fn reset_timings(&mut self, only: Option<&str>) -> bool {
+        self.host.as_mut().is_some_and(|h| h.reset_timings(only))
+    }
+}
+
+/// What [`Loader::place`] put in the run directory.
+struct Placement {
+    placed: Vec<PathBuf>,
+    natives: Vec<(String, PathBuf)>,
+    any: bool,
 }
 
 #[cfg(test)]

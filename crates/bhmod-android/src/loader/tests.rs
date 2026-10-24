@@ -386,6 +386,47 @@ return mod
 }
 
 #[test]
+fn hot_reload_restarts_changed_mods_and_reports_timings() {
+    let mut r = rig();
+    assert_eq!(r.l.reload(None), Err("no mods are running".to_string()));
+    assert!(r.l.timings(None).is_empty());
+    assert!(!r.l.reset_timings(None));
+    let src = |tag: &str| {
+        format!(
+            "local mod = {{}}\nfunction mod.on_enable()\n bh.events.on(\"world-loaded\", function(ev) bh.log.info(\"{tag} \" .. ev.world_name) end)\nend\nreturn mod\n"
+        )
+    };
+    r.l.installed().install(&package("solo", "1.0.0", "", "client/main.luau", &src("one")), None).unwrap();
+    r.l.on_world(Some("Solo"));
+    assert!(r.l.running());
+    assert!(r.p.logged("one Solo"));
+    let t = r.l.timings(Some("solo"));
+    assert_eq!(t.len(), 1);
+    assert!(t[0].calls() >= 2, "{t:?}");
+    // The player installs a newer version while the world is open.
+    r.l.installed().install(&package("solo", "1.1.0", "", "client/main.luau", &src("two")), None).unwrap();
+    let res = r.l.reload(None).unwrap();
+    assert_eq!(res.len(), 1, "{res:?}");
+    assert_eq!(res[0].to_string(), "solo: reloaded (1.0.0 -> 1.1.0)");
+    assert!(r.p.logged("two Solo"));
+    assert!(r.l.reload(None).unwrap().iter().all(|x| x.to_string() == "solo: unchanged"));
+    assert!(r.l.reset_timings(Some("solo")));
+    assert_eq!(r.l.timings(None)[0].calls(), 0);
+    // A server package that vanished from the cache fails the reload and leaves the mods alone.
+    let pkg = package("gone", "1.0.0", "", "client/main.luau", "return {}");
+    let manifest = r.l.installed().install(&pkg, None).unwrap().manifest;
+    r.l.accepted = vec![Accepted { info: info("gone", &pkg), path: r.dirs.cache.join("missing.bhmod"), manifest }];
+    assert!(r.l.reload(None).is_err());
+    assert!(r.l.running());
+    // Nothing enabled any more: the mod is stopped.
+    r.l.accepted = Vec::new();
+    r.l.installed().set_enabled("solo", false).unwrap();
+    r.l.installed().set_enabled("gone", false).unwrap();
+    let res = r.l.reload(None).unwrap();
+    assert!(res.iter().any(|x| x.to_string().starts_with("solo: stopped")), "{res:?}");
+}
+
+#[test]
 fn installed_mods_that_cannot_be_copied_are_skipped() {
     let mut r = rig();
     r.l.installed().install(&package("solo", "1.0.0", "", "client/main.luau", "return {}"), None).unwrap();
