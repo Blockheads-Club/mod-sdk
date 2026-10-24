@@ -1,6 +1,8 @@
 --!strict
 -- cosmetics-hats: puts the mod's cosmetics on players. /hat <crown|party|none> and /hair <ember|none>.
 -- The server does not save who wears what, so the choice is kept in mod storage and put back when a player joins.
+-- A player who has not chosen anything yet gets the DEFAULTS (a gold crown), so a fresh player sees a cosmetic
+-- without typing /hat. "/hat none" is a choice too: it is stored and the default does not come back.
 
 local PREFIX = "cosmetics-hats:"
 
@@ -9,6 +11,14 @@ local CHOICES = {
 	hat = { crown = PREFIX .. "crown", party = PREFIX .. "party" },
 	hair = { ember = PREFIX .. "ember" },
 }
+
+-- slot -> cosmetic key worn by a player who has not chosen for that slot yet
+local DEFAULTS = {
+	hat = PREFIX .. "crown",
+}
+
+-- What is stored for a slot when the player chose to wear nothing.
+local NOTHING = "none"
 
 local function storage_key(player: Player, slot: string): string
 	return `wear:{player:id()}:{slot}`
@@ -30,7 +40,7 @@ local function wear(player: Player, slot: string, word: string?): string
 		return `Usage: /{slot} <{names(slot)}>`
 	elseif word == "none" then
 		bh.content.unequip(player, slot)
-		bh.storage.delete(storage_key(player, slot))
+		bh.storage.set(storage_key(player, slot), NOTHING)
 		return `Your {slot} is back to normal.`
 	end
 	local key = options[word]
@@ -59,11 +69,14 @@ function mod.on_enable()
 		end)
 	end
 
-	-- Put back what a player chose in an earlier session.
+	-- Put back what a player chose in an earlier session; a slot they never chose for gets its default.
 	bh.events.on("player-join", function(ev)
 		for slot in CHOICES do
 			local key = bh.storage.get(storage_key(ev.player, slot))
-			if key then
+			if key == nil then
+				key = DEFAULTS[slot]
+			end
+			if key ~= nil and key ~= NOTHING then
 				bh.content.equip(ev.player, key)
 			end
 		end
