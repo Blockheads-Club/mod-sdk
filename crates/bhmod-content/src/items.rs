@@ -14,6 +14,31 @@ use bhmod_manifest::Manifest;
 
 use crate::registry::{Kind, Wire};
 
+/// The first cell of the game's item atlas (`Items.png`, 32 cells per row) that no vanilla item uses: 344 cells are
+/// drawn (the last ones of the 11th row), the 168 after them are free.
+pub const ITEM_ATLAS_FIRST_CELL: u32 = 344;
+/// How many free cells the item atlas has.
+pub const ITEM_ATLAS_CELLS: u32 = 168;
+/// The first cell of the game's tile atlas (`TileMap.png`, 32 cells per row) that is free: the last five rows (160
+/// cells) are empty.
+pub const BLOCK_ATLAS_FIRST_CELL: u32 = 864;
+/// How many free cells the tile atlas has.
+pub const BLOCK_ATLAS_CELLS: u32 = 160;
+/// Cells per row of both atlases.
+pub const ATLAS_COLUMNS: u32 = 32;
+
+/// The item atlas cell of item `id` (an `ItemType` from [`crate::Kind::Items`]'s range), if the atlas has room.
+pub fn item_cell(id: u64) -> Option<u32> {
+    let k = u32::try_from(id.checked_sub(crate::registry::Kind::Items.first_id())?).ok()?;
+    (k < ITEM_ATLAS_CELLS).then_some(ITEM_ATLAS_FIRST_CELL + k)
+}
+
+/// The tile atlas cell of variant block `id` (from 1), if the atlas has room.
+pub fn block_cell(id: u64) -> Option<u32> {
+    let k = u32::try_from(id.checked_sub(crate::registry::Kind::Blocks.first_id())?).ok()?;
+    (k < BLOCK_ATLAS_CELLS).then_some(BLOCK_ATLAS_FIRST_CELL + k)
+}
+
 /// An item a loaded mod declares and the world has an id for.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ItemDef {

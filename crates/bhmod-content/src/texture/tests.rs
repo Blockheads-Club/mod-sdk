@@ -76,3 +76,19 @@ fn gpu_form_pads_to_powers_of_two() {
     let one = Texture { width: 1, height: 1, rgba: vec![255, 0, 0, 128] };
     assert_eq!(one.for_gpu().pixels, [128, 0, 0, 128]);
 }
+
+#[test]
+fn cell_resamples_to_a_square_premultiplied() {
+    // 2x2 -> 1x1: the average of four premultiplied pixels.
+    let t = Texture { width: 2, height: 2, rgba: vec![255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 0, 0, 0, 0] };
+    assert_eq!(t.cell(1), [64, 64, 64, 191]);
+    // 1x1 -> 2x2: stretched, alpha applied to the colour.
+    let one = Texture { width: 1, height: 1, rgba: vec![200, 100, 50, 128] };
+    assert_eq!(one.cell(2), [100, 50, 25, 128].repeat(4));
+    // 3x1 -> 2x2 (not a multiple): every destination pixel covers at least one source pixel.
+    let wide = Texture { width: 3, height: 1, rgba: vec![30, 0, 0, 255, 60, 0, 0, 255, 90, 0, 0, 255] };
+    let c = wide.cell(2);
+    assert_eq!(c.len(), 16);
+    assert_eq!((c[0], c[4]), (45, 75));
+    assert_eq!(&c[..8], &c[8..]);
+}

@@ -273,3 +273,22 @@ fn items_and_blocks_have_names_and_textures() {
     c.extra_cache.clear();
     assert!(c.block_texture(1).unwrap_err().contains("not loaded"));
 }
+
+#[test]
+fn cell_pixels_of_items_and_blocks() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path().join("decor-src");
+    decor_dir(&dir);
+    let mut c = Content::new();
+    c.load(&decor_registry(), &[dir]);
+    let icon = c.item_cell_pixels(1107, 2).unwrap().unwrap();
+    assert_eq!(icon, [200, 100, 0, 255].repeat(4));
+    let block = c.block_cell_pixels(1, 8).unwrap().unwrap();
+    assert_eq!((block.len(), &block[..4]), (8 * 8 * 4, &[160u8, 40, 30, 255][..]));
+    assert_eq!(c.item_cell_pixels(5, 2).unwrap(), None);
+    assert_eq!(c.block_cell_pixels(5, 2).unwrap(), None);
+    // A missing file and an unloaded package are errors.
+    assert!(c.item_cell_pixels(1108, 2).unwrap_err().contains("assets/gone.png"));
+    c.packages.clear();
+    assert!(c.block_cell_pixels(1, 2).unwrap_err().contains("not loaded"));
+}

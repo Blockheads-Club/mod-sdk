@@ -61,6 +61,40 @@ impl Texture {
     }
 }
 
+impl Texture {
+    /// The picture squeezed or stretched to `size` x `size` pixels (area averaging) with colours premultiplied by
+    /// alpha: one cell of the game's item or tile atlas. `size` is at least 1.
+    pub fn cell(&self, size: u32) -> Vec<u8> {
+        let src = self.premultiplied();
+        let (w, h, n) = (u64::from(self.width), u64::from(self.height), u64::from(size));
+        let mut out = Vec::with_capacity(size as usize * size as usize * 4);
+        for dy in 0..n {
+            let (y0, y1) = span(dy, h, n);
+            for dx in 0..n {
+                let (x0, x1) = span(dx, w, n);
+                let mut sum = [0u64; 4];
+                for y in y0..y1 {
+                    for x in x0..x1 {
+                        let at = ((y * w + x) * 4) as usize;
+                        for (s, c) in sum.iter_mut().zip(&src.rgba[at..at + 4]) {
+                            *s += u64::from(*c);
+                        }
+                    }
+                }
+                let count = (y1 - y0) * (x1 - x0);
+                out.extend(sum.iter().map(|s| ((s + count / 2) / count) as u8));
+            }
+        }
+        out
+    }
+}
+
+/// The source pixels `[from, to)` a destination pixel `i` of `n` covers on an axis of `len` pixels (at least one).
+fn span(i: u64, len: u64, n: u64) -> (u64, u64) {
+    let from = i * len / n;
+    (from, ((i + 1) * len).div_ceil(n).max(from + 1))
+}
+
 /// The `pixelFormat` of [`Gpu`]: what the game's own loader passes for every texture (the traced data is plain RGBA,
 /// 4 bytes per pixel, colours premultiplied by alpha).
 pub const PIXEL_FORMAT: u32 = 1;

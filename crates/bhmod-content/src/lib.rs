@@ -24,6 +24,6 @@ pub mod variant;
 
 pub use client::{Content, Look, Part, CLOTHING};
 pub use cosmetics::{resolve, CosmeticDef, Resolved, Table, Wearing};
-pub use items::{BlockDef, BlockTable, ItemDef, ItemTable};
+pub use items::{block_cell, item_cell, BlockDef, BlockTable, ItemDef, ItemTable};
 pub use registry::{Kind, Registry};
 pub use texture::{Gpu, Texture, PIXEL_FORMAT};

@@ -250,6 +250,26 @@ impl Content {
         self.cached_texture((0, id), source)
     }
 
+    /// The icon of item `id` as `size` x `size` premultiplied RGBA, one cell of the game's item atlas (`None` for an
+    /// id without an icon or a cell).
+    pub fn item_cell_pixels(&mut self, id: u64, size: u32) -> Result<Option<Vec<u8>>, String> {
+        let source = self.items.get(id).map(ItemDef::source);
+        self.cell_pixels(source, size)
+    }
+
+    /// The texture of variant block `id` as `size` x `size` premultiplied RGBA, one cell of the game's tile atlas.
+    pub fn block_cell_pixels(&mut self, id: u64, size: u32) -> Result<Option<Vec<u8>>, String> {
+        let source = self.blocks.get(id).map(BlockDef::source);
+        self.cell_pixels(source, size)
+    }
+
+    fn cell_pixels(&self, source: Option<(String, String)>, size: u32) -> Result<Option<Vec<u8>>, String> {
+        let Some((mod_id, path)) = source else { return Ok(None) };
+        let pkg = self.packages.get(&mod_id).ok_or_else(|| format!("{mod_id}: the package is not loaded"))?;
+        let mut src = open_package(pkg)?;
+        Ok(Some(Texture::read(src.as_mut(), &path)?.cell(size)))
+    }
+
     /// The texture of variant block `id`, prepared for the game and cached.
     pub fn block_texture(&mut self, id: u64) -> Result<Option<Arc<Gpu>>, String> {
         let source = self.blocks.get(id).map(BlockDef::source);
@@ -257,11 +277,7 @@ impl Content {
     }
 
     /// `key` is (0 item | 1 block, id); `source` is (mod id, path in its package).
-    fn cached_texture(
-        &mut self,
-        key: (u8, u64),
-        source: Option<(String, String)>,
-    ) -> Result<Option<Arc<Gpu>>, String> {
+    fn cached_texture(&mut self, key: (u8, u64), source: Option<(String, String)>) -> Result<Option<Arc<Gpu>>, String> {
         if let Some(t) = self.extra_cache.get(&key) {
             return Ok(t.clone());
         }

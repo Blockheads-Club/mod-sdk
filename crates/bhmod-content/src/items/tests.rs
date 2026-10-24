@@ -63,3 +63,19 @@ fn blocks_join_the_registry_and_resolve_their_base() {
     assert!(t.get(3).is_none());
     assert!(BlockTable::build(&Wire::new(), [&m]).is_empty());
 }
+
+#[test]
+fn atlas_cells_follow_the_ids() {
+    assert_eq!(item_cell(1107), Some(344));
+    assert_eq!(item_cell(1107 + 167), Some(511));
+    assert_eq!(item_cell(1107 + 168), None);
+    assert_eq!(item_cell(1106), None);
+    assert_eq!(item_cell(0), None);
+    assert_eq!(block_cell(1), Some(864));
+    assert_eq!(block_cell(160), Some(1023));
+    assert_eq!(block_cell(161), None);
+    assert_eq!(block_cell(0), None);
+    assert_eq!(ITEM_ATLAS_FIRST_CELL + ITEM_ATLAS_CELLS, 512);
+    assert_eq!(BLOCK_ATLAS_FIRST_CELL + BLOCK_ATLAS_CELLS, 1024);
+    assert_eq!(item_cell(u64::MAX), None);
+}
