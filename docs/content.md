@@ -115,10 +115,9 @@ their base block). The tile bytes travel in saves and in the block packet like e
   and a record is valid only while the tile still has the base type and the coordinates it was written for.
 - `bh.content.place_block(x, y, key)` puts the variant at a tile; `bh.content.block_at(x, y)` reads it. Mining a
   variant gives `drops` (an item of the same mod) instead of the base block's item.
-- **Clients** draw the variant's `texture` (a square PNG, one cell of the tile atlas, scaled to its cell size) where
-  the record is valid.
-- **Off by default.** The server writes variant records only when `mods.variant-blocks = true` is set in its
-  configuration, until the check that no vanilla client path reads or clears the tile bytes has been done on a device
+- **Clients do not draw variants yet** (the record and the free tile atlas cells are defined, `Content::block_cell_pixels`
+  gives the pixels; the geometry hook is open, see the resume note). Until then a variant looks like its base block.
+- **Off by default.** The server writes variant records only when `BLOCKHEADS_MODS_VARIANT_BLOCKS=1` is set (or `ModsConfig.variant_blocks` by an embedder), until the check that no vanilla client path reads or clears the tile bytes has been done on a device
   (see `notes/mod-research/content-ids.md` section 5.3).
 
 `base` is one of: `wood`, `cobblestone`, `red-bricks`, `limestone-block`, `marble-block`, `sandstone-block`,
