@@ -28,7 +28,7 @@ exclude = [
 ]
 
 [workspace.package]
-version = "0.3.1"
+version = "0.4.0"
 edition = "2021"
 rust-version = "1.85"
 license = "MIT OR Apache-2.0"
@@ -36,12 +36,12 @@ repository = "https://github.com/Blockheads-Club/mod-sdk"
 authors = ["Blockheads Club contributors"]
 
 [workspace.dependencies]
-bhmod-manifest = { path = "crates/bhmod-manifest", version = "0.3.1" }
-bhmod-proto = { path = "crates/bhmod-proto", version = "0.3.1" }
-bhmod-client = { path = "crates/bhmod-client", version = "0.3.1" }
-bhmod-content = { path = "crates/bhmod-content", version = "0.3.1" }
-bhmod-index = { path = "crates/bhmod-index", version = "0.3.1" }
-bhmod-native = { path = "crates/bhmod-native", version = "0.3.1" }
+bhmod-manifest = { path = "crates/bhmod-manifest", version = "0.4.0" }
+bhmod-proto = { path = "crates/bhmod-proto", version = "0.4.0" }
+bhmod-client = { path = "crates/bhmod-client", version = "0.4.0" }
+bhmod-content = { path = "crates/bhmod-content", version = "0.4.0" }
+bhmod-index = { path = "crates/bhmod-index", version = "0.4.0" }
+bhmod-native = { path = "crates/bhmod-native", version = "0.4.0" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 toml = "0.9"
