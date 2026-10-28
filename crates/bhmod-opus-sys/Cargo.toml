@@ -12,5 +12,8 @@ publish = false
 links = "opus"
 include = ["src", "build.rs", "opus", "LICENSE", "README.md"]
 
+[dependencies]
+bhmod-voice = { path = "../bhmod-voice" }
+
 [build-dependencies]
 cc = "1"

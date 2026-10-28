@@ -9,9 +9,12 @@
 //! - [`path`]: transport policy (`inband` / `udp` / `auto`) and loss measurement.
 //! - [`relay`]: the server relay (route table, mutes, speaker gain, caps). It never decodes audio.
 //! - [`jitter`], [`mix`], [`vad`], [`activation`], [`codec`]: client pipeline pieces.
+//! - [`server`] and [`client`] (API 0.3.4): the host-agnostic halves the server and the loaders glue in, including
+//!   the [`bhmod_core::VoiceHost`] seam of the voice mod API.
 #![warn(missing_docs)]
 
 pub mod activation;
+pub mod client;
 pub mod codec;
 pub mod crypto;
 pub mod frame;
@@ -20,6 +23,7 @@ pub mod link;
 pub mod mix;
 pub mod path;
 pub mod relay;
+pub mod server;
 pub mod udp;
 pub mod vad;
 

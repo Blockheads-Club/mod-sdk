@@ -211,6 +211,8 @@ pub struct Forwarded {
     pub started: bool,
     /// Copies sent (deafened listeners and listeners whose path cannot take the frame get none).
     pub copies: usize,
+    /// The frame's talk mode.
+    pub mode: VoiceMode,
 }
 
 /// Something the host reports to the voice mod.
@@ -292,6 +294,12 @@ impl Relay {
     /// A relay with the admin's `transport` setting and voice UDP port.
     pub fn new(mode: TransportMode, udp_port: Option<u16>) -> Relay {
         Relay { mode, udp_port, peers: HashMap::new(), events: Vec::new() }
+    }
+
+    /// Changes the transport for peers added afterwards (sessions already running keep their path policy).
+    pub fn set_transport(&mut self, mode: TransportMode, udp_port: Option<u16>) {
+        self.mode = mode;
+        self.udp_port = udp_port;
     }
 
     /// The UDP port to announce (`SERVER_HELLO.voiceUdpPort`, `VOICE_KEY.udpPort`), unless the mode is `inband`.
@@ -447,7 +455,7 @@ impl Relay {
             out.send(r.listener, path, wrap(path, r.listener, n, sealed));
             copies += 1;
         }
-        Ok(Forwarded { started, copies })
+        Ok(Forwarded { started, copies, mode: frame.mode })
     }
 
     /// Housekeeping: talk-stop events, expired mutes and path changes since the last call.

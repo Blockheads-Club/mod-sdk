@@ -4,7 +4,10 @@
 //!
 //! [`ffi`] holds the raw declarations for anyone who needs more than [`Encoder`] / [`Decoder`] offer.
 
+pub mod codec;
 pub mod ffi;
+
+pub use codec::OpusCodec;
 
 use std::ffi::CStr;
 use std::fmt;

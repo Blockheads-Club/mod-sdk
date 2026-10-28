@@ -51,8 +51,6 @@ use crate::API_VERSION;
 
 /// Longest log message in bytes.
 pub const MAX_LOG: usize = 4096;
-/// The built-in admin command of the host (`/mod settings`, `/mod set`); mods cannot register it.
-pub const MOD_COMMAND: &str = "mod";
 /// Most deferred event deliveries run after one outermost call.
 pub const MAX_DEFERRED: usize = 1024;
 
@@ -761,7 +759,7 @@ impl ModHost {
         Some((form, values))
     }
 
-    /// The ids of the mods whose setting values changed since the last call (any source: `/mod set`, the host app,
+    /// The ids of the mods whose setting values changed since the last call (any source: `/mods set`, the host app,
     /// a mod, `mods.toml` edits, 0xBC `SETTINGS_SET`), in order, without repeats. The server uses it to send admins
     /// fresh `SETTINGS_SCHEMA`s ([`crate::netsettings`]).
     pub fn take_changed_settings(&mut self) -> Vec<String> {
@@ -797,7 +795,7 @@ impl ModHost {
         self.slot_of(id).map(|i| self.slots[i].client_required)
     }
 
-    /// The admin changes a setting of mod `id` (host app, `/mod set`, 0xBC `SETTINGS_SET` after the host program
+    /// The admin changes a setting of mod `id` (host app, `/mods set`, 0xBC `SETTINGS_SET` after the host program
     /// checked the sender's rights). The value is validated and normalised, stored in memory and in `mods.toml`
     /// (a write failure is logged; the new value still applies until the next restart), and
     /// `<mod-id>:settings-changed` fires when it differs from the old one. `UnknownKey` also for an unknown mod.
@@ -889,18 +887,25 @@ impl ModHost {
         changed
     }
 
-    /// `/mod settings <id>` and `/mod set <id> <key> <value>` (admins and the console).
-    fn mod_command(&mut self, sender: &CommandSender, args: &[String]) -> Vec<String> {
-        let allowed = match sender {
-            CommandSender::Console => true,
-            CommandSender::Player(p) => self.bridge.player_role(p) >= Role::Admin,
-        };
-        if !allowed {
-            return vec!["You do not have permission to use /mod.".to_string()];
+    /// The settings subcommands of the host program's own `/mods` command: `settings <id>` lists a mod's settings,
+    /// `set <id> <key> <value>` changes one (`args` are the words after `/mods`). `is_admin`: the sender is an admin
+    /// or the console. Returns `None` when `args` is not one of these subcommands (the host program handles its own
+    /// `/mods reload|list|timings`), otherwise the reply lines. The vanilla `/mod <player>` stays the game's.
+    pub fn settings_command(&mut self, is_admin: bool, args: &[impl AsRef<str>]) -> Option<Vec<String>> {
+        let args: Vec<&str> = args.iter().map(AsRef::as_ref).collect();
+        if !matches!(args.first(), Some(&("settings" | "set"))) {
+            return None;
         }
-        const USAGE: &str = "Usage: /mod settings <mod> | /mod set <mod> <key> <value>";
+        if !is_admin {
+            return Some(vec!["You do not have permission to change mod settings.".to_string()]);
+        }
+        Some(self.settings_lines(&args))
+    }
+
+    fn settings_lines(&mut self, args: &[&str]) -> Vec<String> {
+        const USAGE: &str = "Usage: /mods settings <mod> | /mods set <mod> <key> <value>";
         match args {
-            [cmd, id] if cmd == "settings" => {
+            ["settings", id] => {
                 let Some(i) = self.slot_of(id) else { return vec![format!("No mod {id} is loaded.")] };
                 let s = &self.slots[i];
                 if s.settings.fields.is_empty() {
@@ -913,10 +918,10 @@ impl ModHost {
                 }
                 out
             }
-            [cmd, id, key, value @ ..] if cmd == "set" && !value.is_empty() => {
+            ["set", id, key, value @ ..] if !value.is_empty() => {
                 let Some(i) = self.slot_of(id) else { return vec![format!("No mod {id} is loaded.")] };
                 let Some(field) = self.slots[i].settings.get(key) else {
-                    return vec![format!("{id} has no setting {key} (see /mod settings {id}).")];
+                    return vec![format!("{id} has no setting {key} (see /mods settings {id}).")];
                 };
                 let parsed = bhmod_manifest::settings::parse_input(field, &value.join(" "));
                 match parsed.and_then(|v| self.set_in_slot(i, key, &v)) {
@@ -1187,8 +1192,7 @@ impl ModHost {
     /// True when `line` is `/name ...` and `name` is a mod command (so the host routes it to [`ModHost::command`]
     /// for any player).
     pub fn owns_command(&self, line: &str) -> bool {
-        self.enabled
-            && split_command(line).is_some_and(|(name, _)| name == MOD_COMMAND || self.commands.lookup(&name).is_some())
+        self.enabled && split_command(line).is_some_and(|(name, _)| self.commands.lookup(&name).is_some())
     }
 
     /// Handles a command line. Fires `command` first. Returns `None` when the host should run it as a built-in
@@ -1198,9 +1202,6 @@ impl ModHost {
             return None;
         }
         let (name, args) = split_command(line)?;
-        if name == MOD_COMMAND {
-            return Some(self.mod_command(&sender, &args));
-        }
         if self.bus.has_listeners(EventKind::Command) {
             let raw = line.trim_end_matches(['\n', '\r']).to_string();
             let ev = Event::Command {
@@ -1473,7 +1474,7 @@ impl HostApi for Ctx<'_> {
     }
     fn register_command(&mut self, spec: CommandSpec) -> Result<CommandId, ApiError> {
         let ModHost { commands, bridge, .. } = &mut *self.host;
-        commands.register(self.owner, spec, &|n| n == MOD_COMMAND || bridge.is_builtin_command(n))
+        commands.register(self.owner, spec, &|n| bridge.is_builtin_command(n))
     }
     fn unregister_command(&mut self, id: CommandId) -> bool {
         self.host.commands.unregister(self.owner, id)
