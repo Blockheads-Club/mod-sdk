@@ -151,15 +151,18 @@ impl VoiceServer {
 
     /// A player is in the game, with their alias; `features` is their `HELLO.features`. Players without `voice` stay
     /// `none`. Every voice client learns the alias (`VOICE_STATE.names`), so it knows all players.
+    ///
+    /// A join for a player id that is still here (a reconnect whose quit has not arrived yet) keeps what the mod set
+    /// for them (allowed modes and activations) and their speaker id; the client is told its allowance again.
     pub fn join(&mut self, player: &str, alias: &str, features: &[String]) {
         let has = |f: &str| features.iter().any(|x| x == f);
-        let p = Player {
-            voice: has(feature::VOICE),
-            activations: Activation::mask(Activation::ALL),
-            alias: alias.to_string(),
-            ..Player::default()
-        };
-        self.players.insert(player.to_string(), p);
+        let p = self
+            .players
+            .entry(player.to_string())
+            .or_insert_with(|| Player { activations: Activation::mask(Activation::ALL), ..Player::default() });
+        p.voice = has(feature::VOICE);
+        p.alias = alias.to_string();
+        p.told = None;
         self.gone.remove(player);
         self.new_names.insert(player.to_string());
     }
