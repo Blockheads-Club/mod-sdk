@@ -245,6 +245,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "bhmod-opus-sys"
+version = "0.3.1"
+dependencies = [
+ "cc",
+]
+
+[[package]]
 name = "bhmod-proto"
 version = "0.3.1"
 dependencies = [
