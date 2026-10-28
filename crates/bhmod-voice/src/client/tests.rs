@@ -183,6 +183,27 @@ fn a_filling_jitter_buffer_does_not_split_a_spurt() {
 }
 
 #[test]
+fn an_admin_mute_closes_the_microphone_until_the_unmute() {
+    let (mut s, mut a, mut b, mut sink) = pair();
+    a.set_mic(true);
+    a.talk(None, true);
+    assert!(say(&mut s, &mut a, &mut b, &mut sink, 20));
+    assert!(!a.admin_muted());
+    s.mute("a", None);
+    s.tick(40, &mut sink);
+    sink.deliver(&mut a, &mut b);
+    assert!(a.admin_muted());
+    assert!(!a.mic_wanted(), "the microphone closes");
+    assert_eq!(a.transmitting(), None, "no indicator");
+    assert!(!say(&mut s, &mut a, &mut b, &mut sink, 60), "nothing is encoded or sent");
+    s.unmute("a");
+    s.tick(80, &mut sink);
+    sink.deliver(&mut a, &mut b);
+    assert!(!a.admin_muted() && a.mic_wanted(), "the wish comes back with the unmute");
+    assert!(say(&mut s, &mut a, &mut b, &mut sink, 100));
+}
+
+#[test]
 fn activation_and_allowed() {
     let (_s, mut a, _b, _) = pair();
     a.set_mic(true);
