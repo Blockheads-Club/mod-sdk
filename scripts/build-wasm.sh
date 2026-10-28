@@ -25,6 +25,13 @@ echo "built examples/hud-rust/client/mod.wasm"
 mkdir -p "$root/examples/prices-rust/client"
 cp "$CARGO_TARGET_DIR/wasm32-wasip2/release/prices_rust.wasm" "$root/examples/prices-rust/client/mod.wasm"
 echo "built examples/prices-rust/client/mod.wasm"
+# The voice mod: one component for both sides.
+(cd "$root/examples/voice-rust" && cargo build $locked --release --target wasm32-wasip2 -q)
+for side in server client; do
+  mkdir -p "$root/examples/voice-rust/$side"
+  cp "$CARGO_TARGET_DIR/wasm32-wasip2/release/voice_rust.wasm" "$root/examples/voice-rust/$side/mod.wasm"
+  echo "built examples/voice-rust/$side/mod.wasm"
+done
 for g in guest guest01 guest02 guest03; do
   d="$root/crates/bhmod-wasm/tests/$g"
   (cd "$d" && cargo build $locked --release --target wasm32-wasip2 -q)

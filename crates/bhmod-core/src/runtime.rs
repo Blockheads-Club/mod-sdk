@@ -16,7 +16,8 @@ use crate::types::{
     Event, EventKind, LogLevel, Outcome, Pos, Priority, ServiceError,
 };
 use crate::types::{Role, Side};
-use crate::ui::{Dialog, NoticeLevel, Widget};
+use crate::ui::{Button, Dialog, NoticeLevel, OverheadIcon, Widget};
+use crate::voice::{VoiceCall, VoiceReply};
 
 /// A subscription id (`events.subscription`).
 pub type SubscriptionId = u32;
@@ -317,6 +318,23 @@ pub trait HostApi {
         None
     }
 
+    /// `settings.get` (API 0.3.3): the current value of one of the calling mod's settings as canonical CBOR, `None`
+    /// for a key the mod does not declare.
+    fn settings_get(&mut self, key: &str) -> Option<Vec<u8>> {
+        let _ = key;
+        None
+    }
+    /// `settings.all` (API 0.3.3): every setting of the calling mod as a CBOR map.
+    fn settings_all(&mut self) -> Vec<u8> {
+        crate::value::Value::Map(Vec::new()).encode()
+    }
+    /// `settings.set` (API 0.3.3): changes one of the calling mod's settings (`value` is CBOR), validated against the
+    /// schema and stored in `mods.toml`.
+    fn settings_set(&mut self, key: &str, value: &[u8]) -> Result<(), ApiError> {
+        let _ = (key, value);
+        Err(ApiError::Unsupported)
+    }
+
     /// `channels.open`.
     fn channel_open(&mut self, name: &str) -> Result<ChannelId, ApiError> {
         let _ = name;
@@ -362,6 +380,90 @@ pub trait HostApi {
     fn ui_close_dialog(&mut self, id: u32) -> bool {
         let _ = id;
         false
+    }
+    /// `host.platform` (API 0.3.4).
+    fn host_platform(&mut self) -> String {
+        "unknown".into()
+    }
+    /// `player.sleeping` (API 0.3.4).
+    fn player_sleeping(&mut self, id: &str) -> bool {
+        let _ = id;
+        false
+    }
+    /// `player.alive` (API 0.3.4).
+    fn player_alive(&mut self, id: &str) -> bool {
+        let _ = id;
+        false
+    }
+    /// `players.local-player` (API 0.3.4).
+    fn players_local(&mut self) -> Option<String> {
+        None
+    }
+    /// `players.has-mod` (API 0.3.4).
+    fn players_has_mod(&mut self, id: &str, mod_id: &str) -> bool {
+        let _ = (id, mod_id);
+        false
+    }
+    /// `terrain.world-width` (API 0.3.4).
+    fn terrain_world_width(&mut self) -> Option<i32> {
+        None
+    }
+    /// `ui.has-touch` (API 0.3.4).
+    fn ui_has_touch(&mut self) -> bool {
+        false
+    }
+    /// `ui.set-overhead` (API 0.3.4); `player` is a player id.
+    fn ui_set_overhead(&mut self, player: &str, icon: OverheadIcon) -> Result<(), ApiError> {
+        let _ = (player, icon);
+        Err(ApiError::Unsupported)
+    }
+    /// `ui.clear-overhead` (API 0.3.4).
+    fn ui_clear_overhead(&mut self, player: &str) -> bool {
+        let _ = player;
+        false
+    }
+    /// `ui.set-button` (API 0.3.4).
+    fn ui_set_button(&mut self, id: &str, button: Button) -> Result<(), ApiError> {
+        let _ = (id, button);
+        Err(ApiError::Unsupported)
+    }
+    /// `ui.remove-button` (API 0.3.4).
+    fn ui_remove_button(&mut self, id: &str) -> bool {
+        let _ = id;
+        false
+    }
+    /// `ui.open-settings` (API 0.3.4).
+    fn ui_open_settings(&mut self, mod_id: &str) -> Result<(), ApiError> {
+        let _ = mod_id;
+        Err(ApiError::Unsupported)
+    }
+
+    /// Every `voice` function (API 0.3.4, permission `voice`), one [`VoiceCall`] each.
+    fn voice(&mut self, call: VoiceCall) -> Result<VoiceReply, ApiError> {
+        let _ = call;
+        Err(ApiError::Unsupported)
+    }
+
+    /// `terrain.solid-count` (API 0.3.4).
+    fn terrain_solid_count(&mut self, x1: i32, y1: i32, x2: i32, y2: i32) -> Result<u32, ApiError> {
+        let _ = (x1, y1, x2, y2);
+        Err(ApiError::Unsupported)
+    }
+
+    /// `input.bind` (API 0.3.4).
+    fn input_bind(&mut self, action: &str, default_key: &str) -> Result<(), ApiError> {
+        let _ = (action, default_key);
+        Err(ApiError::Unsupported)
+    }
+    /// `input.unbind` (API 0.3.4).
+    fn input_unbind(&mut self, action: &str) -> bool {
+        let _ = action;
+        false
+    }
+    /// `input.key-of` (API 0.3.4).
+    fn input_key_of(&mut self, action: &str) -> Option<String> {
+        let _ = action;
+        None
     }
 }
 

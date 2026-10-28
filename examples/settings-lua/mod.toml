@@ -1,0 +1,56 @@
+schema = 1
+id = "settings-lua"
+version = "0.1.0"
+name = { en = "Welcome settings (Lua)", tr = "Karşılama ayarları (Lua)" }
+description = { en = "Greets players who join with a text, a colour of the day and rules the admin sets. Example of mod settings." }
+authors = ["Blockheads Club"]
+license = "MIT OR Apache-2.0"
+homepage = "https://github.com/Blockheads-Club/mod-sdk"
+api = "^0.3.3"
+
+[sides]
+server = true
+client = false
+
+[entry]
+server = { runtime = "lua", path = "server/main.luau" }
+
+[settings.enabled]
+type = "bool"
+default = true
+label = { en = "Greet players", tr = "Oyuncuları karşıla", ru = "Приветствовать игроков", kk = "Ойыншыларды қарсы алу" }
+
+[settings.greeting]
+type = "string"
+default = "Welcome, {name}!"
+max_length = 120
+label = { en = "Greeting", tr = "Karşılama" }
+help = { en = "{name} becomes the player's name.", tr = "{name} oyuncunun adı olur." }
+group = "text"
+
+[settings.repeat]
+type = "int"
+default = 1
+min = 1
+max = 3
+label = "Times to repeat the greeting"
+group = "text"
+
+[settings.style]
+type = "enum"
+values = ["plain", "loud"]
+default = "plain"
+label = "Style"
+group = "text"
+
+[settings.staff]
+type = "roles"
+default = ["owner", "admin"]
+label = "Roles greeted as staff"
+
+[settings.rules]
+type = "list"
+default = [{ text = "Be nice." }]
+max_items = 5
+label = "Rules shown after the greeting"
+item = { text = { type = "string", default = "", max_length = 80, label = "Rule" }, staff_only = { type = "bool", default = false, label = "Only for staff" } }

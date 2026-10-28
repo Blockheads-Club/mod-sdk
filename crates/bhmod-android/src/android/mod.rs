@@ -12,11 +12,15 @@
 //!   then sent with `bhcModLoader` added to a copy of `myPlayerInfo`.
 //! - `-[BHNetClientMatch disconnect]`: the session ends.
 
+pub mod aaudio;
 pub mod cosmetics;
 pub mod items;
 pub mod menus;
 pub mod native;
 pub mod objc;
+pub mod opensles;
+pub mod overhead;
+pub mod voice;
 pub mod weapons;
 
 use std::cell::RefCell;
@@ -144,12 +148,54 @@ pub(crate) fn java_post(json: &str) {
     let _ = env.delete_local_ref(s);
 }
 
+/// Calls the no-argument `Bridge.<name>()` on the Java side.
+pub(crate) fn java_call(name: &str) {
+    let (Some(vm), Some(cls)) = (VM.get(), BRIDGE_CLASS.get()) else { return };
+    let Ok(mut env) = vm.attach_current_thread_permanently() else { return };
+    let class: &JClass = cls.as_obj().into();
+    if env.call_static_method(class, name, "()V", &[]).is_err() {
+        let _ = env.exception_clear();
+    }
+}
+
+/// `Bridge.<name>()` returning a boolean (false without the Java side).
+pub(crate) fn java_bool(name: &str) -> bool {
+    let (Some(vm), Some(cls)) = (VM.get(), BRIDGE_CLASS.get()) else { return false };
+    let Ok(mut env) = vm.attach_current_thread_permanently() else { return false };
+    let class: &JClass = cls.as_obj().into();
+    match env.call_static_method(class, name, "()Z", &[]).and_then(|v| v.z()) {
+        Ok(b) => b,
+        Err(_) => {
+            let _ = env.exception_clear();
+            false
+        }
+    }
+}
+
+/// Queues an answer from a Java thread for the loader thread.
+pub(crate) fn push_ui(ev: UiEvent) {
+    EVENTS.lock().unwrap_or_else(|e| e.into_inner()).push(ev);
+}
+
+/// Milliseconds since the library loaded (the loader's clock).
+pub(crate) fn now_ms() -> u64 {
+    START.get_or_init(Instant::now).elapsed().as_millis() as u64
+}
+
+/// The open world (loader thread), null outside one.
+pub(crate) fn world() -> Id {
+    if !INBOX.is_owner() {
+        return std::ptr::null_mut();
+    }
+    WORLD.with(|w| *w.borrow()) as Id
+}
+
 /// The game, as the loader sees it.
 pub struct AndroidPlatform;
 
 impl Platform for AndroidPlatform {
     fn now_ms(&self) -> u64 {
-        START.get_or_init(Instant::now).elapsed().as_millis() as u64
+        now_ms()
     }
     fn log(&self, level: LogLevel, msg: &str) {
         log(level, msg);
@@ -184,6 +230,18 @@ impl Platform for AndroidPlatform {
     fn unload_native(&self, mod_id: &str) {
         native::unload(mod_id);
     }
+    fn audio(&self) -> Option<crate::voice::audio::AudioIo> {
+        voice::audio()
+    }
+    fn ask_mic(&self) {
+        voice::ask_mic();
+    }
+    fn camera(&self) -> Option<crate::overhead::Camera> {
+        overhead::camera(world())
+    }
+    fn local_player(&self) -> Option<String> {
+        local_player()
+    }
 }
 
 /// Runs `f` on the loader (created on first use), then the deferred game calls. `None` off the loader thread.
@@ -203,9 +261,12 @@ fn with_loader<R>(f: impl FnOnce(&mut Loader<AndroidPlatform>) -> R) -> Option<R
                 crate::options(),
                 Box::new(move || crate::runtimes(&wasm_cache)),
             )
-            .with_budgets(crate::budgets());
-            // The blockhead hooks run on the game's other threads: they read the cosmetics through this handle.
+            .with_budgets(crate::budgets())
+            .with_voice(crate::voice::client::factory());
+            // The blockhead hooks run on the game's other threads: they read the cosmetics and report blockheads
+            // (overhead icons) through these handles.
             let _ = cosmetics::SHARED.set(loader.content());
+            let _ = cosmetics::TRACKER.set(loader.tracker());
             *l = Some(loader);
         }
         Some(f(l.as_mut().expect("just set")))
@@ -300,6 +361,9 @@ extern "C" fn hook_draw_frame(this: Id, cmd: Sel) {
             }
             if changed {
                 cosmetics::reset();
+                if let Some(t) = cosmetics::TRACKER.get() {
+                    t.reset();
+                }
                 if world.is_null() {
                     l.on_world(None);
                 } else {
@@ -505,11 +569,12 @@ pub extern "system" fn JNI_OnLoad(vm: JavaVM, _reserved: *mut c_void) -> jint {
         log(
             LogLevel::Info,
             &format!(
-                "mod loader {} loaded (hooks {}, data {}, runtimes {:?})",
+                "mod loader {} loaded (hooks {}, data {}, runtimes {:?}, features {:?})",
                 crate::VERSION,
                 if hooks { "on" } else { "off" },
                 data_dir().display(),
-                crate::options().runtimes
+                crate::options().runtimes,
+                crate::features()
             ),
         );
         java_post(&serde_json::json!({"t": "ready", "version": crate::VERSION, "hooks": hooks}).to_string());
@@ -669,4 +734,99 @@ pub extern "system" fn Java_com_blockheadsclub_modloader_Native_remove(
     } else {
         JNI_FALSE
     }
+}
+
+fn push_str(env: &mut JNIEnv, s: &JString) -> String {
+    jstr(env, s).unwrap_or_default()
+}
+
+/// `Native.uiButton(mod, id, action)`: an on-screen button of a mod was used.
+#[no_mangle]
+pub extern "system" fn Java_com_blockheadsclub_modloader_Native_uiButton(
+    mut env: JNIEnv,
+    _c: JClass,
+    mod_id: JString,
+    id: JString,
+    action: JString,
+) {
+    let ev = UiEvent::Button {
+        mod_id: push_str(&mut env, &mod_id),
+        id: push_str(&mut env, &id),
+        action: push_str(&mut env, &action),
+    };
+    push_ui(ev);
+}
+
+/// `Native.buttonMoved(mod, id, x, y)`: the player dropped a button.
+#[no_mangle]
+pub extern "system" fn Java_com_blockheadsclub_modloader_Native_buttonMoved(
+    mut env: JNIEnv,
+    _c: JClass,
+    mod_id: JString,
+    id: JString,
+    x: jni::sys::jfloat,
+    y: jni::sys::jfloat,
+) {
+    let ev = UiEvent::ButtonMoved { mod_id: push_str(&mut env, &mod_id), id: push_str(&mut env, &id), x, y };
+    push_ui(ev);
+}
+
+/// `Native.voiceMode(mode)`: picked in the long-press picker.
+#[no_mangle]
+pub extern "system" fn Java_com_blockheadsclub_modloader_Native_voiceMode(mut env: JNIEnv, _c: JClass, mode: JString) {
+    let m = push_str(&mut env, &mode);
+    push_ui(UiEvent::VoiceMode(m));
+}
+
+/// `Native.key(name, down)`: a hardware key.
+#[no_mangle]
+pub extern "system" fn Java_com_blockheadsclub_modloader_Native_key(
+    mut env: JNIEnv,
+    _c: JClass,
+    name: JString,
+    down: jboolean,
+) {
+    let n = push_str(&mut env, &name);
+    push_ui(UiEvent::Key(n, down != JNI_FALSE));
+}
+
+/// `Native.openSettings(mod)`: the Mods screen opens a mod's settings.
+#[no_mangle]
+pub extern "system" fn Java_com_blockheadsclub_modloader_Native_openSettings(
+    mut env: JNIEnv,
+    _c: JClass,
+    mod_id: JString,
+) {
+    let m = push_str(&mut env, &mod_id);
+    push_ui(UiEvent::OpenSettings(m));
+}
+
+/// `Native.settingSet(mod, scope, key, json)`: a change in the settings screen.
+#[no_mangle]
+pub extern "system" fn Java_com_blockheadsclub_modloader_Native_settingSet(
+    mut env: JNIEnv,
+    _c: JClass,
+    mod_id: JString,
+    scope: JString,
+    key: JString,
+    json: JString,
+) {
+    let ev = UiEvent::Setting {
+        mod_id: push_str(&mut env, &mod_id),
+        scope: push_str(&mut env, &scope),
+        key: push_str(&mut env, &key),
+        json: push_str(&mut env, &json),
+    };
+    push_ui(ev);
+}
+
+/// `Native.tap(x, y)`: a touch on the game started there (screen fractions).
+#[no_mangle]
+pub extern "system" fn Java_com_blockheadsclub_modloader_Native_tap(
+    _env: JNIEnv,
+    _c: JClass,
+    x: jni::sys::jfloat,
+    y: jni::sys::jfloat,
+) {
+    push_ui(UiEvent::Tap(x, y));
 }

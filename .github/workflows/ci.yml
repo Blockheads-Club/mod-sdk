@@ -73,6 +73,8 @@ jobs:
         run: cargo llvm-cov --workspace --features bhmod-core/jvm,bhmod-android/jvm --locked --ignore-filename-regex 'bhmod-wasm/src/wit' --fail-under-lines 100 --lcov --output-path lcov.info
       - name: Coverage summary
         run: cargo llvm-cov report --summary-only
+      - name: Voice mod policy tests with 100 % line coverage gate (host build of examples/voice-rust)
+        run: cd examples/voice-rust && cargo llvm-cov --locked --ignore-filename-regex 'sdk/rust' --fail-under-lines 100
 
   wit:
     runs-on: ubuntu-latest
@@ -118,7 +120,7 @@ jobs:
         env:
           CARGO_TARGET_DIR: ${{ github.workspace }}/target/wasm-guests
         run: |
-          for d in sdk/rust/blockheads-mod examples/hello-rust examples/chat-filter-rust examples/scheduler-rust examples/shop-rust examples/prices-rust crates/bhmod-wasm/tests/guest crates/bhmod-wasm/tests/guest03; do
+          for d in sdk/rust/blockheads-mod examples/hello-rust examples/chat-filter-rust examples/scheduler-rust examples/shop-rust examples/prices-rust examples/voice-rust crates/bhmod-wasm/tests/guest crates/bhmod-wasm/tests/guest03; do
             (cd "$d" && cargo fmt --check && cargo clippy --locked --target wasm32-wasip2 -- -D warnings)
           done
           LOCKED=--locked scripts/build-wasm.sh
@@ -130,10 +132,10 @@ jobs:
       # TinyGo / Zig / C example builds are documented in docs/wasm.md but not run here yet (no toolchain in CI).
       - name: bhmod check on the examples
         run: |
-          for e in hello-lua chat-filter scheduler-lua economy perms landclaim hello-rust chat-filter-rust scheduler-rust shop-rust prices-lua prices-rust hello-java chat-filter-java scheduler-java shop-java weapon-skins; do ./target/debug/bhmod check --index "examples/$e"; done
+          for e in hello-lua chat-filter scheduler-lua economy perms landclaim hello-rust chat-filter-rust scheduler-rust shop-rust prices-lua prices-rust hello-java chat-filter-java scheduler-java shop-java weapon-skins settings-lua voice-rust; do ./target/debug/bhmod check --index "examples/$e"; done
       - name: bhmod pack on the examples
         run: |
-          for e in hello-lua chat-filter scheduler-lua economy perms landclaim hello-rust chat-filter-rust scheduler-rust shop-rust prices-lua prices-rust hello-java chat-filter-java scheduler-java shop-java weapon-skins; do
+          for e in hello-lua chat-filter scheduler-lua economy perms landclaim hello-rust chat-filter-rust scheduler-rust shop-rust prices-lua prices-rust hello-java chat-filter-java scheduler-java shop-java weapon-skins settings-lua voice-rust; do
             ./target/debug/bhmod pack "examples/$e" -o "$RUNNER_TEMP/$e.bhmod"
             ./target/debug/bhmod check --index "$RUNNER_TEMP/$e.bhmod"
           done

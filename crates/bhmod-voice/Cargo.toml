@@ -1,0 +1,20 @@
+[package]
+name = "bhmod-voice"
+description = "Transport-agnostic voice chat core for Blockheads mod hosts: crypto, frames, relay, jitter buffer, mixer, VAD"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license = "GPL-3.0-or-later"
+repository.workspace = true
+authors.workspace = true
+publish = false
+
+[dependencies]
+bhmod-core = { path = "../bhmod-core", default-features = false }
+bhmod-proto.workspace = true
+sha2.workspace = true
+hmac = "0.12"
+hkdf = "0.12"
+chacha20poly1305 = { version = "0.10", default-features = false, features = ["alloc"] }
+x25519-dalek = { version = "2", features = ["static_secrets"] }
+getrandom = "0.3"

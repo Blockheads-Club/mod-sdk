@@ -30,4 +30,16 @@ public interface Players {
      * Sends a chat line to every player, shown as a server message. Needs the `players:chat` permission.
      */
     void broadcast(String text);
+
+    /**
+     * (0.3.4) The player of this game client (named `local-player` because `local` is a Luau keyword); `none` on the
+     * server and before the client knows its own id.
+     */
+    club.blockheads.api.players.Player localPlayer();
+
+    /**
+     * (0.3.4) True when the player's client runs mod `mod-id` (it accepted the join with it, or has it installed).
+     * Server only (clients answer false). Tells a vanilla client from a modded one that has not started voice yet.
+     */
+    boolean hasMod(club.blockheads.api.players.Player who, String modId);
 }

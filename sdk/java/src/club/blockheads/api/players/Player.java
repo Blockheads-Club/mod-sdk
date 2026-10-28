@@ -100,4 +100,22 @@ public class Player {
     public void kick(String reason) {
         Wire.unwrap(b.call("players.player.kick", key, reason), x -> new club.blockheads.api.types.ApiErrorException(club.blockheads.api.types.ApiError.fromWire(x, b)));
     }
+
+    /**
+     * (0.3.4) True while the player's blockhead sleeps (in a bed or tent). Server only; false elsewhere and for a
+     * player who left. The host fires the custom events `player:sleep` and `player:wake` with `{"player": id}`.
+     */
+    public boolean sleeping() {
+        Object r = b.call("players.player.sleeping", key);
+        return Wire.bool(r);
+    }
+
+    /**
+     * (0.3.4) True while the player's blockhead is alive (not dead and waiting to respawn). Server only; false
+     * elsewhere and for a player who left. After a respawn the host fires `player:respawn` with `{"player": id}`.
+     */
+    public boolean alive() {
+        Object r = b.call("players.player.alive", key);
+        return Wire.bool(r);
+    }
 }

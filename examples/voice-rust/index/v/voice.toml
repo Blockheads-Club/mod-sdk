@@ -1,0 +1,32 @@
+id = "voice"
+name = "Voice chat"
+description = "Talk to nearby players, your channel or everyone: push-to-talk, voice activation, channels, admin mutes and per-player volumes. Players without the mod may still join. The server opens one UDP port for voice (game port + 1)."
+owners = ["Blockheads-Club"]
+repo = "https://github.com/Blockheads-Club/mod-sdk/tree/dev/examples/voice-rust"
+tags = ["voice", "chat", "admin", "rust"]
+draft = false
+
+[i18n.tr]
+name = "Sesli sohbet"
+description = "Yakındaki oyuncularla, kanalınla ya da herkesle konuş: bas-konuş, sesle etkinleşme, kanallar, yönetici susturmaları ve oyuncu başına ses düzeyi. Modu olmayan oyuncular da katılabilir. Sunucu ses için bir UDP portu açar (oyun portu + 1)."
+
+[i18n.ru]
+name = "Голосовой чат"
+description = "Говорите с игроками рядом, своим каналом или со всеми: рация по кнопке, активация голосом, каналы, мут от админа и громкость для каждого игрока. Игроки без мода тоже могут зайти. Сервер открывает для голоса один UDP-порт (порт игры + 1)."
+
+[i18n.kk]
+name = "Дауыстық чат"
+description = "Жақын ойыншылармен, арнаңызбен немесе барлығымен сөйлесіңіз: батырмамен сөйлеу, дауыспен іске қосу, арналар, әкімшінің дыбысын өшіруі және әр ойыншының дыбыс деңгейі. Модсыз ойыншылар да кіре алады. Сервер дауыс үшін бір UDP портын ашады (ойын порты + 1)."
+
+[[versions]]
+version = "0.1.0"
+# Draft: release tag, sha256 and size come from `bhmod pack examples/voice-rust` of the released build.
+url = "https://github.com/Blockheads-Club/mod-sdk/releases/download/mods-2026.10.28/voice-0.1.0.bhmod"
+sha256 = "8dcec63ebf3024d1e1125906afadc477bfc0fbca5db19a90ac5fa32df9deebe6"
+size = 247839
+sides = ["server", "client"]
+client-required = false
+api = "^0.3.4"
+soft-depends = { perms = "^1" }
+permissions = { voice = true }
+published = 2026-10-28

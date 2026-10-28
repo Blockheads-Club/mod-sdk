@@ -10,9 +10,13 @@ use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 use bhmod_core::budget::Clock;
+use bhmod_core::input::InputCommand;
 use bhmod_core::remote::{RemoteCall, RemoteError};
 use bhmod_core::types::{ApiError, ChannelTarget, ContentKind, LogLevel, Pos, Role, Side};
 use bhmod_core::ui::UiCommand;
+use bhmod_core::voice::{
+    Activation, Allowance, Caps, Icons, MicState, Mode, Route, TransportConfig, VoiceHost, VoiceState,
+};
 use bhmod_core::GameBridge;
 
 /// A channel message the bridge was asked to send: (mod, channel, target, data).
@@ -49,6 +53,145 @@ pub struct FakeBridge {
     pub remote_calls: RefCell<Vec<RemoteCall>>,
     /// When set, `service_send` fails with this error (and sends nothing).
     pub remote_fail: RefCell<Option<RemoteError>>,
+    /// The voice host (API 0.3.4), when `has_voice`.
+    pub voice: RecVoice,
+    pub has_voice: Cell<bool>,
+    /// Solid tiles and the world width (API 0.3.4 `terrain`).
+    pub solid: RefCell<Vec<(i32, i32)>>,
+    pub width: Cell<Option<i32>>,
+    /// Key binding commands (API 0.3.4 `input`), and the player's rebinds: (mod, action, key).
+    pub input: RefCell<Vec<(String, InputCommand)>>,
+    pub rebinds: RefCell<Vec<(String, String, Option<String>)>>,
+    /// The side the bridge reports (the server unless set).
+    pub client: Cell<bool>,
+    /// API 0.3.4 facts: sleeping players, living players, the local player, (player, mod) pairs that run a mod, touch.
+    pub sleeping: RefCell<Vec<String>>,
+    pub alive: RefCell<Vec<String>>,
+    pub local: RefCell<Option<String>>,
+    pub has_mods: RefCell<Vec<(String, String)>>,
+    pub touch: Cell<bool>,
+}
+
+/// A voice host that records every call as text and answers with fixed values.
+#[derive(Default)]
+pub struct RecVoice {
+    pub calls: RefCell<Vec<String>>,
+}
+
+impl RecVoice {
+    fn rec(&self, s: String) {
+        self.calls.borrow_mut().push(s);
+    }
+    pub fn take(&self) -> Vec<String> {
+        std::mem::take(&mut self.calls.borrow_mut())
+    }
+}
+
+impl VoiceHost for RecVoice {
+    fn state(&self, p: &str) -> Result<VoiceState, ApiError> {
+        self.rec(format!("state {p}"));
+        Ok(VoiceState::SelfMuted)
+    }
+    fn icons(&self) -> Result<Icons, ApiError> {
+        Ok(Icons { no_voice: false, ..Icons::default() })
+    }
+    fn set_routes(&self, s: &str, r: &[Route]) -> Result<(), ApiError> {
+        self.rec(format!("routes {s} {r:?}"));
+        Ok(())
+    }
+    fn mute(&self, p: &str, u: Option<u64>) -> Result<(), ApiError> {
+        self.rec(format!("mute {p} {u:?}"));
+        Ok(())
+    }
+    fn unmute(&self, p: &str) -> Result<bool, ApiError> {
+        self.rec(format!("unmute {p}"));
+        Ok(true)
+    }
+    fn set_speaker_gain(&self, p: &str, g: u16) -> Result<(), ApiError> {
+        self.rec(format!("gain {p} {g}"));
+        Ok(())
+    }
+    fn set_caps(&self, c: Caps) -> Result<(), ApiError> {
+        self.rec(format!("caps {c:?}"));
+        Ok(())
+    }
+    fn set_transport(&self, t: TransportConfig) -> Result<(), ApiError> {
+        self.rec(format!("transport {t:?}"));
+        Ok(())
+    }
+    fn set_allowed(&self, p: &str, m: u8, a: u8) -> Result<(), ApiError> {
+        self.rec(format!("allowed {p} {m} {a}"));
+        Ok(())
+    }
+    fn set_icons(&self, i: Icons) -> Result<(), ApiError> {
+        self.rec(format!("icons {i:?}"));
+        Ok(())
+    }
+    fn set_broadcast_overrides_deafen(&self, on: bool) -> Result<(), ApiError> {
+        self.rec(format!("override {on}"));
+        Ok(())
+    }
+    fn set_default_mode(&self, m: Mode) -> Result<(), ApiError> {
+        self.rec(format!("default {}", m.name()));
+        Ok(())
+    }
+    fn set_activation(&self, a: Activation) -> Result<(), ApiError> {
+        self.rec(format!("activation {}", a.name()));
+        Ok(())
+    }
+    fn talk(&self, m: Option<Mode>, pressed: bool) -> Result<(), ApiError> {
+        self.rec(format!("talk {:?} {pressed}", m.map(Mode::name)));
+        Ok(())
+    }
+    fn set_mic(&self, on: bool) -> Result<(), ApiError> {
+        self.rec(format!("mic {on}"));
+        Ok(())
+    }
+    fn set_self_mute(&self, on: bool) -> Result<(), ApiError> {
+        self.rec(format!("self-mute {on}"));
+        Ok(())
+    }
+    fn set_deafen(&self, on: bool) -> Result<(), ApiError> {
+        self.rec(format!("deafen {on}"));
+        Ok(())
+    }
+    fn set_vad_threshold(&self, db: f32) -> Result<(), ApiError> {
+        self.rec(format!("vad {db}"));
+        Ok(())
+    }
+    fn set_master(&self, p: u16) -> Result<(), ApiError> {
+        self.rec(format!("master {p}"));
+        Ok(())
+    }
+    fn master(&self) -> Result<u16, ApiError> {
+        Ok(75)
+    }
+    fn set_player_volume(&self, p: &str, v: u16) -> Result<(), ApiError> {
+        self.rec(format!("volume {p} {v}"));
+        Ok(())
+    }
+    fn player_volume(&self, _p: &str) -> Result<u16, ApiError> {
+        Ok(60)
+    }
+    fn mute_player(&self, p: &str, m: bool) -> Result<(), ApiError> {
+        self.rec(format!("mute-player {p} {m}"));
+        Ok(())
+    }
+    fn player_muted(&self, _p: &str) -> Result<bool, ApiError> {
+        Ok(true)
+    }
+    fn allowed(&self) -> Result<Allowance, ApiError> {
+        Ok(Allowance { modes: 0b0011, activations: 0b001, max_bitrate: 16_000 })
+    }
+    fn self_muted(&self) -> Result<bool, ApiError> {
+        Ok(true)
+    }
+    fn deafened(&self) -> Result<bool, ApiError> {
+        Ok(false)
+    }
+    fn mic(&self) -> Result<MicState, ApiError> {
+        Ok(MicState::On)
+    }
 }
 
 impl FakeBridge {
@@ -91,7 +234,52 @@ impl FakeBridge {
 
 impl GameBridge for FakeBridge {
     fn side(&self) -> Side {
-        Side::Server
+        if self.client.get() {
+            Side::Client
+        } else {
+            Side::Server
+        }
+    }
+    fn voice(&self) -> Option<&dyn VoiceHost> {
+        self.has_voice.get().then_some(&self.voice as &dyn VoiceHost)
+    }
+    fn tile_solid(&self, x: i32, y: i32) -> Option<bool> {
+        Some(self.solid.borrow().contains(&(x, y)))
+    }
+    fn world_width(&self) -> Option<i32> {
+        self.width.get()
+    }
+    fn platform(&self) -> String {
+        "test-linux-x86_64".into()
+    }
+    fn player_sleeping(&self, id: &str) -> bool {
+        self.sleeping.borrow().iter().any(|p| p == id)
+    }
+    fn player_alive(&self, id: &str) -> bool {
+        self.alive.borrow().iter().any(|p| p == id)
+    }
+    fn local_player(&self) -> Option<String> {
+        self.local.borrow().clone()
+    }
+    fn player_has_mod(&self, id: &str, mod_id: &str) -> bool {
+        self.has_mods.borrow().iter().any(|(p, m)| p == id && m == mod_id)
+    }
+    fn has_touch(&self) -> bool {
+        self.touch.get()
+    }
+    fn input(&self, mod_id: &str, command: &InputCommand) -> Result<(), ApiError> {
+        if self.no_ui.get() {
+            return Err(ApiError::Unsupported);
+        }
+        self.input.borrow_mut().push((mod_id.into(), command.clone()));
+        Ok(())
+    }
+    fn input_key(&self, mod_id: &str, action: &str, default_key: &str) -> Option<String> {
+        let r = self.rebinds.borrow();
+        match r.iter().find(|(m, a, _)| m == mod_id && a == action) {
+            Some((_, _, k)) => k.clone(),
+            None => Some(default_key.to_string()),
+        }
     }
     fn host_name(&self) -> String {
         "fake-host 1.0".into()

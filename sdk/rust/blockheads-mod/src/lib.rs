@@ -61,7 +61,7 @@ pub use wit::types::{ApiError, Pos, Priority, Side};
 pub mod prelude {
     pub use crate::commands::{self, Command, Reply, Sender};
     pub use crate::events::{self, EventCtx, EventKind};
-    pub use crate::{channels, content, host, log, players, scheduler, services, storage, ui};
+    pub use crate::{channels, content, host, input, log, players, scheduler, services, settings, storage, terrain, ui, voice};
     pub use crate::{ApiError, Mod, Player, Priority, Role, Side};
 }
 
@@ -195,7 +195,7 @@ impl<M: Mod> guest::Guest for Exported<M> {
 
 /// Facts about the host and this mod.
 pub mod host {
-    pub use crate::wit::host::{api_version, current_side, host_name, mod_id, mod_version};
+    pub use crate::wit::host::{api_version, current_side, host_name, mod_id, mod_version, platform};
 }
 
 /// Logging to the server console or client log (prefixed with the mod id by the host).
@@ -333,7 +333,9 @@ pub mod channels {
 
 /// Connected players.
 pub mod players {
-    pub use crate::wit::players::{broadcast, find_by_alias, from_value_handle, get, online, Player, Role};
+    pub use crate::wit::players::{
+        broadcast, find_by_alias, from_value_handle, get, has_mod, local_player, online, Player, Role,
+    };
 }
 
 /// Content ids and cosmetics (API 0.3).
@@ -343,14 +345,57 @@ pub mod content {
     };
 }
 
+/// The mod's own settings from `[settings]` in `mod.toml` (API 0.3.3). Values are [`crate::cbor::Value`]s; after
+/// every change the host fires the custom event `<mod-id>:settings-changed` with `{"keys": [...]}`.
+pub mod settings {
+    use crate::cbor::Value;
+    use crate::ApiError;
+
+    /// The raw imports (values as CBOR bytes).
+    pub use crate::wit::settings as raw;
+
+    /// The current value of `key`; `None` for a key the mod does not declare.
+    pub fn get(key: &str) -> Option<Value> {
+        raw::get(key).and_then(|b| Value::decode(&b).ok())
+    }
+
+    /// Every setting as a map.
+    pub fn all() -> Value {
+        Value::decode(&raw::all()).unwrap_or(Value::Map(Vec::new()))
+    }
+
+    /// Changes `key` (validated by the host, stored in `mods.toml`).
+    pub fn set(key: &str, value: &Value) -> Result<(), ApiError> {
+        raw::set(key, &value.encode())
+    }
+}
+
+/// Voice chat (API 0.3.4, permission `voice`): the raw WIT functions and types. The host fires the custom events
+/// `voice:talk-start`, `voice:talk-stop`, `voice:state` (`{"player", "mode"|"state"}`) and `voice:mic`
+/// (`{"state"}`) to mods holding the permission. See `docs/voice.md`.
+pub mod voice {
+    pub use crate::wit::voice::*;
+}
+
+/// Terrain queries (API 0.3.4): `solid_count` for muffling voice through walls (server only).
+pub mod terrain {
+    pub use crate::wit::terrain::{solid_count, world_width};
+}
+
+/// Key bindings of client mods (API 0.3.4); presses arrive as `<mod-id>:input {"action", "pressed"}`.
+pub mod input {
+    pub use crate::wit::input::{bind, key_of, unbind};
+}
+
 /// HUD widgets, toasts, notices and dialogs on the client (API 0.3). A host without UI (the server) answers every call
 /// with `ApiError::Unsupported`.
 pub mod ui {
     use crate::{events, ApiError};
 
     pub use crate::wit::ui::{
-        close_dialog, notice, remove_widget, set_widget, show_dialog, toast, ButtonKind, Dialog, DialogButton, Field,
-        NoticeLevel, Slot, Widget, WidgetKind,
+        clear_overhead, close_dialog, has_touch, notice, open_settings, remove_button, remove_widget, set_button, set_overhead,
+        set_widget, show_dialog, toast, Button, ButtonKind, Dialog, DialogButton, Field, NoticeLevel, OverheadIcon, Slot,
+        Widget, WidgetKind,
     };
 
     /// The `button` of an answer when the dialog went away without one (back, leaving the world).

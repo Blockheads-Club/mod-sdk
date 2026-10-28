@@ -13,8 +13,9 @@ use std::path::PathBuf;
 use bhmod_content::registry::Wire;
 use bhmod_manifest::Manifest;
 use bhmod_proto::{
-    file_error, Channel, Cosmetics, FileRequest, Hash, Hello, Message, ModInfo, ModList, PlayerCount, Ready,
-    RejectText, ServerHello, ServiceCall, ServiceResult, CHUNK_SIZE, HELLO_TIMEOUT_MS, MAX_CHANNEL_PAYLOAD, PROTO,
+    feature, file_error, Channel, Cosmetics, FileRequest, Hash, Hello, Message, ModInfo, ModList, PlayerCount, Ready,
+    RejectText, ServerHello, ServiceCall, ServiceResult, SettingsResult, SettingsSchema, SettingsSet, CHUNK_SIZE,
+    HELLO_TIMEOUT_MS, MAX_CHANNEL_PAYLOAD, PROTO,
 };
 
 use crate::cache::PackageCache;
@@ -48,6 +49,8 @@ pub struct Options {
     /// Packages (by SHA-256) the host trusts to carry native code: the player installed exactly this file from the
     /// public index and confirmed the red warning. A server listing native code with another hash is refused.
     pub native_trusted: Vec<Hash>,
+    /// `HELLO.features`: optional protocol features this loader speaks (`voice`, `settings`). Empty by default.
+    pub features: Vec<String>,
 }
 
 impl Options {
@@ -64,6 +67,7 @@ impl Options {
             busy_retry_ms: 1_000,
             allow_native: false,
             native_trusted: Vec::new(),
+            features: Vec::new(),
         }
     }
 }
@@ -88,6 +92,20 @@ pub struct Accepted {
     pub path: PathBuf,
     /// Its manifest.
     pub manifest: Manifest,
+}
+
+/// An optional client mod this loader could not run (it was left out; the join went ahead without it), e.g. one
+/// that needs a newer API or loader. The host tells the player once per join ([`Output::Skipped`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SkippedMod {
+    /// The mod id.
+    pub id: String,
+    /// The version the server listed.
+    pub version: String,
+    /// The display names from `MOD_LIST` (language code -> name).
+    pub name: std::collections::BTreeMap<String, String>,
+    /// Why it was left out.
+    pub refusal: Refusal,
 }
 
 /// Why the modded join stopped. The host disconnects (or lets the server reject) and shows the text.
@@ -200,6 +218,18 @@ pub enum Output {
     ServiceCall(ServiceCall),
     /// The server's answer to a call of a client mod (`SERVICE_RESULT`).
     ServiceResult(ServiceResult),
+    /// (API 0.3.4) A voice op for the host's voice client (`bhmod_voice::client::VoiceClient::on_message`):
+    /// `VOICE_KEY` or `VOICE_STATE`, only when both sides listed `voice` ([`Session::voice_enabled`]). Voice frames
+    /// do not pass the session: they use the server's voice UDP port.
+    Voice(Message),
+    /// (API 0.3.4) A mod's server settings form for the in-game admin screen (`SETTINGS_SCHEMA`), only when both
+    /// sides listed `settings`.
+    SettingsSchema(SettingsSchema),
+    /// (API 0.3.4) The answer to a [`Session::settings_set`] (`SETTINGS_RESULT`), one per set, in order.
+    SettingsResult(SettingsResult),
+    /// Optional client mods this loader could not run and left out (after [`Output::Load`], only when there are
+    /// any): tell the player, e.g. "update the mod loader to use it".
+    Skipped(Vec<SkippedMod>),
 }
 
 #[derive(Debug, Clone)]
@@ -237,6 +267,8 @@ pub struct Session {
     channels: BTreeMap<String, u16>,
     registry: Wire,
     players: Option<PlayerCount>,
+    server_features: Vec<String>,
+    voice_udp_port: Option<u16>,
 }
 
 fn client_side(m: &ModInfo) -> bool {
@@ -257,7 +289,19 @@ impl Session {
             channels: BTreeMap::new(),
             registry: Wire::new(),
             players: None,
+            server_features: Vec::new(),
+            voice_udp_port: None,
         }
+    }
+
+    /// The optional features the server listed in `SERVER_HELLO` (`voice`, `settings`); empty until it answered.
+    pub fn server_features(&self) -> &[String] {
+        &self.server_features
+    }
+
+    /// The dedicated voice UDP port the server announced in `SERVER_HELLO`, if any.
+    pub fn voice_udp_port(&self) -> Option<u16> {
+        self.voice_udp_port
     }
 
     /// The player count the server put into `SERVER_HELLO`, if it did.
@@ -299,6 +343,7 @@ impl Session {
             api: self.opts.api.clone(),
             runtimes: self.opts.runtimes.clone(),
             cached: self.cache.cached(),
+            features: self.opts.features.clone(),
         }
     }
 
@@ -400,6 +445,11 @@ impl Session {
             Message::Cosmetics(c) if self.is_modded() => vec![Output::Cosmetics(c)],
             Message::ServiceCall(c) if self.is_modded() => vec![Output::ServiceCall(c)],
             Message::ServiceResult(r) if self.is_modded() => vec![Output::ServiceResult(r)],
+            m @ (Message::VoiceKey(_) | Message::VoiceState(_)) if self.voice_enabled() => {
+                vec![Output::Voice(m)]
+            }
+            Message::SettingsSchema(s) if self.settings_enabled() => vec![Output::SettingsSchema(s)],
+            Message::SettingsResult(r) if self.settings_enabled() => vec![Output::SettingsResult(r)],
             Message::Channel(c) if self.is_modded() => {
                 match self.channels.iter().find(|(_, id)| **id == c.channel_id) {
                     Some((name, _)) => vec![Output::Channel { name: name.clone(), data: c.payload }],
@@ -415,6 +465,8 @@ impl Session {
             return Vec::new();
         }
         self.players = h.players;
+        self.server_features.clone_from(&h.features);
+        self.voice_udp_port = h.voice_udp_port;
         if h.count == 0 {
             return self.modded(h.mods_hash);
         }
@@ -566,6 +618,7 @@ impl Session {
 
     fn check_all(&mut self, hello: ServerHello, list: ModList, selected: &[usize]) -> Vec<Output> {
         let mut ok = Vec::new();
+        let mut skipped = Vec::new();
         for m in selected.iter().map(|&i| &list.mods[i]) {
             let path = self.cache.get(&m.sha256).expect("downloaded or cached");
             let bytes = match std::fs::read(&path) {
@@ -582,6 +635,12 @@ impl Session {
                 Ok(manifest) => ok.push(Accepted { info: m.clone(), path, manifest }),
                 Err(refusal) => {
                     if !m.client_required {
+                        skipped.push(SkippedMod {
+                            id: m.id.clone(),
+                            version: m.version.clone(),
+                            name: m.name.clone(),
+                            refusal,
+                        });
                         continue;
                     }
                     return self.fail(Failure::Refused { id: m.id.clone(), refusal });
@@ -589,7 +648,11 @@ impl Session {
             }
         }
         self.state = State::Loading { hello };
-        vec![Output::Load(ok)]
+        let mut out = vec![Output::Load(ok)];
+        if !skipped.is_empty() {
+            out.push(Output::Skipped(skipped));
+        }
+        out
     }
 
     /// The packages of [`Output::Load`] started (`Ok` with the `(id, version)` of every running mod) or not.
@@ -604,6 +667,37 @@ impl Session {
             }
             Err(e) => self.fail(Failure::LoadFailed(e)),
         }
+    }
+
+    /// True when the session is modded and both sides listed `feature`.
+    fn both_listed(&self, feature: &str) -> bool {
+        self.is_modded()
+            && self.opts.features.iter().any(|f| f == feature)
+            && self.server_features.iter().any(|f| f == feature)
+    }
+
+    /// (API 0.3.4) True when the voice ops flow: the session is modded and both sides listed `voice`. The host then
+    /// starts its voice client (its `VOICE_KEY` goes out with [`Session::voice_packet`]).
+    pub fn voice_enabled(&self) -> bool {
+        self.both_listed(feature::VOICE)
+    }
+
+    /// (API 0.3.4) True when the settings ops flow: the session is modded and both sides listed `settings`.
+    pub fn settings_enabled(&self) -> bool {
+        self.both_listed(feature::SETTINGS)
+    }
+
+    /// (API 0.3.4) A reliable voice packet of the host's voice client (`VOICE_KEY`, `VOICE_CTRL`), passed through
+    /// when voice is enabled; `None` otherwise (nothing may go to a server that did not list `voice`).
+    pub fn voice_packet(&self, packet: Vec<u8>) -> Option<Vec<u8>> {
+        self.voice_enabled().then_some(packet)
+    }
+
+    /// (API 0.3.4) A `SETTINGS_SET` packet (the admin changed a server setting in the in-game screen; `value` is
+    /// canonical CBOR), when settings are enabled.
+    pub fn settings_set(&self, mod_id: &str, key: &str, value: Vec<u8>) -> Option<Vec<u8>> {
+        let set = SettingsSet { mod_id: mod_id.to_string(), key: key.to_string(), value };
+        self.settings_enabled().then(|| Message::SettingsSet(set).encode())
     }
 
     /// A `SERVICE_CALL` packet (a client mod calls a service of the server's mods), when the session is modded.

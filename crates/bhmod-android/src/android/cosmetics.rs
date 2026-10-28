@@ -60,6 +60,23 @@ fn st<R>(f: impl FnOnce(&mut State) -> R) -> R {
 /// The loader's content, set when the loader is created.
 pub static SHARED: OnceLock<Arc<Mutex<Content>>> = OnceLock::new();
 
+/// The loader's blockhead tracker (overhead icons), set when the loader is created.
+pub static TRACKER: OnceLock<Arc<crate::overhead::Tracker>> = OnceLock::new();
+
+/// Reports a blockhead to the overhead tracker while some player has an icon: its player, `renderPos` (two floats,
+/// world units) and `pos` (the tile, two ints).
+fn track(bh: Id) {
+    let Some(t) = TRACKER.get().filter(|t| t.active()) else { return };
+    let render = objc::ivar_ptr(bh, "Blockhead", "renderPos") as *const f32;
+    let tile = objc::ivar_ptr(bh, "DynamicObject", "pos") as *const i32;
+    if render.is_null() || tile.is_null() {
+        return;
+    }
+    // SAFETY: both ivars belong to `bh`, a live Blockhead the game is updating; two words each.
+    let (r, p) = unsafe { ((*render, *render.add(1)), (*tile, *tile.add(1))) };
+    t.report(bh as usize, &player_of(bh), r, p, super::now_ms());
+}
+
 pub(super) fn with_content<R>(f: impl FnOnce(&mut Content) -> R) -> Option<R> {
     let c = SHARED.get()?;
     let mut g = c.lock().unwrap_or_else(|e| e.into_inner());
@@ -337,6 +354,7 @@ extern "C" fn hook_update_frame(this: Id, cmd: Sel, dt: u32, accurate: u32, simu
     if FIRST.swap(false, std::sync::atomic::Ordering::Relaxed) {
         log(LogLevel::Info, &format!("cosmetics: first Blockhead update (active: {})", active()));
     }
+    track(this);
     if active() {
         let now = serial();
         let mut seen = st(|s| s.seen.get(&(this as usize)).copied());

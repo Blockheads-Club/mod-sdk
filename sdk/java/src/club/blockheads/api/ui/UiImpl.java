@@ -64,4 +64,58 @@ public final class UiImpl implements Ui {
         Object r = b.call("ui.close-dialog", id);
         return Wire.bool(r);
     }
+
+    /**
+     * (0.3.4) Shows `icon` above a player's blockhead (one icon per player and mod; a new one replaces it). The
+     * loader hides voice icons the server's admin turned off (`voice.icons`).
+     */
+    @Override
+    public void setOverhead(club.blockheads.api.players.Player who, club.blockheads.api.ui.OverheadIcon icon) {
+        Wire.unwrap(b.call("ui.set-overhead", who.key(), icon.toWire(b)), x -> new club.blockheads.api.types.ApiErrorException(club.blockheads.api.types.ApiError.fromWire(x, b)));
+    }
+
+    /**
+     * (0.3.4) Removes the mod's icon from a player. False when there was none.
+     */
+    @Override
+    public boolean clearOverhead(club.blockheads.api.players.Player who) {
+        Object r = b.call("ui.clear-overhead", who.key());
+        return Wire.bool(r);
+    }
+
+    /**
+     * (0.3.4) Shows or updates a button. `id` follows the widget id rules; a mod has up to 4 buttons.
+     */
+    @Override
+    public void setButton(String id, club.blockheads.api.ui.Button button) {
+        Wire.unwrap(b.call("ui.set-button", id, button.toWire(b)), x -> new club.blockheads.api.types.ApiErrorException(club.blockheads.api.types.ApiError.fromWire(x, b)));
+    }
+
+    /**
+     * (0.3.4) Removes a button. False if it did not exist.
+     */
+    @Override
+    public boolean removeButton(String id) {
+        Object r = b.call("ui.remove-button", id);
+        return Wire.bool(r);
+    }
+
+    /**
+     * (0.3.4) Opens the loader's settings screen for mod `mod-id` (any loaded mod with settings or key bindings):
+     * its `scope = "client"` settings (stored on this device), its key bindings and, for an admin of a server that
+     * sent the mod's schema (0xBC `SETTINGS_SCHEMA`), its server settings. `invalid-argument` for an unknown mod.
+     */
+    @Override
+    public void openSettings(String modId) {
+        Wire.unwrap(b.call("ui.open-settings", modId), x -> new club.blockheads.api.types.ApiErrorException(club.blockheads.api.types.ApiError.fromWire(x, b)));
+    }
+
+    /**
+     * (0.3.4) True when the device has a touch screen (draw on-screen buttons, expect taps instead of keys).
+     */
+    @Override
+    public boolean hasTouch() {
+        Object r = b.call("ui.has-touch");
+        return Wire.bool(r);
+    }
 }

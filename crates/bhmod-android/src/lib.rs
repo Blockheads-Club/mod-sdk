@@ -9,11 +9,15 @@
 #![warn(missing_docs)]
 
 pub mod api;
+pub mod device;
 pub mod fonts;
+pub mod hud;
 pub mod inbox;
 pub mod loader;
 pub mod menus;
+pub mod overhead;
 pub mod ui;
+pub mod voice;
 pub mod weapons;
 
 #[cfg(test)]
@@ -78,6 +82,13 @@ pub fn budgets() -> bhmod_core::budget::Budgets {
     }
 }
 
+/// `HELLO.features` of this client: `voice` and `settings` (both wired in this loader; voice frames use the server's
+/// voice UDP port).
+pub fn features() -> Vec<&'static str> {
+    use bhmod_proto::feature;
+    vec![feature::VOICE, feature::SETTINGS]
+}
+
 /// What this build can run.
 pub fn caps() -> Caps {
     Caps { loader: semver::Version::parse(VERSION).expect("crate version"), runtimes: kinds() }
@@ -93,7 +104,9 @@ pub fn options() -> Options {
             Kind::Jvm => "jvm",
         })
         .collect();
-    Options::new(VERSION, PLATFORM, bhmod_core::API_VERSION, &names)
+    let mut o = Options::new(VERSION, PLATFORM, bhmod_core::API_VERSION, &names);
+    o.features = features().into_iter().map(String::from).collect();
+    o
 }
 
 /// The runtimes of a new host. WASM components are compiled once per package and cached in `wasm_cache`.
@@ -136,6 +149,8 @@ mod tests {
         assert!(super::budgets().hard > bhmod_core::budget::Budgets::default().hard);
         let t = tempfile::tempdir().unwrap();
         assert_eq!(super::runtimes(t.path()).len(), o.runtimes.len());
+        assert_eq!(super::features(), vec!["voice", "settings"]);
+        assert_eq!(o.features, vec!["voice", "settings"]);
     }
 
     /// The JVM is off until the glue switches it on, then it is advertised and created like the others.

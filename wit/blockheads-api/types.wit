@@ -1,4 +1,4 @@
-package blockheads:api@0.3.2;
+package blockheads:api@0.3.4;
 
 /// Shared types used by every other interface.
 interface types {

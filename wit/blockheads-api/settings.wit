@@ -1,0 +1,22 @@
+package blockheads:api@0.3.4;
+
+/// (0.3.3) The calling mod's settings, declared in `[settings.<key>]` of `mod.toml`. The admin sets the values in
+/// `mods.toml` (`[<mod-id>.settings]`), the host app, `/mod set <mod> <key> <value>` or the in-game admin screen; edits
+/// of `mods.toml` apply while the game runs. After every change the host fires the custom event
+/// `<mod-id>:settings-changed` with the payload `{"keys": [...]}` (subscribe with `events.subscribe-custom`).
+///
+/// Values are `types.value` (canonical CBOR): `bool`, integers, floats, text, a list of role names (`roles`), a map
+/// `{row: {col: cell}}` (`matrix`) or a list of maps (`list`). Only the mod's own settings are reachable.
+interface settings {
+    use types.{api-error, value};
+
+    /// The current value of setting `key`; `none` when the mod declares no such setting.
+    get: func(key: string) -> option<value>;
+
+    /// Every setting as one map `{key: value}`.
+    all: func() -> value;
+
+    /// Changes setting `key`. The value is checked against the declaration (`invalid-argument` says why), stored in
+    /// `mods.toml` and announced with `settings-changed` when it differs from the current one.
+    set: func(key: string, value: value) -> result<_, api-error>;
+}

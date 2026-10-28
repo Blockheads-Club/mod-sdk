@@ -34,6 +34,8 @@ final class Overlay {
     static View dialog;
     static boolean ready, inWorld, welcomeChecked;
     static String version = "?";
+    /** Running mods that have a settings screen (ids), from the last `world` command. */
+    static org.json.JSONArray running;
 
     private Overlay() {}
 
@@ -79,6 +81,7 @@ final class Overlay {
             dialog = null;
             show(d);
         }
+        VoiceUi.reattach();
         maybeWelcome();
     }
 
@@ -93,6 +96,7 @@ final class Overlay {
         remove(hudWin);
         add(markWin, ml);
         add(hudWin, hl);
+        VoiceUi.raise();
         if (dialog != null) {
             WindowManager.LayoutParams dl = (WindowManager.LayoutParams) dialog.getLayoutParams();
             remove(dialog);
@@ -166,16 +170,36 @@ final class Overlay {
                 maybeWelcome();
                 Bridge.ui.postDelayed(new Runnable() { public void run() { raise(); } }, 5000);
                 break;
+            case "skipped": {
+                org.json.JSONArray mods = c.optJSONArray("mods");
+                StringBuilder names = new StringBuilder();
+                for (int i = 0; mods != null && i < mods.length(); i++) {
+                    JSONObject m = mods.optJSONObject(i);
+                    if (m == null) continue;
+                    if (names.length() > 0) names.append(", ");
+                    names.append("voice".equals(m.optString("id")) ? Strings.t("voice_chat") : Strings.pick(m.optJSONObject("name"), m.optString("id")));
+                }
+                if (names.length() > 0) toast(Strings.t("skipped_mods", "mods", names));
+                break;
+            }
             case "open-mods":
                 ModsScreen.open();
                 break;
             case "world":
                 inWorld = c.optBoolean("open");
+                running = c.optJSONArray("settings");
+                if (inWorld) VoiceUi.watchTaps(true);
+                if (!inWorld) {
+                    VoiceUi.clearAll();
+                    if (SettingsScreen.open) SettingsScreen.close();
+                }
                 updateMark();
                 raise();
                 break;
             default:
                 if (ModUi.handles(t)) ModUi.command(t, c);
+                else if (VoiceUi.handles(t)) VoiceUi.command(t, c);
+                else if (SettingsScreen.handles(t)) SettingsScreen.command(t, c);
                 else JoinFlow.command(t, c);
         }
     }

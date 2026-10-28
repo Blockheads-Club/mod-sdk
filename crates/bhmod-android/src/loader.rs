@@ -26,8 +26,21 @@ use bhmod_core::types::{ApiError, ChannelSource, ChannelTarget, LogLevel, Role, 
 use bhmod_core::GameBridge;
 use bhmod_proto::{hex, Hash, ServiceCall, ServiceFailure, ServiceResult, PACKET_TYPE};
 
+use bhmod_core::input::InputCommand;
+use bhmod_core::ui::{ButtonAction, UiCommand};
+use bhmod_core::voice::VoiceHost;
+
+use crate::device::DeviceStore;
+use crate::hud::Hud;
 use crate::inbox::NetEvent;
+use crate::overhead::{Camera, Tracker};
 use crate::ui;
+use crate::voice::audio::AudioIo;
+use crate::voice::link::{VoiceLink, VoiceSlot};
+use crate::voice::pipeline::Pipeline;
+use crate::voice::udp::UdpLink;
+
+mod client;
 
 /// Mods tick at the server's world step rate.
 pub const TICK_MS: u64 = 200;
@@ -53,7 +66,18 @@ pub trait Platform {
     fn load_native(&self, mod_id: &str, lib: &Path, data_dir: &Path) -> Result<(), String>;
     /// Runs the mod's `bhmod_native_shutdown` (if any) and undoes its hooks.
     fn unload_native(&self, mod_id: &str);
+    /// Fresh voice audio streams (nothing open yet); `None` without an audio backend.
+    fn audio(&self) -> Option<AudioIo>;
+    /// Shows the system `RECORD_AUDIO` dialog; the answer comes back as [`UiEvent::MicPermission`].
+    fn ask_mic(&self);
+    /// The game's world-to-screen transform now (overhead icons); `None` outside a world.
+    fn camera(&self) -> Option<Camera>;
+    /// This client's own player id while connected to a server.
+    fn local_player(&self) -> Option<String>;
 }
+
+/// Makes the voice client of a new voice-enabled connection.
+pub type VoiceFactory = Box<dyn Fn() -> Option<Rc<dyn VoiceLink>>>;
 
 /// Where the loader keeps its files.
 #[derive(Debug, Clone)]
@@ -68,6 +92,8 @@ pub struct Dirs {
     pub storage: PathBuf,
     /// Native libraries taken out of packages (`<sha256>/<abi>/<name>.so`) and the data folders of native mods.
     pub native: PathBuf,
+    /// What the player set on this phone ([`DeviceStore`]).
+    pub device: PathBuf,
 }
 
 impl Dirs {
@@ -79,12 +105,13 @@ impl Dirs {
             run: root.join("run"),
             storage: root.join("storage"),
             native: root.join("native"),
+            device: root.join("device"),
         }
     }
 }
 
 /// An answer from the UI thread.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum UiEvent {
     /// The join prompt was answered.
     Decide(bool),
@@ -99,6 +126,49 @@ pub enum UiEvent {
         /// The field's text.
         text: Option<String>,
     },
+    /// (0.3.4) An on-screen button of a mod was used.
+    Button {
+        /// The mod.
+        mod_id: String,
+        /// The button id.
+        id: String,
+        /// `press`, `long-press` or `release`.
+        action: String,
+    },
+    /// (0.3.4) The player dropped a button at screen fractions `x`, `y`.
+    ButtonMoved {
+        /// The mod.
+        mod_id: String,
+        /// The button id.
+        id: String,
+        /// Centre, fraction of the width.
+        x: f32,
+        /// Centre, fraction of the height.
+        y: f32,
+    },
+    /// The player picked a voice mode in the long-press picker.
+    VoiceMode(String),
+    /// A hardware key went down (`true`) or up.
+    Key(String, bool),
+    /// Open the settings screen of a mod (the Mods screen).
+    OpenSettings(String),
+    /// A setting changed in the settings screen.
+    Setting {
+        /// The mod.
+        mod_id: String,
+        /// `client`, `server`, `keys` or `voice`.
+        scope: String,
+        /// The setting key, action or `master`.
+        key: String,
+        /// The new value as JSON text.
+        json: String,
+    },
+    /// The answer of the `RECORD_AUDIO` dialog.
+    MicPermission(bool),
+    /// The host's push-to-talk seam (`Native.ptt`): talk in the default mode.
+    Ptt(bool),
+    /// A tap on the game at screen fractions `x`, `y` (a blockhead there is picked: `<mod-id>:ui-pick`).
+    Tap(f32, f32),
 }
 
 /// Builds the runtimes for a new host.
@@ -117,6 +187,9 @@ type Outbox = Rc<RefCell<Vec<Outgoing>>>;
 struct Bridge<P: Platform> {
     p: Rc<P>,
     outbox: Outbox,
+    hud: Rc<RefCell<Hud>>,
+    slot: Rc<VoiceSlot>,
+    device: DeviceStore,
 }
 
 impl<P: Platform> GameBridge for Bridge<P> {
@@ -130,10 +203,20 @@ impl<P: Platform> GameBridge for Bridge<P> {
         self.p.log(level, &format!("[{}] {message}", mod_id.unwrap_or("loader")));
     }
     fn online_players(&self) -> Vec<String> {
-        Vec::new()
+        // A client knows the other players from the voice state (`VOICE_STATE.names`).
+        self.slot.get().map(|l| l.players().into_iter().map(|(id, _)| id).collect()).unwrap_or_default()
     }
-    fn player_alias(&self, _id: &str) -> Option<String> {
-        None
+    fn player_alias(&self, id: &str) -> Option<String> {
+        self.slot.get()?.alias(id)
+    }
+    fn local_player(&self) -> Option<String> {
+        self.p.local_player()
+    }
+    fn platform(&self) -> String {
+        crate::PLATFORM.to_string()
+    }
+    fn has_touch(&self) -> bool {
+        true
     }
     fn player_role(&self, _id: &str) -> Role {
         Role::Player
@@ -148,9 +231,34 @@ impl<P: Platform> GameBridge for Bridge<P> {
     fn is_builtin_command(&self, _name: &str) -> bool {
         false
     }
-    fn ui(&self, mod_id: &str, command: &bhmod_core::ui::UiCommand) -> Result<(), ApiError> {
-        self.p.ui(ui::mod_ui(mod_id, command));
+    fn ui(&self, mod_id: &str, command: &UiCommand) -> Result<(), ApiError> {
+        let mut hud = self.hud.borrow_mut();
+        match command {
+            UiCommand::SetOverhead { player, icon } => hud.board.set(mod_id, player, icon.name()),
+            UiCommand::ClearOverhead { player } => {
+                hud.board.clear(mod_id, player);
+            }
+            UiCommand::SetButton { id, button } => {
+                self.p.ui(ui::button_set(mod_id, id, button, self.device.button_pos(mod_id, id)));
+            }
+            UiCommand::OpenSettings { mod_id: target } => hud.open_settings.push(target.clone()),
+            UiCommand::ClearMod => {
+                hud.board.clear_mod(mod_id);
+                self.p.ui(ui::mod_ui(mod_id, command));
+            }
+            _ => self.p.ui(ui::mod_ui(mod_id, command)),
+        }
         Ok(())
+    }
+    fn voice(&self) -> Option<&dyn VoiceHost> {
+        self.slot.is_set().then_some(&*self.slot as &dyn VoiceHost)
+    }
+    fn input(&self, mod_id: &str, command: &InputCommand) -> Result<(), ApiError> {
+        self.hud.borrow_mut().input(mod_id, command);
+        Ok(())
+    }
+    fn input_key(&self, mod_id: &str, action: &str, default_key: &str) -> Option<String> {
+        Hud::key_of(&self.device, mod_id, action, default_key)
     }
     fn channel_send(&self, _mod_id: &str, name: &str, target: &ChannelTarget, data: &[u8]) -> Result<(), ApiError> {
         match target {
@@ -187,11 +295,36 @@ pub struct Loader<P: Platform + 'static> {
     natives: Vec<String>,
     /// The mods the server sent for the current connection (what a hot reload places again).
     accepted: Vec<Accepted>,
+    /// Overhead icons, key bindings, settings screens to open (shared with the bridge).
+    hud: Rc<RefCell<Hud>>,
+    /// The voice client the mods reach (shared with the bridge).
+    slot: Rc<VoiceSlot>,
+    device: DeviceStore,
+    voice_factory: Option<VoiceFactory>,
+    /// Audio and packets of the voice client, while one runs.
+    pipeline: Option<Pipeline>,
+    udp: Option<UdpLink>,
+    /// The modes the server allows (`VOICE_STATE.modes`), as last posted to the picker.
+    modes: Option<u8>,
+    /// The voice preferences as last saved, and when they were last compared.
+    prefs_saved: String,
+    prefs_at: u64,
+    /// Blockheads the game's update hook reported (overhead icons).
+    tracker: Arc<Tracker>,
+    /// True while the overlay shows overhead icons.
+    overhead_shown: bool,
+    /// Server-scope settings forms of mods (`SETTINGS_SCHEMA`; only admins get them).
+    server_forms: BTreeMap<String, ui::Form>,
+    /// The mod whose settings screen is open.
+    settings_open: Option<String>,
+    /// Mods granted `voice` in the running host.
+    voice_mods: BTreeSet<String>,
 }
 
 impl<P: Platform + 'static> Loader<P> {
     /// A loader with nothing running.
     pub fn new(p: Rc<P>, dirs: Dirs, caps: Caps, opts: Options, runtimes: RuntimeFactory) -> Loader<P> {
+        let dirs_device = dirs.device.clone();
         Loader {
             p,
             dirs,
@@ -209,7 +342,32 @@ impl<P: Platform + 'static> Loader<P> {
             content: Arc::new(Mutex::new(Content::new())),
             natives: Vec::new(),
             accepted: Vec::new(),
+            hud: Rc::default(),
+            slot: Rc::default(),
+            device: DeviceStore::new(&dirs_device),
+            voice_factory: None,
+            pipeline: None,
+            udp: None,
+            modes: None,
+            prefs_saved: String::new(),
+            prefs_at: 0,
+            tracker: Arc::new(Tracker::new()),
+            overhead_shown: false,
+            server_forms: BTreeMap::new(),
+            settings_open: None,
+            voice_mods: BTreeSet::new(),
         }
+    }
+
+    /// Voice chat: the factory of the voice client for connections whose server and loader both list `voice`.
+    pub fn with_voice(mut self, factory: VoiceFactory) -> Loader<P> {
+        self.voice_factory = Some(factory);
+        self
+    }
+
+    /// The blockheads the game's update hook reports (shared: the hooks run on the game's other threads).
+    pub fn tracker(&self) -> Arc<Tracker> {
+        self.tracker.clone()
     }
 
     /// Time and memory budgets of the mods (the default is the server's).
@@ -293,6 +451,8 @@ impl<P: Platform + 'static> Loader<P> {
 
     /// The connection closed.
     pub fn on_disconnect(&mut self) {
+        self.stop_voice();
+        self.server_forms.clear();
         if self.session.take().is_some() {
             self.p.ui(ui::closed());
         }
@@ -327,7 +487,27 @@ impl<P: Platform + 'static> Loader<P> {
                     self.p.abort_join();
                 }
             }
+            UiEvent::Button { mod_id, id, action } => self.on_button(&mod_id, &id, &action),
+            UiEvent::ButtonMoved { mod_id, id, x, y } => {
+                if let Err(e) = self.device.set_button_pos(&mod_id, &id, x, y) {
+                    self.p.log(LogLevel::Warn, &format!("button position not saved: {e}"));
+                }
+            }
+            UiEvent::VoiceMode(m) => {
+                if let Some(mode) = bhmod_core::voice::Mode::parse(&m) {
+                    let _ = self.slot.set_default_mode(mode);
+                }
+            }
+            UiEvent::Key(name, down) => self.on_key(&name, down),
+            UiEvent::OpenSettings(id) => self.open_settings(&id),
+            UiEvent::Setting { mod_id, scope, key, json } => self.set_setting(&mod_id, &scope, &key, &json),
+            UiEvent::MicPermission(granted) => self.on_mic_permission(granted),
+            UiEvent::Ptt(down) => {
+                let _ = self.slot.talk(None, down);
+            }
+            UiEvent::Tap(x, y) => self.on_tap(x, y),
         }
+        self.flush_outbox();
     }
 
     /// Once per frame: timeouts, mod ticks and channel traffic.
@@ -345,6 +525,8 @@ impl<P: Platform + 'static> Loader<P> {
                 h.tick(dt as f32 / 1000.0);
             }
         }
+        self.voice_frame(now);
+        self.hud_frame(now);
         self.flush_outbox();
     }
 
@@ -364,16 +546,20 @@ impl<P: Platform + 'static> Loader<P> {
                     h.enable(name, &id);
                 }
                 self.flush_outbox();
+                self.start_voice();
                 let n =
                     self.host.as_ref().map_or(0, |h| h.mods().iter().filter(|m| m.state == ModState::Enabled).count());
-                self.p.ui(ui::world(true, n));
+                let settings = self.settings_mods();
+                self.p.ui(ui::world(true, n, &settings));
             }
             None => {
                 self.world = None;
+                self.stop_voice();
                 self.stop_host();
                 self.session = None;
                 self.server.clear();
-                self.p.ui(ui::world(false, 0));
+                self.server_forms.clear();
+                self.p.ui(ui::world(false, 0, &[]));
             }
         }
     }
@@ -445,6 +631,9 @@ impl<P: Platform + 'static> Loader<P> {
         if let Some(mut h) = self.host.take() {
             h.disable_all();
         }
+        self.hud.borrow_mut().clear();
+        self.settings_open = None;
+        self.voice_mods.clear();
         *self.content_lock() = Content::new();
         self.last_tick = 0;
     }
@@ -522,6 +711,14 @@ impl<P: Platform + 'static> Loader<P> {
                     self.p.abort_join();
                 }
                 Output::Reject(r) => self.p.ui(ui::reject(&self.server, &r)),
+                Output::Voice(m) => self.on_voice_message(&m),
+                Output::SettingsSchema(s) => self.on_settings_schema(&s),
+                Output::SettingsResult(r) => self.on_settings_result(&r),
+                Output::Skipped(mods) => {
+                    let ids: Vec<&str> = mods.iter().map(|m| m.id.as_str()).collect();
+                    self.p.log(LogLevel::Warn, &format!("optional mods this loader cannot run: {ids:?}"));
+                    self.p.ui(ui::skipped(&self.server, &mods));
+                }
                 Output::Cosmetics(c) => {
                     let changed = self.content_lock().apply(&c);
                     self.p.log(
@@ -629,11 +826,28 @@ impl<P: Platform + 'static> Loader<P> {
         if !any {
             return Ok(Vec::new());
         }
+        let installed = self.installed().list();
+        self.voice_mods = server_mods
+            .iter()
+            .map(|a| &a.manifest)
+            .chain(installed.iter().filter(|m| m.enabled).map(|m| &m.manifest))
+            .filter(|m| m.permissions.voice)
+            .map(|m| m.id.clone())
+            .collect();
         let mut opts = HostOptions::new(&self.dirs.run, Side::Client);
+        // The host writes the client settings file but does not make its folder.
+        let _ = fs::create_dir_all(&self.dirs.device);
+        opts.client_settings = Some(self.device.client_settings());
         opts.runtimes = (self.runtimes)();
         opts.budgets = self.budgets;
         opts.storage = Box::new(FileStorage::new(&self.dirs.storage));
-        let bridge: Rc<dyn GameBridge> = Rc::new(Bridge { p: self.p.clone(), outbox: self.outbox.clone() });
+        let bridge: Rc<dyn GameBridge> = Rc::new(Bridge {
+            p: self.p.clone(),
+            outbox: self.outbox.clone(),
+            hud: self.hud.clone(),
+            slot: self.slot.clone(),
+            device: self.device.clone(),
+        });
         let host = ModHost::load(opts, bridge);
         let loaded: Vec<(String, String)> =
             host.mods().into_iter().filter(|m| m.state == ModState::Loaded).map(|m| (m.id, m.version)).collect();

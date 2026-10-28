@@ -380,3 +380,44 @@ fn decor_items() {
     assert_eq!(*b.placed.borrow(), [(40, 79, 1)]);
     h.disable_all();
 }
+
+#[test]
+fn settings_lua() {
+    let (t, b, mut h) =
+        host_with(&["settings-lua"], "[settings-lua.settings]\nstyle = \"loud\"\nrules = [{ text = \"Staff: be kind.\", staff_only = true }, { text = \"No griefing.\" }]\n");
+    h.enable("World", "wid");
+    assert_eq!(h.mods()[0].state, ModState::Enabled, "{}", b.log_text());
+    b.join("p1", "ALICE", Role::Player);
+    b.join("p2", "BOSS", Role::Admin);
+    h.fire(Event::PlayerJoin { player: "p1".into() });
+    assert_eq!(
+        b.take_chats(),
+        [("p1".to_string(), "WELCOME, ALICE!".to_string()), ("p1".into(), "2. No griefing.".into())]
+    );
+    h.fire(Event::PlayerJoin { player: "p2".into() });
+    assert_eq!(b.take_chats().len(), 3, "staff see the staff rule too");
+    let set = h.settings_command(true, &["set", "settings-lua", "greeting", "Hi", "{name},", "again"]);
+    assert_eq!(set, Some(vec!["settings-lua: greeting = \"Hi {name}, again\".".to_string()]));
+    assert!(b.has_log("settings changed: greeting"));
+    assert_eq!(
+        h.settings_command(true, &["set", "settings-lua", "repeat", "2"]),
+        Some(vec!["settings-lua: repeat = 2.".into()])
+    );
+    assert_eq!(h.command(player("p1"), "/greetme"), Some(vec![]));
+    assert_eq!(
+        b.take_chats()[..2],
+        [("p1".to_string(), "HI ALICE, AGAIN".to_string()), ("p1".into(), "HI ALICE, AGAIN".into())]
+    );
+    assert_eq!(
+        h.command(player("p2"), "/quiet"),
+        Some(vec!["Greetings are off. /mods set settings-lua enabled true turns them on.".to_string()])
+    );
+    assert_eq!(h.command(player("p1"), "/greetme"), Some(vec![]));
+    assert!(b.take_chats().is_empty());
+    let text = fs::read_to_string(t.path().join("mods.toml")).unwrap();
+    assert!(
+        text.contains("enabled = false") && text.contains("repeat = 2") && text.contains("style = \"loud\""),
+        "{text}"
+    );
+    h.disable_all();
+}

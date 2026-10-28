@@ -1,0 +1,24 @@
+[package]
+name = "voice-rust"
+version = "0.1.0"
+edition = "2021"
+license = "GPL-3.0-or-later"
+publish = false
+
+[lib]
+# cdylib: the WASM component (wasm32-wasip2); rlib: the host-testable policy modules (`cargo test`, coverage).
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+blockheads-mod = { path = "../../sdk/rust/blockheads-mod" }
+
+[dev-dependencies]
+toml = "0.8"
+
+[profile.release]
+opt-level = "s"
+lto = true
+strip = true
+
+# Keep this example out of the SDK workspace: the component only builds for wasm32-wasip2.
+[workspace]

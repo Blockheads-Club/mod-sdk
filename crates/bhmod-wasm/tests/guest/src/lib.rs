@@ -1,6 +1,7 @@
 //! The bhmod-wasm test guest. `host::mod_id()` picks the behaviour:
 //! - `tour`: calls every import once in `on-enable` and logs the results; prints to stdout/stderr.
-//! - `gear`: calls every `content` import (API 0.3) with the mod's own cosmetic `gear:cap`.
+//! - `gear`: calls every `content` import (API 0.3) with the mod's own cosmetic `gear:cap`, and the `settings`
+//!   imports (API 0.3.3) with its setting `level`.
 //! - `fail`: `on-enable` returns an error.
 //! - `trap`: commands panic; events after the trap are refused by the host.
 //! - `spin`: the tick handler never returns (host deadline).
@@ -33,6 +34,62 @@ fn gear() -> Result<(), String> {
     show("give-other", content::give_item(&p, "other:lamp", 1).map_err(String::from));
     show("place-block", content::place_block(4, -5, "gear:brick"));
     show("block-at", (content::block_at(4, -5), content::block_at(0, 0)));
+    use blockheads_mod::settings;
+    show("setting", (settings::get("level"), settings::get("nope")));
+    show("settings-all", settings::all());
+    show("setting-set", settings::set("level", &cbor::Value::Int(7)));
+    show("setting-bad", settings::set("level", &cbor::Value::from("x")).map_err(String::from));
+    show("setting-after", settings::get("level"));
+    Ok(())
+}
+
+/// Every API 0.3.4 import: `voice`, `terrain`, `input` and the `ui` additions.
+fn vox() -> Result<(), String> {
+    use blockheads_mod::voice as v;
+    use blockheads_mod::{input, terrain, ui};
+    let a = players::get("p1").ok_or("p1 missing")?;
+    let b = players::get("p2").ok_or("p2 missing")?;
+    show("state", v::state(&a));
+    show("icons", v::icons());
+    let route = v::Route {
+        listener: &b,
+        modes: vec![v::Mode::Proximity, v::Mode::Broadcast],
+        gain: 0.5,
+        pan: 0.0,
+        muffle: 0.0,
+    };
+    show("routes", v::set_routes(&a, &[route]));
+    show("mute", v::mute(&b, Some(5)));
+    show("unmute", v::unmute(&b));
+    show("gain", v::set_speaker_gain(&a, 120));
+    show("caps", v::set_caps(v::Caps { max_bitrate: 16_000, max_speakers: 4, max_frames_per_sec: 50 }));
+    show("transport", v::set_transport(v::TransportConfig { mode: v::Transport::Udp, udp_port: None }));
+    show("allowed", v::set_allowed(&a, &[v::Mode::Global, v::Mode::Channel], &[v::Activation::Vad]));
+    let icons = v::IconVisibility { speaking: true, no_voice: false, self_mute: true, deafen: true, admin_mute: true };
+    show("set-icons", v::set_icons(icons));
+    show("override", v::set_broadcast_overrides_deafen(true));
+    show("default-mode", v::set_default_mode(v::Mode::Global));
+    show("activation", v::set_activation(v::Activation::Toggle));
+    show("talk", v::talk(Some(v::Mode::Global), true));
+    show("mic", v::set_mic(true));
+    show("self-mute", v::set_self_mute(true));
+    show("deafen", v::set_deafen(true));
+    show("vad", v::set_vad_threshold(-40.0));
+    show("master", (v::set_master(90), v::master()));
+    show("volume", (v::set_player_volume(&a, 90), v::player_volume(&a)));
+    show("mute-player", (v::mute_player(&a, true), v::player_muted(&a)));
+    show("solid", terrain::solid_count(0, 0, 4, 0));
+    show("bind", (input::bind("ptt", "v"), input::unbind("ptt"), input::key_of("ptt")));
+    show("overhead", (ui::set_overhead(&a, ui::OverheadIcon::Speaking), ui::clear_overhead(&a)));
+    let button = ui::Button { icon: "mic".into(), label: None, x: 0.5, y: 0.5, size: 64, opacity: 80 };
+    show("button", (ui::set_button("ptt", &button), ui::remove_button("ptt")));
+    show("settings-screen", ui::open_settings("vox"));
+    show(
+        "gaps",
+        (host::platform(), a.sleeping(), a.alive(), players::local_player().is_none(), players::has_mod(&a, "vox")),
+    );
+    show("gaps2", (terrain::world_width(), ui::has_touch()));
+    show("client-state", (v::allowed().is_err(), v::self_muted(), v::deafened(), v::mic()));
     Ok(())
 }
 
@@ -206,6 +263,7 @@ impl Mod for Guest {
         match host::mod_id().as_str() {
             "tour" => tour(),
             "gear" => gear(),
+            "vox" => vox(),
             "fail" => Err("nope".into()),
             "caller" => {
                 show("echo", services::call("old", "^1", "echo", &[0x81, 0x02]));

@@ -49,6 +49,8 @@ final class Strings {
         p("perm_chat", "Chat", "Sohbet", "Чат", "Чат");
         p("perm_players", "Manages players", "Oyuncuları yönetir", "Управляет игроками", "Ойыншыларды басқарады");
         p("perm_channels", "Talks to the server", "Sunucuyla konuşur", "Общается с сервером", "Сервермен байланысады");
+        p("perm_voice", "Voice chat: microphone and speakers", "Sesli sohbet: mikrofon ve hoparlör",
+            "Голосовой чат: микрофон и динамики", "Дауыстық чат: микрофон мен динамиктер");
         p("perm_net", "Uses the internet", "İnterneti kullanır", "Использует интернет", "Интернетті пайдаланады");
         p("perm_native", "Native · full access", "Yerel kod · tam erişim", "Нативный · полный доступ", "Нативті · толық қатынас");
         p("jvm_title", "Java mods", "Java modları", "Java-моды", "Java модтары");
@@ -235,6 +237,36 @@ final class Strings {
             "Çoğu mod zaman ve bellek sınırları olan korumalı bir alanda çalışır. Oyunu sürekli yavaşlatan bir mod kendiliğinden kapanır.",
             "Большинство модов работают в песочнице с ограничениями времени и памяти. Мод, который тормозит игру, отключается сам.",
             "Көп мод уақыт пен жад шектеулері бар құмсалғышта жұмыс істейді. Ойынды үнемі баяулататын мод өздігінен өшеді.");
+        // voice chat and mod settings (API 0.3.4)
+        p("mode_proximity", "Nearby", "Yakındakiler", "Рядом", "Жақын маң");
+        p("mode_global", "Everyone", "Herkes", "Все", "Барлығы");
+        p("mode_channel", "Channel", "Kanal", "Канал", "Арна");
+        p("mode_broadcast", "Broadcast", "Duyuru", "Объявление", "Хабарландыру");
+        p("pick_mode", "Talk to", "Kime konuş", "Говорить", "Кімге сөйлеу");
+        p("mic_on", "Mic on: {mode}", "Mikrofon açık: {mode}", "Микрофон включён: {mode}", "Микрофон қосулы: {mode}");
+        p("mic_denied", "Voice chat needs the microphone. You can allow it in the Android settings.",
+            "Sesli sohbet için mikrofon gerekir. Android ayarlarından izin verebilirsin.",
+            "Голосовому чату нужен микрофон. Разреши его в настройках Android.",
+            "Дауыстық чатқа микрофон керек. Android баптауларында рұқсат бере аласың.");
+        p("settings", "Settings", "Ayarlar", "Настройки", "Баптаулар");
+        p("settings_title", "{mod} settings", "{mod} ayarları", "Настройки: {mod}", "{mod} баптаулары");
+        p("settings_mine", "On this phone", "Bu telefonda", "На этом телефоне", "Осы телефонда");
+        p("settings_server", "Server (admin)", "Sunucu (yönetici)", "Сервер (админ)", "Сервер (әкімші)");
+        p("settings_keys", "Keys", "Tuşlar", "Клавиши", "Пернелер");
+        p("settings_voice", "Voice volume", "Ses düzeyi", "Громкость голоса", "Дауыс деңгейі");
+        p("settings_none", "This mod has no settings.", "Bu modun ayarı yok.", "У этого мода нет настроек.", "Бұл модтың баптауы жоқ.");
+        p("settings_saved", "Saved", "Kaydedildi", "Сохранено", "Сақталды");
+        p("settings_restart", "Applies after a restart", "Yeniden başlatınca geçerli", "Применится после перезапуска", "Қайта іске қосқанда қолданылады");
+        p("settings_mute", "Mute {name}", "{name} sessiz", "Заглушить {name}", "{name} дыбысын өшіру");
+        p("key_none", "None", "Yok", "Нет", "Жоқ");
+        p("key_press", "Press a key…", "Bir tuşa bas…", "Нажми клавишу…", "Пернені бас…");
+        p("key_default", "Default", "Varsayılan", "По умолчанию", "Әдепкі");
+        p("save", "Save", "Kaydet", "Сохранить", "Сақтау");
+        p("voice_chat", "voice chat", "sesli sohbet", "голосовой чат", "дауыстық чат");
+        p("skipped_mods", "This server has {mods}: update the mod loader to use it.",
+            "Bu sunucuda {mods} var: kullanmak için mod yükleyiciyi güncelle.",
+            "На этом сервере есть {mods}: обнови загрузчик модов, чтобы пользоваться.",
+            "Бұл серверде {mods} бар: қолдану үшін мод жүктегішті жаңарт.");
         p("skip", "Skip", "Geç", "Пропустить", "Өткізу");
         p("next", "Next", "İleri", "Далее", "Келесі");
         p("play", "Play", "Oyna", "Играть", "Ойнау");

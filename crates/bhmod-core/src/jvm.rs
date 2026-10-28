@@ -42,8 +42,9 @@ use crate::types::{
     ApiError, ChannelSource, ChannelTarget, CommandOutcome, CommandSender, CommandSpec, ContentKind, Event, EventKind,
     LogLevel, Mutation, Outcome, Pos, Priority, RejectReason, Role, ServiceError,
 };
-use crate::ui::{ButtonKind, Dialog, DialogButton, Field, NoticeLevel, Slot, Widget, WidgetKind};
+use crate::ui::{Button, ButtonKind, Dialog, DialogButton, Field, NoticeLevel, OverheadIcon, Slot, Widget, WidgetKind};
 use crate::value::Value;
+use crate::voice::{Activation, Caps, Icons, Mode, Route, Transport, TransportConfig, VoiceCall, VoiceReply};
 
 /// The Java SDK (generated bindings and runtime glue), compiled by `build.rs`.
 #[cfg(not(target_os = "android"))]
@@ -648,6 +649,172 @@ fn dialog_of(v: &Value) -> Result<Dialog, String> {
     Ok(Dialog { title: str_field(v, "title")?, text: str_field(v, "text")?, field, buttons })
 }
 
+fn num_field(v: &Value, key: &str) -> Result<f64, String> {
+    match v.get(key) {
+        Some(Value::Float(f)) => Ok(*f),
+        Some(Value::Int(i)) => Ok(*i as f64),
+        _ => Err(format!("{key} must be a number")),
+    }
+}
+
+fn uint_field<T: TryFrom<i64>>(v: &Value, key: &str) -> Result<T, String> {
+    match v.get(key) {
+        Some(Value::Int(i)) => T::try_from(*i).map_err(|_| format!("{key} is out of range")),
+        _ => Err(format!("{key} must be an integer")),
+    }
+}
+
+fn bool_field(v: &Value, key: &str) -> Result<bool, String> {
+    match v.get(key) {
+        Some(Value::Bool(b)) => Ok(*b),
+        _ => Err(format!("{key} must be a bool")),
+    }
+}
+
+/// A `list<enum>` as a mask.
+fn mask_of<T: Copy>(v: &Value, parse: fn(&str) -> Option<T>, bit: fn(T) -> u8) -> Result<u8, String> {
+    let Value::List(items) = v else { return Err("expected a list of names".into()) };
+    items.iter().try_fold(0, |m, i| Ok(m | bit(named(std::slice::from_ref(i), 0, parse)?)))
+}
+
+fn button_of(v: &Value) -> Result<Button, String> {
+    Ok(Button {
+        icon: str_field(v, "icon")?,
+        label: opt_str_field(v, "label")?,
+        x: num_field(v, "x")? as f32,
+        y: num_field(v, "y")? as f32,
+        size: uint_field(v, "size")?,
+        opacity: uint_field(v, "opacity")?,
+    })
+}
+
+fn icons_of(v: &Value) -> Result<Icons, String> {
+    Ok(Icons {
+        speaking: bool_field(v, "speaking")?,
+        no_voice: bool_field(v, "no-voice")?,
+        self_mute: bool_field(v, "self-mute")?,
+        deafen: bool_field(v, "deafen")?,
+        admin_mute: bool_field(v, "admin-mute")?,
+    })
+}
+
+fn icons_value(i: Icons) -> Value {
+    Value::Map(vec![
+        ("admin-mute".into(), Value::Bool(i.admin_mute)),
+        ("deafen".into(), Value::Bool(i.deafen)),
+        ("no-voice".into(), Value::Bool(i.no_voice)),
+        ("self-mute".into(), Value::Bool(i.self_mute)),
+        ("speaking".into(), Value::Bool(i.speaking)),
+    ])
+}
+
+/// How a `voice.*` reply becomes a value.
+type ShowReply = fn(VoiceReply) -> Value;
+
+/// `voice.*`: the call and how to show its reply.
+fn voice_call(f: &str, a: &[Value]) -> Result<(VoiceCall, ShowReply), String> {
+    let unit: ShowReply = |_| Value::Null;
+    let boolean: ShowReply = |r| Value::Bool(r.as_bool());
+    let percent: ShowReply = |r| Value::Int(r.as_percent().into());
+    let p = |i| text(a, i).map(str::to_string);
+    let pct = |i| u16::try_from(int(a, i)?).map_err(|_| format!("argument {i} is out of range"));
+    Ok(match f {
+        "voice.state" => (VoiceCall::State(p(0)?), |r| Value::text(r.as_state().name())),
+        "voice.icons" => (VoiceCall::Icons, |r| icons_value(r.as_icons())),
+        "voice.set-routes" => {
+            let Value::List(items) = arg(a, 1)? else { return Err("routes must be a list".into()) };
+            let routes = items
+                .iter()
+                .map(|r| {
+                    Ok(Route {
+                        listener: str_field(r, "listener")?,
+                        modes: mask_of(r.get("modes").unwrap_or(&Value::Null), Mode::parse, Mode::bit)?,
+                        gain: num_field(r, "gain")? as f32,
+                        pan: num_field(r, "pan")? as f32,
+                        muffle: num_field(r, "muffle")? as f32,
+                    })
+                })
+                .collect::<Result<Vec<_>, String>>()?;
+            (VoiceCall::SetRoutes(p(0)?, routes), unit)
+        }
+        "voice.mute" => {
+            let until = match arg(a, 1)? {
+                Value::Null => None,
+                _ => Some(u64::try_from(int(a, 1)?).map_err(|_| "until-ms is out of range".to_string())?),
+            };
+            (VoiceCall::Mute(p(0)?, until), unit)
+        }
+        "voice.unmute" => (VoiceCall::Unmute(p(0)?), boolean),
+        "voice.set-speaker-gain" => (VoiceCall::SetSpeakerGain(p(0)?, pct(1)?), unit),
+        "voice.set-caps" => {
+            let c = arg(a, 0)?;
+            let caps = Caps {
+                max_bitrate: uint_field(c, "max-bitrate")?,
+                max_speakers: uint_field(c, "max-speakers")?,
+                max_frames_per_sec: uint_field(c, "max-frames-per-sec")?,
+            };
+            (VoiceCall::SetCaps(caps), unit)
+        }
+        "voice.set-transport" => {
+            let c = arg(a, 0)?;
+            let mode = named(&[c.get("mode").cloned().unwrap_or(Value::Null)], 0, Transport::parse)?;
+            let udp_port = match c.get("udp-port") {
+                None | Some(Value::Null) => None,
+                Some(_) => Some(uint_field(c, "udp-port")?),
+            };
+            (VoiceCall::SetTransport(TransportConfig { mode, udp_port }), unit)
+        }
+        "voice.set-allowed" => {
+            let m = mask_of(arg(a, 1)?, Mode::parse, Mode::bit)?;
+            let act = mask_of(arg(a, 2)?, Activation::parse, Activation::bit)?;
+            (VoiceCall::SetAllowed(p(0)?, m, act), unit)
+        }
+        "voice.set-icons" => (VoiceCall::SetIcons(icons_of(arg(a, 0)?)?), unit),
+        "voice.set-broadcast-overrides-deafen" => (VoiceCall::SetBroadcastOverridesDeafen(flag(a, 0)?), unit),
+        "voice.set-default-mode" => (VoiceCall::SetDefaultMode(named(a, 0, Mode::parse)?), unit),
+        "voice.set-activation" => (VoiceCall::SetActivation(named(a, 0, Activation::parse)?), unit),
+        "voice.talk" => {
+            let mode = match arg(a, 0)? {
+                Value::Null => None,
+                _ => Some(named(a, 0, Mode::parse)?),
+            };
+            (VoiceCall::Talk(mode, flag(a, 1)?), unit)
+        }
+        "voice.set-mic" => (VoiceCall::SetMic(flag(a, 0)?), unit),
+        "voice.set-self-mute" => (VoiceCall::SetSelfMute(flag(a, 0)?), unit),
+        "voice.set-deafen" => (VoiceCall::SetDeafen(flag(a, 0)?), unit),
+        "voice.set-vad-threshold" => {
+            let db = match arg(a, 0)? {
+                Value::Float(f) => *f as f32,
+                _ => int(a, 0)? as f32,
+            };
+            (VoiceCall::SetVadThreshold(db), unit)
+        }
+        "voice.set-master" => (VoiceCall::SetMaster(pct(0)?), unit),
+        "voice.master" => (VoiceCall::Master, percent),
+        "voice.set-player-volume" => (VoiceCall::SetPlayerVolume(p(0)?, pct(1)?), unit),
+        "voice.player-volume" => (VoiceCall::PlayerVolume(p(0)?), percent),
+        "voice.mute-player" => (VoiceCall::MutePlayer(p(0)?, flag(a, 1)?), unit),
+        "voice.player-muted" => (VoiceCall::PlayerMuted(p(0)?), boolean),
+        "voice.allowed" => (VoiceCall::Allowed, |r| {
+            let a = r.as_allowance();
+            let names = |v: Vec<&str>| Value::List(v.into_iter().map(Value::text).collect());
+            Value::Map(vec![
+                (
+                    "activations".into(),
+                    names(Activation::from_mask(a.activations).into_iter().map(Activation::name).collect()),
+                ),
+                ("max-bitrate".into(), Value::Int(a.max_bitrate.into())),
+                ("modes".into(), names(Mode::from_mask(a.modes).into_iter().map(Mode::name).collect())),
+            ])
+        }),
+        "voice.self-muted" => (VoiceCall::SelfMuted, boolean),
+        "voice.deafened" => (VoiceCall::Deafened, boolean),
+        "voice.mic" => (VoiceCall::Mic, |r| Value::text(r.as_mic().name())),
+        other => return Err(format!("unknown host function {other:?} (this host does not implement it)")),
+    })
+}
+
 /// The WIT imports, by name (`interface.function`; resource methods `interface.resource.method` with the
 /// resource's key first).
 fn call_host(h: &mut dyn HostApi, f: &str, a: &[Value]) -> Result<Value, String> {
@@ -657,6 +824,7 @@ fn call_host(h: &mut dyn HostApi, f: &str, a: &[Value]) -> Result<Value, String>
         "host.mod-version" => Value::Text(h.mod_version()),
         "host.current-side" => Value::text(h.current_side().name()),
         "host.host-name" => Value::Text(h.host_name()),
+        "host.platform" => Value::Text(h.host_platform()),
 
         "log.log" => {
             let level = text(a, 0)?;
@@ -678,6 +846,10 @@ fn call_host(h: &mut dyn HostApi, f: &str, a: &[Value]) -> Result<Value, String>
         "players.player.pos" => h.player_pos(text(a, 0)?).ok().flatten().map_or(Value::Null, pos_value),
         "players.player.value-handle" => Value::Int(h.handle_of_player(text(a, 0)?) as i64),
         "players.player.kick" => api_result(h.player_kick(text(a, 0)?, text(a, 1)?), |()| Value::Null),
+        "players.player.sleeping" => Value::Bool(h.player_sleeping(text(a, 0)?)),
+        "players.player.alive" => Value::Bool(h.player_alive(text(a, 0)?)),
+        "players.local-player" => opt_text(h.players_local()),
+        "players.has-mod" => Value::Bool(h.players_has_mod(text(a, 0)?, text(a, 1)?)),
 
         "events.subscribe" => {
             let kind = text(a, 0)?;
@@ -702,6 +874,9 @@ fn call_host(h: &mut dyn HostApi, f: &str, a: &[Value]) -> Result<Value, String>
         "scheduler.run-next-poll" => api_result(h.run_next_poll(), |id| Value::Int(id as i64)),
         "scheduler.cancel" => Value::Bool(h.cancel_task(int(a, 0)? as TaskId)),
 
+        "settings.get" => h.settings_get(text(a, 0)?).map_or(Value::Null, Value::Bytes),
+        "settings.all" => Value::Bytes(h.settings_all()),
+        "settings.set" => api_result(h.settings_set(text(a, 0)?, bytes_arg(a, 1)?), |()| Value::Null),
         "storage.get" => h.storage_get(text(a, 0)?).map_or(Value::Null, Value::Bytes),
         "storage.set" => api_result(h.storage_set(text(a, 0)?, bytes_arg(a, 1)?), |()| Value::Null),
         "storage.delete" => Value::Bool(h.storage_delete(text(a, 0)?)),
@@ -771,6 +946,28 @@ fn call_host(h: &mut dyn HostApi, f: &str, a: &[Value]) -> Result<Value, String>
         }
         "ui.show-dialog" => api_result(h.ui_show_dialog(dialog_of(arg(a, 0)?)?), |id| Value::Int(id.into())),
         "ui.close-dialog" => Value::Bool(h.ui_close_dialog(unsigned(a, 0)?)),
+        "ui.set-overhead" => {
+            api_result(h.ui_set_overhead(text(a, 0)?, named(a, 1, OverheadIcon::parse)?), |()| Value::Null)
+        }
+        "ui.clear-overhead" => Value::Bool(h.ui_clear_overhead(text(a, 0)?)),
+        "ui.set-button" => api_result(h.ui_set_button(text(a, 0)?, button_of(arg(a, 1)?)?), |()| Value::Null),
+        "ui.remove-button" => Value::Bool(h.ui_remove_button(text(a, 0)?)),
+        "ui.open-settings" => api_result(h.ui_open_settings(text(a, 0)?), |()| Value::Null),
+        "ui.has-touch" => Value::Bool(h.ui_has_touch()),
+        "terrain.world-width" => h.terrain_world_width().map_or(Value::Null, |w| Value::Int(w.into())),
+
+        "terrain.solid-count" => {
+            let n = h.terrain_solid_count(signed(a, 0)?, signed(a, 1)?, signed(a, 2)?, signed(a, 3)?);
+            api_result(n, |n| Value::Int(n.into()))
+        }
+        "input.bind" => api_result(h.input_bind(text(a, 0)?, text(a, 1)?), |()| Value::Null),
+        "input.unbind" => Value::Bool(h.input_unbind(text(a, 0)?)),
+        "input.key-of" => opt_text(h.input_key_of(text(a, 0)?)),
+
+        f if f.starts_with("voice.") => {
+            let (call, show) = voice_call(f, a)?;
+            api_result(h.voice(call), show)
+        }
 
         other => return Err(format!("unknown host function {other:?} (this host does not implement it)")),
     })
@@ -1267,6 +1464,15 @@ mod tests {
         fn storage_delete(&mut self, key: &str) -> bool {
             key == "k"
         }
+        fn settings_get(&mut self, key: &str) -> Option<Vec<u8>> {
+            (key == "radius").then(|| vec![0x18, 32])
+        }
+        fn settings_all(&mut self) -> Vec<u8> {
+            vec![0xa0]
+        }
+        fn settings_set(&mut self, key: &str, value: &[u8]) -> Result<(), ApiError> {
+            self.res(&format!("setting {key} {value:?}"), ())
+        }
         fn storage_keys(&mut self, prefix: &str) -> Vec<String> {
             vec![format!("{prefix}a")]
         }
@@ -1364,6 +1570,54 @@ mod tests {
         }
         fn content_block_at(&mut self, x: i32, y: i32) -> Option<String> {
             (x == 3 && y == -4).then(|| "m:brick".to_string())
+        }
+        fn ui_set_overhead(&mut self, player: &str, icon: OverheadIcon) -> Result<(), ApiError> {
+            self.res(&format!("overhead {player} {}", icon.name()), ())
+        }
+        fn ui_clear_overhead(&mut self, player: &str) -> bool {
+            self.calls.push(format!("clear-overhead {player}"));
+            true
+        }
+        fn ui_set_button(&mut self, id: &str, b: Button) -> Result<(), ApiError> {
+            self.res(&format!("button {id} {b:?}"), ())
+        }
+        fn ui_remove_button(&mut self, id: &str) -> bool {
+            self.calls.push(format!("remove-button {id}"));
+            false
+        }
+        fn ui_open_settings(&mut self, mod_id: &str) -> Result<(), ApiError> {
+            self.res(&format!("open-settings {mod_id}"), ())
+        }
+        fn voice(&mut self, call: VoiceCall) -> Result<VoiceReply, ApiError> {
+            let reply = match &call {
+                VoiceCall::State(_) => VoiceReply::State(crate::voice::VoiceState::Talking),
+                VoiceCall::Icons => VoiceReply::Icons(Icons { deafen: false, ..Icons::default() }),
+                VoiceCall::Unmute(_) | VoiceCall::PlayerMuted(_) => VoiceReply::Bool(true),
+                VoiceCall::Master | VoiceCall::PlayerVolume(_) => VoiceReply::Percent(70),
+                VoiceCall::Allowed => {
+                    VoiceReply::Allowed(crate::voice::Allowance { modes: 1, activations: 2, max_bitrate: 9 })
+                }
+                VoiceCall::Mic => VoiceReply::Mic(crate::voice::MicState::Denied),
+                VoiceCall::SelfMuted | VoiceCall::Deafened => VoiceReply::Bool(true),
+                _ => VoiceReply::Unit,
+            };
+            self.res(&format!("{call:?}"), reply)
+        }
+        fn terrain_world_width(&mut self) -> Option<i32> {
+            Some(100)
+        }
+        fn terrain_solid_count(&mut self, x1: i32, y1: i32, x2: i32, y2: i32) -> Result<u32, ApiError> {
+            self.res(&format!("solid {x1} {y1} {x2} {y2}"), 3)
+        }
+        fn input_bind(&mut self, action: &str, key: &str) -> Result<(), ApiError> {
+            self.res(&format!("bind {action} {key}"), ())
+        }
+        fn input_unbind(&mut self, action: &str) -> bool {
+            self.calls.push(format!("unbind {action}"));
+            true
+        }
+        fn input_key_of(&mut self, action: &str) -> Option<String> {
+            (action == "ptt").then(|| "v".to_string())
         }
         fn ui_toast(&mut self, text: &str) -> Result<(), ApiError> {
             self.res(&format!("toast {text}"), ())
@@ -1476,6 +1730,11 @@ mod tests {
         assert_eq!(call(&mut h, "storage.set", &[t("k"), Value::Bytes(vec![9])]), ok(Value::Null));
         assert_eq!(call(&mut h, "storage.delete", &[t("k")]), Value::Bool(true));
         assert_eq!(call(&mut h, "storage.keys", &[t("p")]), Value::List(vec![t("pa")]));
+        assert_eq!(call(&mut h, "settings.get", &[t("radius")]), Value::Bytes(vec![0x18, 32]));
+        assert_eq!(call(&mut h, "settings.get", &[t("z")]), Value::Null);
+        assert_eq!(call(&mut h, "settings.all", &[]), Value::Bytes(vec![0xa0]));
+        assert_eq!(call(&mut h, "settings.set", &[t("radius"), Value::Bytes(vec![1])]), ok(Value::Null));
+        assert!(h.calls.contains(&"setting radius [1]".to_string()));
     }
 
     #[test]
@@ -1876,5 +2135,137 @@ mod tests {
         std::fs::create_dir_all(blocked.join(p.file_name().unwrap())).unwrap();
         std::fs::write(blocked.join(p.file_name().unwrap()).join("x"), b"x").unwrap();
         assert!(write_sdk(&blocked).unwrap_err().contains("cannot write"));
+    }
+
+    #[test]
+    fn voice_terrain_input_and_ui_additions() {
+        let mut h = Fake::default();
+        let p = || t("p1");
+        let route = record(vec![
+            ("listener", t("p2")),
+            ("modes", Value::List(vec![t("proximity"), t("channel")])),
+            ("gain", Value::Float(0.5)),
+            ("pan", Value::Int(-1)),
+            ("muffle", Value::Float(0.25)),
+        ]);
+        let caps = record(vec![
+            ("max-bitrate", Value::Int(16_000)),
+            ("max-speakers", Value::Int(4)),
+            ("max-frames-per-sec", Value::Int(50)),
+        ]);
+        let icons = record(vec![
+            ("speaking", Value::Bool(true)),
+            ("no-voice", Value::Bool(false)),
+            ("self-mute", Value::Bool(true)),
+            ("deafen", Value::Bool(true)),
+            ("admin-mute", Value::Bool(true)),
+        ]);
+        let modes = Value::List(vec![t("global")]);
+        let acts = Value::List(vec![t("ptt"), t("toggle")]);
+        let unit = ok(Value::Null);
+        let cases: Vec<(&str, Vec<Value>, Value)> = vec![
+            ("voice.state", vec![p()], ok(t("talking"))),
+            ("voice.set-routes", vec![p(), Value::List(vec![route.clone()])], unit.clone()),
+            ("voice.mute", vec![p(), Value::Int(5)], unit.clone()),
+            ("voice.mute", vec![p(), Value::Null], unit.clone()),
+            ("voice.unmute", vec![p()], ok(Value::Bool(true))),
+            ("voice.set-speaker-gain", vec![p(), Value::Int(150)], unit.clone()),
+            ("voice.set-caps", vec![caps.clone()], unit.clone()),
+            (
+                "voice.set-transport",
+                vec![record(vec![("mode", t("udp")), ("udp-port", Value::Int(9000))])],
+                unit.clone(),
+            ),
+            ("voice.set-transport", vec![record(vec![("mode", t("auto")), ("udp-port", Value::Null)])], unit.clone()),
+            ("voice.set-allowed", vec![p(), modes.clone(), acts.clone()], unit.clone()),
+            ("voice.set-icons", vec![icons.clone()], unit.clone()),
+            ("voice.set-broadcast-overrides-deafen", vec![Value::Bool(true)], unit.clone()),
+            ("voice.set-default-mode", vec![t("channel")], unit.clone()),
+            ("voice.set-activation", vec![t("vad")], unit.clone()),
+            ("voice.talk", vec![Value::Null, Value::Bool(true)], unit.clone()),
+            ("voice.talk", vec![t("global"), Value::Bool(false)], unit.clone()),
+            ("voice.set-mic", vec![Value::Bool(true)], unit.clone()),
+            ("voice.set-self-mute", vec![Value::Bool(true)], unit.clone()),
+            ("voice.set-deafen", vec![Value::Bool(false)], unit.clone()),
+            ("voice.set-vad-threshold", vec![Value::Float(-30.5)], unit.clone()),
+            ("voice.set-vad-threshold", vec![Value::Int(-30)], unit.clone()),
+            ("voice.set-master", vec![Value::Int(80)], unit.clone()),
+            ("voice.master", vec![], ok(Value::Int(70))),
+            ("voice.set-player-volume", vec![p(), Value::Int(90)], unit.clone()),
+            ("voice.player-volume", vec![p()], ok(Value::Int(70))),
+            ("voice.mute-player", vec![p(), Value::Bool(true)], unit.clone()),
+            ("voice.player-muted", vec![p()], ok(Value::Bool(true))),
+            (
+                "terrain.solid-count",
+                vec![Value::Int(1), Value::Int(2), Value::Int(3), Value::Int(4)],
+                ok(Value::Int(3)),
+            ),
+            ("input.bind", vec![t("ptt"), t("v")], unit.clone()),
+            ("voice.self-muted", vec![], ok(Value::Bool(true))),
+            ("voice.deafened", vec![], ok(Value::Bool(true))),
+            ("voice.mic", vec![], ok(t("denied"))),
+            ("host.platform", vec![], t("unknown")),
+            ("players.player.sleeping", vec![p()], Value::Bool(false)),
+            ("players.player.alive", vec![p()], Value::Bool(false)),
+            ("players.local-player", vec![], Value::Null),
+            ("players.has-mod", vec![p(), t("voice")], Value::Bool(false)),
+            ("ui.has-touch", vec![], Value::Bool(false)),
+            ("terrain.world-width", vec![], Value::Int(100)),
+            ("input.unbind", vec![t("ptt")], Value::Bool(true)),
+            ("input.key-of", vec![t("ptt")], t("v")),
+            ("input.key-of", vec![t("x")], Value::Null),
+            ("ui.set-overhead", vec![p(), t("no-voice")], unit.clone()),
+            ("ui.clear-overhead", vec![p()], Value::Bool(true)),
+            ("ui.remove-button", vec![t("b")], Value::Bool(false)),
+            ("ui.open-settings", vec![t("voice")], unit.clone()),
+        ];
+        for (f, args, want) in cases {
+            assert_eq!(call(&mut h, f, &args), want, "{f}");
+        }
+        let allowed = call(&mut h, "voice.allowed", &[]);
+        assert_eq!(allowed.get("ok").and_then(|a| a.get("modes")), Some(&Value::List(vec![t("proximity")])));
+        assert_eq!(allowed.get("ok").and_then(|a| a.get("max-bitrate")), Some(&Value::Int(9)));
+        let icons_back = call(&mut h, "voice.icons", &[]);
+        assert_eq!(icons_back.get("ok").and_then(|i| i.get("deafen")), Some(&Value::Bool(false)));
+        let button = record(vec![
+            ("icon", t("mic")),
+            ("label", Value::Null),
+            ("x", Value::Float(0.5)),
+            ("y", Value::Int(1)),
+            ("size", Value::Int(64)),
+            ("opacity", Value::Int(80)),
+        ]);
+        assert_eq!(call(&mut h, "ui.set-button", &[t("b"), button.clone()]), unit);
+        assert!(h.calls.iter().any(|c| c.contains("SetRoutes") && c.contains("modes: 5")));
+        assert!(h.calls.iter().any(|c| c.contains("SetAllowed(\"p1\", 2, 5)")));
+        // errors
+        h.err = Some(ApiError::Unsupported);
+        assert_eq!(call(&mut h, "voice.master", &[]), entry("err", api_error(&ApiError::Unsupported)));
+        let bad: Vec<(&str, Vec<Value>)> = vec![
+            ("voice.nope", vec![]),
+            ("voice.set-routes", vec![p(), Value::Int(1)]),
+            ("voice.set-routes", vec![p(), Value::List(vec![record(vec![("listener", t("x"))])])]),
+            (
+                "voice.set-routes",
+                vec![p(), Value::List(vec![record(vec![("listener", t("x")), ("modes", Value::Int(1))])])],
+            ),
+            (
+                "voice.set-routes",
+                vec![
+                    p(),
+                    Value::List(vec![record(vec![("listener", t("x")), ("modes", Value::List(vec![t("shout")]))])]),
+                ],
+            ),
+            ("voice.mute", vec![p(), Value::Int(-1)]),
+            ("voice.set-speaker-gain", vec![p(), Value::Int(70_000)]),
+            ("voice.set-caps", vec![record(vec![("max-bitrate", t("x"))])]),
+            ("voice.set-caps", vec![record(vec![("max-bitrate", Value::Int(-1))])]),
+            ("voice.set-transport", vec![record(vec![("mode", t("carrier-pigeon"))])]),
+            ("voice.set-icons", vec![record(vec![("speaking", t("yes"))])]),
+            ("ui.set-button", vec![t("b"), record(vec![("icon", t("mic")), ("label", Value::Null), ("x", t("left"))])]),
+        ];
+        for (f, args) in bad {
+            assert!(call_host(&mut h, f, &args).is_err(), "{f}");
+        }
     }
 }

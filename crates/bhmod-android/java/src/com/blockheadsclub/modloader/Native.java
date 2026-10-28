@@ -18,6 +18,24 @@ final class Native {
     static native String install(String path, String sha256, String source, boolean nativeConfirmed);
     static native boolean setEnabled(String id, boolean on);
     static native boolean remove(String id);
+    /** The answer of the RECORD_AUDIO dialog (voice chat). */
+    static native void micPermission(boolean granted);
+    /** Push-to-talk down / up (host seam: talks in the default mode without going through a mod). */
+    static native void ptt(boolean down);
+    /** An on-screen button of a mod: `action` = press, long-press or release. */
+    static native void uiButton(String mod, String id, String action);
+    /** The player dropped a button at screen fractions `x`, `y` (stored on the device). */
+    static native void buttonMoved(String mod, String id, float x, float y);
+    /** The player picked a voice mode in the long-press picker. */
+    static native void voiceMode(String mode);
+    /** A touch on the game started at screen fractions `x`, `y` (the blockhead there is picked). */
+    static native void tap(float x, float y);
+    /** A hardware key went down or up (key name of the `input` interface). */
+    static native void key(String name, boolean down);
+    /** Opens the settings screen of a running mod. */
+    static native void openSettings(String mod);
+    /** A setting changed in the settings screen: `scope` client, server, keys or voice; `json` the new value. */
+    static native void settingSet(String mod, String scope, String key, String json);
 
     /** Runs a native call; false when the library is not loaded (yet). */
     static boolean ok(Runnable r) {

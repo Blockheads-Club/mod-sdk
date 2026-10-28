@@ -1,0 +1,19 @@
+[package]
+name = "bhmod-opus-sys"
+description = "Vendored libopus 1.5.2 (fixed point, NEON on ARM) with minimal FFI and a safe 48 kHz mono encoder/decoder"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+# Our Rust code and build script are GPL-3.0-or-later; the vendored libopus in opus/ is BSD-3-Clause (opus/COPYING).
+license = "GPL-3.0-or-later AND BSD-3-Clause"
+repository.workspace = true
+authors.workspace = true
+publish = false
+links = "opus"
+include = ["src", "build.rs", "opus", "LICENSE", "README.md"]
+
+[dependencies]
+bhmod-voice = { path = "../bhmod-voice" }
+
+[build-dependencies]
+cc = "1"

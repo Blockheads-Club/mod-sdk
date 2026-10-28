@@ -1,4 +1,4 @@
-package blockheads:api@0.3.2;
+package blockheads:api@0.3.4;
 
 /// Facts about the running host and the calling mod.
 interface host {
@@ -18,4 +18,8 @@ interface host {
 
     /// A short host name and version, for logs only (for example `blockheads-server 0.2.0`).
     host-name: func() -> string;
+
+    /// (0.3.4) The platform: `server-linux-x86_64`, `pc-windows-x86_64`, `pc-linux-x86_64`, `pc-macos-aarch64`,
+    /// `android-armv7`, ... (`<host>-<os>-<arch>`; `unknown` when the host does not say).
+    platform: func() -> string;
 }

@@ -232,7 +232,18 @@ final class ModUi {
                 }
             }));
         }
-        View panel = Overlay.frame(c.optString("title"), null, body, Kit.footer(a, buttons.toArray(new View[0])));
+        View footer;
+        if (buttons.size() <= 2) {
+            footer = Kit.footer(a, buttons.toArray(new View[0]));
+        } else {
+            // Three or four buttons do not fit one row of the narrow dialog: two rows of two.
+            LinearLayout rows = Kit.column(a);
+            for (int i = 0; i < buttons.size(); i += 2) {
+                rows.addView(Kit.footer(a, buttons.subList(i, Math.min(i + 2, buttons.size())).toArray(new View[0])), Kit.fill());
+            }
+            footer = rows;
+        }
+        View panel = Overlay.frame(c.optString("title"), null, body, footer);
         dialogId = id;
         dialogMod = mod;
         Overlay.show(Overlay.onBack(panel, new Runnable() { public void run() { closeDialog(true); } }));
@@ -259,5 +270,6 @@ final class ModUi {
             if (key.startsWith(mod + "/")) remove(key);
         }
         if (mod.equals(dialogMod)) closeDialog(false);
+        VoiceUi.clearMod(mod);
     }
 }

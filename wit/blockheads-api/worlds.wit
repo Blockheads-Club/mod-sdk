@@ -1,4 +1,4 @@
-package blockheads:api@0.3.2;
+package blockheads:api@0.3.4;
 
 /// The interfaces every mod may import, on both sides.
 world core {
@@ -13,6 +13,9 @@ world core {
     import services;
     import channels;
     import content;
+    import settings;
+    import voice;
+    import terrain;
 }
 
 /// A server mod (`[entry] server` in `mod.toml`). Runs in the dedicated server or the host of a local world.
@@ -23,9 +26,11 @@ world server-mod {
 
 /// A client mod (`[entry] client`). Runs in the game client (PC port or Android loader). It gets the core imports
 /// (player-join, player-quit and kicks are server-only, and `players` lists the players the client knows about) and,
-/// since 0.3, `ui` for the HUD, toasts and dialogs. Other client interfaces (input, rendering, assets) come later.
+/// since 0.3, `ui` for the HUD, toasts and dialogs, and since 0.3.4 `input` for key bindings. Other client interfaces
+/// (rendering, assets) come later.
 world client-mod {
     include core;
     import ui;
+    import input;
     export guest;
 }

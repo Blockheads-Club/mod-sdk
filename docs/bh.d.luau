@@ -1,4 +1,4 @@
--- Type declarations of the `bh` global for Luau mods (blockheads:api@0.3.0). Hand-written from the WIT in
+-- Type declarations of the `bh` global for Luau mods (blockheads:api@0.3.4). Hand-written from the WIT in
 -- ../wit/blockheads-api; see luau-api.md for the mapping rules. Use with luau-lsp ("definitions" setting).
 
 export type Role = "player" | "moderator" | "admin" | "owner"
@@ -42,7 +42,18 @@ declare class Player
 	function kick(self, reason: string): ()
 	function pos(self): Pos?
 	function value_handle(self): number
+	-- API 0.3.4 (server; false elsewhere)
+	function sleeping(self): boolean
+	function alive(self): boolean
 end
+
+-- API 0.3.4
+export type VoiceMode = "proximity" | "global" | "channel" | "broadcast"
+export type VoiceActivation = "ptt" | "vad" | "toggle"
+export type VoiceState = "none" | "ready" | "talking" | "self-muted" | "deafened" | "admin-muted"
+export type VoiceRoute = { listener: Player, modes: { VoiceMode }?, gain: number?, pan: number?, muffle: number? }
+export type VoiceIcons = { speaking: boolean?, no_voice: boolean?, self_mute: boolean?, deafen: boolean?, admin_mute: boolean? }
+export type UiButton = { icon: string, label: string?, x: number?, y: number?, size: number?, opacity: number? }
 
 export type CommandSender = { player: Player?, console: boolean? }
 
@@ -122,6 +133,7 @@ declare bh: {
 		mod_version: () -> string,
 		current_side: () -> "server" | "client",
 		host_name: () -> string,
+		platform: () -> string, -- 0.3.4
 	},
 	log: {
 		log: (level: Level, message: string) -> (),
@@ -137,6 +149,8 @@ declare bh: {
 		from_value_handle: (handle: number) -> Player?,
 		online: () -> { Player },
 		broadcast: (text: string) -> (),
+		local_player: () -> Player?, -- 0.3.4, clients
+		has_mod: (player: Player, mod_id: string) -> boolean, -- 0.3.4, server
 	},
 	content: {
 		id_of: (kind: ContentKind, key: string) -> number?,
@@ -175,6 +189,12 @@ declare bh: {
 		delete: (key: string) -> boolean,
 		keys: (prefix: string?) -> { string },
 	},
+	-- API 0.3.3: the mod's own [settings]; changes fire the custom event "<mod-id>:settings-changed" { keys = { string } }.
+	settings: {
+		get: (key: string) -> any,
+		all: () -> { [string]: any },
+		set: (key: string, value: any) -> (),
+	},
 	services: {
 		provide: (name: string, version: string, methods: { [string]: (...any) -> any }) -> (),
 		call: (name: string, version_req: string, method: string, ...any) -> any,
@@ -196,6 +216,54 @@ declare bh: {
 		notice: (text: string, level: ("info" | "warning" | "success" | "error")?) -> (),
 		show_dialog: (dialog: UiDialog) -> number,
 		close_dialog: (id: number) -> boolean,
+		-- API 0.3.4
+		set_overhead: (player: Player, icon: "speaking" | "no-voice" | "self-mute" | "deafen" | "admin-mute") -> (),
+		clear_overhead: (player: Player) -> boolean,
+		set_button: (id: string, button: UiButton) -> (),
+		remove_button: (id: string) -> boolean,
+		open_settings: (mod_id: string) -> (),
+		has_touch: () -> boolean,
+	},
+	-- API 0.3.4, permission `voice` (see voice.md); events voice:talk-start|talk-stop|state|mic|allowed
+	voice: {
+		state: (player: Player) -> VoiceState,
+		icons: () -> VoiceIcons,
+		set_routes: (speaker: Player, routes: { VoiceRoute }) -> (),
+		mute: (player: Player, until_ms: number?) -> (),
+		unmute: (player: Player) -> boolean,
+		set_speaker_gain: (player: Player, percent: number) -> (),
+		set_caps: (caps: { max_bitrate: number?, max_speakers: number?, max_frames_per_sec: number? }) -> (),
+		-- Only `udp_port` matters (nil = the host's default, game port + 1); `mode` is ignored (frames always use UDP).
+		set_transport: (t: { mode: ("auto" | "inband" | "udp")?, udp_port: number? }) -> (),
+		set_allowed: (player: Player, modes: { VoiceMode }, activations: { VoiceActivation }) -> (),
+		set_icons: (icons: VoiceIcons) -> (),
+		set_broadcast_overrides_deafen: (on: boolean) -> (),
+		set_default_mode: (mode: VoiceMode) -> (),
+		set_activation: (a: VoiceActivation) -> (),
+		talk: (mode: VoiceMode?, pressed: boolean) -> (),
+		set_mic: (on: boolean) -> (),
+		set_self_mute: (on: boolean) -> (),
+		set_deafen: (on: boolean) -> (),
+		set_vad_threshold: (db: number) -> (),
+		set_master: (percent: number) -> (),
+		master: () -> number,
+		set_player_volume: (player: Player, percent: number) -> (),
+		player_volume: (player: Player) -> number,
+		mute_player: (player: Player, muted: boolean) -> (),
+		player_muted: (player: Player) -> boolean,
+		allowed: () -> { modes: { VoiceMode }, activations: { VoiceActivation }, max_bitrate: number },
+		self_muted: () -> boolean,
+		deafened: () -> boolean,
+		mic: () -> "off" | "on" | "denied" | "unavailable",
+	},
+	terrain: {
+		solid_count: (x1: number, y1: number, x2: number, y2: number) -> number,
+		world_width: () -> number?,
+	},
+	input: {
+		bind: (action: string, default_key: string) -> (),
+		unbind: (action: string) -> boolean,
+		key_of: (action: string) -> string?,
 	},
 	value: {
 		encode: (value: any) -> string,

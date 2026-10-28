@@ -19,8 +19,9 @@ use crate::runtime::TaskId;
 use crate::runtime::{CallError, CommandId, HostApi, Instance, InstanceLimits, ModFiles, Runtime, SubscriptionId};
 use crate::types::{ApiError, CommandOutcome, CommandSender, CommandSpec, Event, EventKind, LogLevel, Mutation};
 use crate::types::{ChannelSource, ChannelTarget, ContentKind, Outcome, Pos, Priority, RejectReason, Role};
-use crate::ui::{ButtonKind, Dialog, DialogButton, Field, NoticeLevel, Slot, Widget, WidgetKind};
+use crate::ui::{Button, ButtonKind, Dialog, DialogButton, Field, NoticeLevel, OverheadIcon, Slot, Widget, WidgetKind};
 use crate::value::{self, Value as Cbor};
+use crate::voice::{Activation, Caps, Icons, Mode, Route, Transport, TransportConfig, VoiceCall, VoiceReply};
 
 /// The Luau runtime.
 #[derive(Debug, Clone, Copy, Default)]
@@ -152,6 +153,8 @@ impl UserData for LuaPlayer {
             with_host(&this.sh, |h| h.player_kick(&this.id, &reason))?.map_err(api_err)
         });
         m.add_method("value_handle", |_, this, ()| with_host(&this.sh, |h| h.handle_of_player(&this.id)));
+        m.add_method("sleeping", |_, this, ()| with_host(&this.sh, |h| h.player_sleeping(&this.id)));
+        m.add_method("alive", |_, this, ()| with_host(&this.sh, |h| h.player_alive(&this.id)));
         m.add_method("pos", |lua, this, ()| match with_host(&this.sh, |h| h.player_pos(&this.id))? {
             Ok(Some(p)) => Ok(Value::Table(pos_table(lua, p)?)),
             _ => Ok(Value::Nil),
@@ -686,6 +689,193 @@ fn dialog_of(t: &Table) -> mlua::Result<Dialog> {
     })
 }
 
+fn button_of(t: &Table) -> mlua::Result<Button> {
+    Ok(Button {
+        icon: req_str(t, "icon")?,
+        label: t.get("label")?,
+        x: t.get::<Option<f32>>("x")?.unwrap_or(0.9),
+        y: t.get::<Option<f32>>("y")?.unwrap_or(0.7),
+        size: t.get::<Option<u16>>("size")?.unwrap_or(64),
+        opacity: t.get::<Option<u8>>("opacity")?.unwrap_or(80),
+    })
+}
+
+/// A list of names (`{"proximity", "global"}`) as a mask.
+fn name_mask<T: Copy>(v: Value, what: &str, parse: fn(&str) -> Option<T>, bit: fn(T) -> u8) -> mlua::Result<u8> {
+    string_list(v)?.iter().try_fold(0, |m, n| {
+        parse(n).map(|c| m | bit(c)).ok_or_else(|| rt_err(format!("invalid argument: unknown {what} {n:?}")))
+    })
+}
+
+fn mode_arg(s: &str) -> mlua::Result<Mode> {
+    Mode::parse(s).ok_or_else(|| rt_err(format!("invalid argument: unknown mode {s:?}")))
+}
+
+fn route_of(t: &Table) -> mlua::Result<Route> {
+    Ok(Route {
+        listener: player_arg(&t.get::<Value>("listener")?)?,
+        modes: name_mask(t.get("modes")?, "mode", Mode::parse, Mode::bit)?,
+        gain: t.get::<Option<f32>>("gain")?.unwrap_or(1.0),
+        pan: t.get::<Option<f32>>("pan")?.unwrap_or(0.0),
+        muffle: t.get::<Option<f32>>("muffle")?.unwrap_or(0.0),
+    })
+}
+
+fn icons_of(t: &Table) -> mlua::Result<Icons> {
+    let get = |k: &str| -> mlua::Result<bool> { Ok(t.get::<Option<bool>>(k)?.unwrap_or(true)) };
+    Ok(Icons {
+        speaking: get("speaking")?,
+        no_voice: get("no_voice")?,
+        self_mute: get("self_mute")?,
+        deafen: get("deafen")?,
+        admin_mute: get("admin_mute")?,
+    })
+}
+
+fn icons_table(lua: &Lua, i: Icons) -> mlua::Result<Table> {
+    let t = lua.create_table()?;
+    for (k, v) in [
+        ("speaking", i.speaking),
+        ("no_voice", i.no_voice),
+        ("self_mute", i.self_mute),
+        ("deafen", i.deafen),
+        ("admin_mute", i.admin_mute),
+    ] {
+        t.set(k, v)?;
+    }
+    Ok(t)
+}
+
+fn install_voice(b: &mut Builder, bh: &Table, sh: &Rc<Shared>) -> mlua::Result<()> {
+    fn call(s: &Rc<Shared>, c: VoiceCall) -> mlua::Result<VoiceReply> {
+        with_host(s, |h| h.voice(c))?.map_err(api_err)
+    }
+    let v = b.lua.create_table()?;
+    let s = sh.clone();
+    b.func(&v, "state", move |_, who: Value| Ok(call(&s, VoiceCall::State(player_arg(&who)?))?.as_state().name()));
+    let s = sh.clone();
+    b.func(&v, "icons", move |lua, ()| icons_table(lua, call(&s, VoiceCall::Icons)?.as_icons()));
+    let s = sh.clone();
+    b.func(&v, "set_routes", move |_, (who, routes): (Value, Table)| {
+        let routes = routes.sequence_values::<Table>().map(|r| route_of(&r?)).collect::<mlua::Result<Vec<_>>>()?;
+        call(&s, VoiceCall::SetRoutes(player_arg(&who)?, routes)).map(drop)
+    });
+    let s = sh.clone();
+    b.func(&v, "mute", move |_, (who, until): (Value, Option<u64>)| {
+        call(&s, VoiceCall::Mute(player_arg(&who)?, until)).map(drop)
+    });
+    let s = sh.clone();
+    b.func(&v, "unmute", move |_, who: Value| Ok(call(&s, VoiceCall::Unmute(player_arg(&who)?))?.as_bool()));
+    let s = sh.clone();
+    b.func(&v, "set_speaker_gain", move |_, (who, p): (Value, u16)| {
+        call(&s, VoiceCall::SetSpeakerGain(player_arg(&who)?, p)).map(drop)
+    });
+    let s = sh.clone();
+    b.func(&v, "set_caps", move |_, t: Table| {
+        let d = Caps::default();
+        let caps = Caps {
+            max_bitrate: t.get::<Option<u32>>("max_bitrate")?.unwrap_or(d.max_bitrate),
+            max_speakers: t.get::<Option<u32>>("max_speakers")?.unwrap_or(d.max_speakers),
+            max_frames_per_sec: t.get::<Option<u32>>("max_frames_per_sec")?.unwrap_or(d.max_frames_per_sec),
+        };
+        call(&s, VoiceCall::SetCaps(caps)).map(drop)
+    });
+    let s = sh.clone();
+    b.func(&v, "set_transport", move |_, t: Table| {
+        let mode = enum_key(&t, "mode", Transport::Udp, Transport::parse)?;
+        call(&s, VoiceCall::SetTransport(TransportConfig { mode, udp_port: t.get("udp_port")? })).map(drop)
+    });
+    let s = sh.clone();
+    b.func(&v, "set_allowed", move |_, (who, modes, acts): (Value, Value, Value)| {
+        let m = name_mask(modes, "mode", Mode::parse, Mode::bit)?;
+        let a = name_mask(acts, "activation", Activation::parse, Activation::bit)?;
+        call(&s, VoiceCall::SetAllowed(player_arg(&who)?, m, a)).map(drop)
+    });
+    let s = sh.clone();
+    b.func(&v, "set_icons", move |_, t: Table| call(&s, VoiceCall::SetIcons(icons_of(&t)?)).map(drop));
+    let s = sh.clone();
+    b.func(&v, "set_broadcast_overrides_deafen", move |_, on: bool| {
+        call(&s, VoiceCall::SetBroadcastOverridesDeafen(on)).map(drop)
+    });
+    let s = sh.clone();
+    b.func(&v, "set_default_mode", move |_, m: String| call(&s, VoiceCall::SetDefaultMode(mode_arg(&m)?)).map(drop));
+    let s = sh.clone();
+    b.func(&v, "set_activation", move |_, a: String| {
+        let a = Activation::parse(&a).ok_or_else(|| rt_err(format!("invalid argument: unknown activation {a:?}")))?;
+        call(&s, VoiceCall::SetActivation(a)).map(drop)
+    });
+    let s = sh.clone();
+    b.func(&v, "talk", move |_, (m, pressed): (Option<String>, bool)| {
+        let m = m.map(|m| mode_arg(&m)).transpose()?;
+        call(&s, VoiceCall::Talk(m, pressed)).map(drop)
+    });
+    for (name, f) in [
+        ("set_mic", VoiceCall::SetMic as fn(bool) -> VoiceCall),
+        ("set_self_mute", VoiceCall::SetSelfMute),
+        ("set_deafen", VoiceCall::SetDeafen),
+    ] {
+        let s = sh.clone();
+        b.func(&v, name, move |_, on: bool| call(&s, f(on)).map(drop));
+    }
+    let s = sh.clone();
+    b.func(&v, "set_vad_threshold", move |_, db: f32| call(&s, VoiceCall::SetVadThreshold(db)).map(drop));
+    let s = sh.clone();
+    b.func(&v, "set_master", move |_, p: u16| call(&s, VoiceCall::SetMaster(p)).map(drop));
+    let s = sh.clone();
+    b.func(&v, "master", move |_, ()| Ok(call(&s, VoiceCall::Master)?.as_percent()));
+    let s = sh.clone();
+    b.func(&v, "set_player_volume", move |_, (who, p): (Value, u16)| {
+        call(&s, VoiceCall::SetPlayerVolume(player_arg(&who)?, p)).map(drop)
+    });
+    let s = sh.clone();
+    b.func(&v, "player_volume", move |_, who: Value| {
+        Ok(call(&s, VoiceCall::PlayerVolume(player_arg(&who)?))?.as_percent())
+    });
+    let s = sh.clone();
+    b.func(&v, "mute_player", move |_, (who, m): (Value, bool)| {
+        call(&s, VoiceCall::MutePlayer(player_arg(&who)?, m)).map(drop)
+    });
+    let s = sh.clone();
+    b.func(&v, "player_muted", move |_, who: Value| Ok(call(&s, VoiceCall::PlayerMuted(player_arg(&who)?))?.as_bool()));
+    let s = sh.clone();
+    b.func(&v, "allowed", move |lua, ()| {
+        let a = call(&s, VoiceCall::Allowed)?.as_allowance();
+        let t = lua.create_table()?;
+        let acts: Vec<&str> = Activation::from_mask(a.activations).into_iter().map(Activation::name).collect();
+        t.set("modes", Mode::from_mask(a.modes).into_iter().map(Mode::name).collect::<Vec<_>>())?;
+        t.set("activations", acts)?;
+        t.set("max_bitrate", a.max_bitrate)?;
+        Ok(t)
+    });
+    let s = sh.clone();
+    b.func(&v, "self_muted", move |_, ()| Ok(call(&s, VoiceCall::SelfMuted)?.as_bool()));
+    let s = sh.clone();
+    b.func(&v, "deafened", move |_, ()| Ok(call(&s, VoiceCall::Deafened)?.as_bool()));
+    let s = sh.clone();
+    b.func(&v, "mic", move |_, ()| Ok(call(&s, VoiceCall::Mic)?.as_mic().name()));
+    bh.set("voice", v)?;
+
+    let t = b.lua.create_table()?;
+    let s = sh.clone();
+    b.func(&t, "solid_count", move |_, (x1, y1, x2, y2): (i32, i32, i32, i32)| {
+        with_host(&s, |h| h.terrain_solid_count(x1, y1, x2, y2))?.map_err(api_err)
+    });
+    let s = sh.clone();
+    b.func(&t, "world_width", move |_, ()| with_host(&s, |h| h.terrain_world_width()));
+    bh.set("terrain", t)?;
+
+    let input = b.lua.create_table()?;
+    let s = sh.clone();
+    b.func(&input, "bind", move |_, (action, key): (String, String)| {
+        with_host(&s, |h| h.input_bind(&action, &key))?.map_err(api_err)
+    });
+    let s = sh.clone();
+    b.func(&input, "unbind", move |_, action: String| with_host(&s, |h| h.input_unbind(&action)));
+    let s = sh.clone();
+    b.func(&input, "key_of", move |_, action: String| with_host(&s, |h| h.input_key_of(&action)));
+    bh.set("input", input)
+}
+
 impl LuaInstance {
     /// Creates the VM, installs `bh` and compiles nothing yet (the entry runs in `on_enable`).
     pub fn new(mod_id: &str, files: ModFiles, limits: InstanceLimits) -> mlua::Result<LuaInstance> {
@@ -762,6 +952,8 @@ impl LuaInstance {
         host.set("current_side", lua.create_function(move |_, ()| with_host(&s, |h| h.current_side().name()))?)?;
         let s = sh.clone();
         host.set("host_name", lua.create_function(move |_, ()| with_host(&s, |h| h.host_name()))?)?;
+        let s = sh.clone();
+        host.set("platform", lua.create_function(move |_, ()| with_host(&s, |h| h.host_platform()))?)?;
         bh.set("host", host)?;
 
         let log = lua.create_table()?;
@@ -804,6 +996,16 @@ impl LuaInstance {
         let s = sh.clone();
         b.func(&players, "broadcast", move |_, text: String| {
             with_host(&s, |h| h.players_broadcast(&text))?.map_err(api_err)
+        });
+        let s = sh.clone();
+        b.func(&players, "local_player", move |lua, ()| match with_host(&s, |h| h.players_local())? {
+            Some(id) => Ok(Some(player(lua, &s, id)?)),
+            None => Ok(None),
+        });
+        let s = sh.clone();
+        b.func(&players, "has_mod", move |_, (who, m): (Value, String)| {
+            let id = player_arg(&who)?;
+            with_host(&s, |h| h.players_has_mod(&id, &m))
         });
         bh.set("players", players)?;
 
@@ -1028,6 +1230,24 @@ impl LuaInstance {
         });
         bh.set("services", services)?;
 
+        let settings = lua.create_table()?;
+        let s = sh.clone();
+        b.func(&settings, "get", move |lua, key: String| match with_host(&s, |h| h.settings_get(&key))? {
+            Some(bytes) => decode_cbor(lua, &s, &bytes),
+            None => Ok(Value::Nil),
+        });
+        let s = sh.clone();
+        b.func(&settings, "all", move |lua, ()| {
+            let bytes = with_host(&s, |h| h.settings_all())?;
+            decode_cbor(lua, &s, &bytes)
+        });
+        let s = sh.clone();
+        b.func(&settings, "set", move |_, (key, value): (String, Value)| {
+            let bytes = to_cbor(&s, &value, 1)?.encode();
+            with_host(&s, |h| h.settings_set(&key, &bytes))?.map_err(api_err)
+        });
+        bh.set("settings", settings)?;
+
         let channels = lua.create_table()?;
         let s = sh.clone();
         b.func(&channels, "open", move |lua, (name, f): (String, Option<Function>)| {
@@ -1076,7 +1296,31 @@ impl LuaInstance {
         });
         let s = sh.clone();
         b.func(&ui, "close_dialog", move |_, id: u32| with_host(&s, |h| h.ui_close_dialog(id)));
+        let s = sh.clone();
+        b.func(&ui, "set_overhead", move |_, (who, icon): (Value, String)| {
+            let icon = OverheadIcon::parse(&icon)
+                .ok_or_else(|| rt_err(format!("invalid argument: unknown overhead icon {icon:?}")))?;
+            let id = player_arg(&who)?;
+            with_host(&s, |h| h.ui_set_overhead(&id, icon))?.map_err(api_err)
+        });
+        let s = sh.clone();
+        b.func(&ui, "clear_overhead", move |_, who: Value| {
+            let id = player_arg(&who)?;
+            with_host(&s, |h| h.ui_clear_overhead(&id))
+        });
+        let s = sh.clone();
+        b.func(&ui, "set_button", move |_, (id, t): (String, Table)| {
+            let button = button_of(&t)?;
+            with_host(&s, |h| h.ui_set_button(&id, button))?.map_err(api_err)
+        });
+        let s = sh.clone();
+        b.func(&ui, "remove_button", move |_, id: String| with_host(&s, |h| h.ui_remove_button(&id)));
+        let s = sh.clone();
+        b.func(&ui, "has_touch", move |_, ()| with_host(&s, |h| h.ui_has_touch()));
+        let s = sh.clone();
+        b.func(&ui, "open_settings", move |_, id: String| with_host(&s, |h| h.ui_open_settings(&id))?.map_err(api_err));
         bh.set("ui", ui)?;
+        install_voice(&mut b, &bh, sh)?;
 
         let val = lua.create_table()?;
         let s = sh.clone();

@@ -29,7 +29,16 @@ public final class Bridge {
 
     static void activity(final Activity a) {
         activity = new WeakReference<>(a);
-        ui.post(new Runnable() { public void run() { Overlay.attach(a); } });
+        ui.post(new Runnable() {
+            public void run() {
+                Overlay.attach(a);
+                try {
+                    Keys.attach(a);
+                } catch (Throwable t) {
+                    Log.w(TAG, "key bindings unavailable", t);
+                }
+            }
+        });
     }
 
     static void activityGone(final Activity a) {
@@ -49,6 +58,16 @@ public final class Bridge {
         File d = app != null ? new File(app.getFilesDir(), "bhmods") : new File("/data/local/tmp/bhmods");
         d.mkdirs();
         return d.getAbsolutePath();
+    }
+
+    /** Voice: asks for RECORD_AUDIO (first opt-in); the answer comes back through Native.micPermission. */
+    public static void requestMic() {
+        Voice.request();
+    }
+
+    /** Voice: true when RECORD_AUDIO is granted already (no dialog needed). */
+    public static boolean micGranted() {
+        return Voice.granted();
     }
 
     /** A UI command from the game thread; handled later on the UI thread. */

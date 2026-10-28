@@ -64,7 +64,7 @@ fn tour_calls_every_import() {
     let log = b.log_text();
     assert_eq!(h.mods()[0].state, ModState::Enabled, "{log}");
     for line in [
-        "api = \"0.3.2\"",
+        "api = \"0.3.4\"",
         "id = \"tour\"",
         "version = \"1.2.3\"",
         "side = Side::Server",
@@ -342,7 +342,7 @@ fn bad_components_are_refused() {
     // A component without the guest export.
     f.files.insert("server/missing.wasm".into(), b"(component)".to_vec());
     let e = rt.instantiate("m", &f, LIMITS).err().unwrap();
-    assert!(e.contains("no exported instance named `blockheads:api/guest@0.3.2`"), "{e}");
+    assert!(e.contains("no exported instance named `blockheads:api/guest@0.3.4`"), "{e}");
 }
 
 #[test]
@@ -515,7 +515,7 @@ fn old_components(old_wasm: Vec<u8>) {
         assert_eq!(info.state, ModState::Enabled, "{}: {log}", info.id);
     }
     for line in [
-        "old: api = (\"0.3.2\", \"old\", \"1.0.0\", Side::Server, \"fake-host 1.0\")",
+        "old: api = (\"0.3.4\", \"old\", \"1.0.0\", Side::Server, \"fake-host 1.0\")",
         "[trace] old: lvl",
         "old: p = (\"p1\", \"ALICE\", true, Role::Player, Ok(()), Ok(()))",
         "old: find = Some(\"p1\")",
@@ -592,7 +592,7 @@ fn content_imports() {
     fs::write(d.join("assets/cap.png"), include_bytes!("../../bhmod-core/tests/cap.png")).unwrap();
     let toml = WASM_TOML
         .replace("ID", "gear")
-        .replace("api = \"^0.1\"", "api = \"^0.3.2\"")
+        .replace("api = \"^0.1\"", "api = \"^0.3.3\"")
         .replace("client = false", "client = true")
         .replace("[entry]\n", "[entry]\nclient = { runtime = \"wasm\", path = \"client/mod.wasm\" }\n");
     fs::write(
@@ -600,7 +600,8 @@ fn content_imports() {
         format!(
             "{toml}[content]\ncosmetics = [{{ key = \"gear:cap\", slot = \"hat\", texture = \"assets/cap.png\" }}]\n\
              items = [{{ key = \"gear:lamp\", texture = \"assets/cap.png\" }}]\n\
-             blocks = [{{ key = \"gear:brick\", texture = \"assets/cap.png\", base = \"red-bricks\" }}]\n"
+             blocks = [{{ key = \"gear:brick\", texture = \"assets/cap.png\", base = \"red-bricks\" }}]\n\
+             [settings.level]\ntype = \"int\"\ndefault = 3\nmin = 0\nlabel = \"Level\"\n"
         ),
     )
     .unwrap();
@@ -618,6 +619,11 @@ fn content_imports() {
         "gear: give-item = Ok(())",
         "gear: give-other = Err(\"invalid argument",
         "gear: place-block = Ok(())",
+        "gear: setting = (Some(Int(3)), None)",
+        "gear: settings-all = Map([(\"level\", Int(3))])",
+        "gear: setting-set = Ok(())",
+        "gear: setting-bad = Err(\"invalid argument: level: expected an integer, got a text\")",
+        "gear: setting-after = Some(Int(7))",
         "gear: block-at = (Some(\"gear:brick\"), None)",
         "gear: cosmetics = [CosmeticInfo { key: \"gear:cap\", mod-id: \"gear\", slot: \"hat\", id: Some(1) }]",
         "gear: id-of = (Some(1), None)",
@@ -678,7 +684,7 @@ fn newer_than_0_2_components(old_wasm: Vec<u8>) {
         assert_eq!(info.state, ModState::Enabled, "{}: {log}", info.id);
     }
     for line in [
-        "old: api = (\"0.3.2\", \"old\"",
+        "old: api = (\"0.3.4\", \"old\"",
         "old: pos = (Some(Pos { x: 7, y: 9 }), true, Some(\"p1\"))",
         "old: call = Ok([129, 1])",
         "old: send = Ok(())",
@@ -710,4 +716,80 @@ fn newer_than_0_2_components(old_wasm: Vec<u8>) {
     assert!(b.has_log("old message = (3, \"server\", \"\\u{1}\")"), "{}", b.log_text());
     h.disable_all();
     assert!(b.has_log("old disabled"));
+}
+
+#[test]
+fn api_0_3_4_imports() {
+    let (_t, b, mut h) = one("vox", "[permissions]\nvoice = true\n", "[vox]\ngrant = [\"voice\"]\n");
+    b.has_voice.set(true);
+    b.width.set(Some(64));
+    b.solid.borrow_mut().push((2, 0));
+    b.join("p1", "ALICE", Role::Admin);
+    b.join("p2", "BOB", Role::Player);
+    h.enable("World", "wid");
+    let log = b.log_text();
+    assert_eq!(h.mods()[0].state, ModState::Enabled, "{log}");
+    for line in [
+        "state = Ok(VoiceState::SelfMuted)",
+        "icons = Ok(IconVisibility { speaking: true, no-voice: false",
+        "routes = Ok(())",
+        "unmute = Ok(true)",
+        "allowed = Ok(())",
+        "talk = Err(ApiError::Unsupported)",
+        "master = (Err(ApiError::Unsupported), Err(ApiError::Unsupported))",
+        "solid = Ok(1)",
+        "bind = (Err(ApiError::Unsupported), false, None)",
+        "overhead = (Ok(()), true)",
+        "button = (Ok(()), true)",
+        "settings-screen = Ok(())",
+        "gaps = (\"test-linux-x86_64\", false, false, true, false)",
+        "gaps2 = (Some(64), false)",
+        "client-state = (true, Err(ApiError::Unsupported), Err(ApiError::Unsupported), Err(ApiError::Unsupported))",
+    ] {
+        assert!(log.contains(line), "missing {line:?} in\n{log}");
+    }
+    let calls = b.voice.take();
+    assert!(calls.contains(&"allowed p1 6 2".to_string()), "{calls:?}");
+    assert!(calls.iter().any(|c| c.starts_with("routes p1 [Route { listener: \"p2\", modes: 9")), "{calls:?}");
+}
+
+#[test]
+fn api_0_3_4_client_imports() {
+    let tmp = tempfile::tempdir().unwrap();
+    let d = tmp.path().join("vox");
+    fs::create_dir_all(d.join("client")).unwrap();
+    let toml = WASM_TOML
+        .replace("ID", "vox")
+        .replace("server = true\nclient = false", "server = false\nclient = true")
+        .replace(
+            "server = { runtime = \"wasm\", path = \"server/mod.wasm\" }",
+            "client = { runtime = \"wasm\", path = \"client/mod.wasm\" }",
+        );
+    fs::write(d.join("mod.toml"), format!("{toml}[permissions]\nvoice = true\n")).unwrap();
+    fs::write(d.join("client/mod.wasm"), guest_wasm()).unwrap();
+    fs::write(tmp.path().join("mods.toml"), "[vox]\ngrant = [\"voice\"]\n").unwrap();
+    let bridge = FakeBridge::new();
+    bridge.has_voice.set(true);
+    bridge.client.set(true);
+    *bridge.local.borrow_mut() = Some("p1".into());
+    bridge.join("p1", "ALICE", Role::Player);
+    bridge.join("p2", "BOB", Role::Player);
+    let mut opts = HostOptions::new(tmp.path(), Side::Client);
+    opts.runtimes = vec![Box::new(WasmRuntime::new(WasmConfig::default()).unwrap())];
+    opts.budgets.hard = std::time::Duration::from_secs(3);
+    opts.budgets.soft = opts.budgets.hard;
+    opts.budgets.step = opts.budgets.hard;
+    let mut h = ModHost::load(opts, bridge.clone());
+    h.enable("World", "wid");
+    let log = bridge.log_text();
+    assert_eq!(h.mods()[0].state, ModState::Enabled, "{log}");
+    for line in [
+        "talk = Ok(())",
+        "master = (Ok(()), Ok(75))",
+        "mute-player = (Ok(()), Ok(true))",
+        "client-state = (false, Ok(true), Ok(false), Ok(MicState::On))",
+        "bind = (Ok(()), true, None)",
+    ] {
+        assert!(log.contains(line), "missing {line:?} in\n{log}");
+    }
 }

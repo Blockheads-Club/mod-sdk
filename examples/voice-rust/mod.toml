@@ -1,0 +1,335 @@
+schema = 1
+id = "voice"
+version = "0.1.0"
+name = { en = "Voice chat", tr = "Sesli sohbet", ru = "Голосовой чат", kk = "Дауыстық чат" }
+description = { en = "Talk to nearby players, your channel or everyone. Push-to-talk, voice activation, channels, admin mutes and per-player volumes. Players without the mod may still join.", tr = "Yakındaki oyuncularla, kanalınla ya da herkesle konuş. Bas-konuş, sesle etkinleşme, kanallar, yönetici susturmaları ve oyuncu başına ses düzeyi. Modu olmayan oyuncular da katılabilir.", ru = "Говорите с игроками рядом, своим каналом или со всеми. Рация по кнопке, активация голосом, каналы, мут от админа и громкость для каждого игрока. Игроки без мода тоже могут зайти.", kk = "Жақын ойыншылармен, арнаңызбен немесе барлығымен сөйлесіңіз. Батырмамен сөйлеу, дауыспен іске қосу, арналар, әкімшінің дыбысын өшіруі және әр ойыншының дыбыс деңгейі. Модсыз ойыншылар да кіре алады." }
+authors = ["Blockheads Club"]
+license = "GPL-3.0-or-later"
+homepage = "https://github.com/Blockheads-Club/mod-sdk/tree/dev/examples/voice-rust"
+api = "^0.3.4"
+
+[sides]
+server = true
+client = true
+# Players without the mod may join (they neither hear nor talk); the admin's client-required override decides.
+client-required = false
+
+[entry]
+server = { runtime = "wasm", path = "server/mod.wasm" }
+client = { runtime = "wasm", path = "client/mod.wasm" }
+
+[permissions]
+voice = true
+
+[soft-dependencies]
+# Permission groups in the "who may talk" lists (node `group.<name>`).
+perms = "^1"
+
+[provides]
+services = [{ name = "voice", version = "1.0.0", wit = "wit/voice.wit" }]
+
+# ---------------------------------------------------------------- server settings: modes
+
+[settings.mode_proximity]
+type = "bool"
+default = true
+group = "modes"
+label = { en = "Proximity voice (players nearby)", tr = "Yakınlık sesi (yakındaki oyuncular)", ru = "Голос рядом (ближайшие игроки)", kk = "Жақын дауыс (жақын ойыншылар)" }
+
+[settings.mode_global]
+type = "bool"
+default = false
+group = "modes"
+label = { en = "Global voice (everyone)", tr = "Genel ses (herkes)", ru = "Общий голос (все)", kk = "Жалпы дауыс (барлығы)" }
+
+[settings.mode_channel]
+type = "bool"
+default = true
+group = "modes"
+label = { en = "Channel voice (teams)", tr = "Kanal sesi (takımlar)", ru = "Голос в канале (команды)", kk = "Арна дауысы (командалар)" }
+
+[settings.mode_broadcast]
+type = "bool"
+default = true
+group = "modes"
+label = { en = "Admin broadcast", tr = "Yönetici yayını", ru = "Трансляция админа", kk = "Әкімші хабары" }
+
+[settings.activation_ptt]
+type = "bool"
+default = true
+group = "modes"
+label = { en = "Allow push-to-talk", tr = "Bas-konuşa izin ver", ru = "Разрешить рацию по кнопке", kk = "Батырмамен сөйлеуге рұқсат ету" }
+
+[settings.activation_vad]
+type = "bool"
+default = true
+group = "modes"
+label = { en = "Allow voice activation", tr = "Sesle etkinleşmeye izin ver", ru = "Разрешить активацию голосом", kk = "Дауыспен іске қосуға рұқсат ету" }
+
+[settings.activation_toggle]
+type = "bool"
+default = true
+group = "modes"
+label = { en = "Allow toggle (press on, press off)", tr = "Aç/kapa ile konuşmaya izin ver", ru = "Разрешить переключение (нажал - вкл, нажал - выкл)", kk = "Ауыстырып қосуға рұқсат ету" }
+
+# ---------------------------------------------------------------- who may talk (role x mode)
+
+[settings.talk_proximity]
+type = "roles"
+default = ["everyone"]
+group = "talk"
+label = { en = "Who may talk nearby", tr = "Yakında kim konuşabilir", ru = "Кто может говорить рядом", kk = "Жақында кім сөйлей алады" }
+help = { en = "owner, admin, mod, everyone or a group of the Permissions mod. A role includes the higher ones.", tr = "owner, admin, mod, everyone ya da İzinler modunun bir grubu. Bir rol üstündekileri de kapsar.", ru = "owner, admin, mod, everyone или группа мода Permissions. Роль включает более высокие.", kk = "owner, admin, mod, everyone немесе Permissions модының тобы. Рөл жоғарыларын да қамтиды." }
+
+[settings.talk_global]
+type = "roles"
+default = ["admin"]
+group = "talk"
+label = { en = "Who may talk to everyone", tr = "Herkese kim konuşabilir", ru = "Кто может говорить со всеми", kk = "Барлығына кім сөйлей алады" }
+
+[settings.talk_channel]
+type = "roles"
+default = ["everyone"]
+group = "talk"
+label = { en = "Who may talk in channels", tr = "Kanallarda kim konuşabilir", ru = "Кто может говорить в каналах", kk = "Арналарда кім сөйлей алады" }
+
+[settings.talk_broadcast]
+type = "roles"
+default = ["admin", "mod"]
+group = "talk"
+label = { en = "Who may broadcast", tr = "Kim yayın yapabilir", ru = "Кто может вести трансляцию", kk = "Кім хабар тарата алады" }
+
+[settings.broadcast_overrides_deafen]
+type = "bool"
+default = false
+group = "talk"
+label = { en = "Broadcast reaches deafened players", tr = "Yayın sağırlaştırılmış oyunculara da ulaşır", ru = "Трансляцию слышат даже отключившие звук", kk = "Хабар дыбысты өшіргендерге де жетеді" }
+
+# ---------------------------------------------------------------- proximity
+
+[settings.proximity_radius]
+type = "int"
+default = 32
+min = 4
+max = 256
+step = 4
+group = "proximity"
+label = { en = "Hearing radius (blocks)", tr = "Duyma yarıçapı (blok)", ru = "Радиус слышимости (блоки)", kk = "Есту радиусы (блок)" }
+
+[settings.proximity_curve]
+type = "enum"
+values = ["linear", "log"]
+default = "log"
+group = "proximity"
+label = { en = "Volume falloff", tr = "Ses azalması", ru = "Затухание громкости", kk = "Дыбыстың әлсіреуі" }
+
+[settings.proximity_pan]
+type = "bool"
+default = true
+group = "proximity"
+label = { en = "Stereo direction", tr = "Stereo yön", ru = "Стерео-направление", kk = "Стерео бағыт" }
+
+[settings.proximity_muffle]
+type = "bool"
+default = true
+group = "proximity"
+label = { en = "Muffle through blocks", tr = "Bloklardan boğuk gelsin", ru = "Приглушать сквозь блоки", kk = "Блоктар арқылы күңгірттеу" }
+
+[settings.proximity_muffle_per_block]
+type = "float"
+default = 0.15
+min = 0.0
+max = 1.0
+step = 0.05
+group = "proximity"
+label = { en = "Muffling per solid block", tr = "Katı blok başına boğukluk", ru = "Приглушение на сплошной блок", kk = "Әр қатты блокқа күңгірттеу" }
+
+[settings.dead_can_talk]
+type = "bool"
+default = false
+group = "proximity"
+label = { en = "Dead players talk nearby", tr = "Ölü oyuncular yakında konuşabilir", ru = "Погибшие игроки говорят рядом", kk = "Өлген ойыншылар жақында сөйлейді" }
+
+[settings.sleeping_can_talk]
+type = "bool"
+default = false
+group = "proximity"
+label = { en = "Sleeping players talk nearby", tr = "Uyuyan oyuncular yakında konuşabilir", ru = "Спящие игроки говорят рядом", kk = "Ұйықтаған ойыншылар жақында сөйлейді" }
+
+# ---------------------------------------------------------------- quality
+
+[settings.max_bitrate]
+type = "int"
+default = 24000
+min = 6000
+max = 64000
+step = 1000
+group = "quality"
+label = { en = "Max bitrate (bit/s)", tr = "En yüksek bit hızı (bit/sn)", ru = "Макс. битрейт (бит/с)", kk = "Ең жоғары битрейт (бит/с)" }
+
+[settings.max_speakers]
+type = "int"
+default = 8
+min = 1
+max = 64
+group = "quality"
+label = { en = "Most players talking at once", tr = "Aynı anda konuşabilen en çok oyuncu", ru = "Макс. говорящих одновременно", kk = "Бір уақытта сөйлейтін ең көп ойыншы" }
+
+[settings.max_frames_per_sec]
+type = "int"
+default = 60
+min = 50
+max = 200
+group = "quality"
+label = { en = "Frame limit per player (per second)", tr = "Oyuncu başına kare sınırı (saniyede)", ru = "Лимит кадров на игрока (в секунду)", kk = "Ойыншыға кадр шегі (секундына)" }
+
+[settings.udp_port]
+type = "int"
+default = 0
+min = 0
+max = 65535
+group = "quality"
+label = { en = "Voice UDP port (0 = game port + 1)", tr = "Ses UDP portu (0 = oyun portu + 1)", ru = "UDP-порт голоса (0 = порт игры + 1)", kk = "Дауыс UDP порты (0 = ойын порты + 1)" }
+help = { en = "Voice travels only over this UDP port. Open it in the firewall and forward it (UDP) on the router, or voice chat stays off.", tr = "Ses yalnızca bu UDP portundan gider. Güvenlik duvarında açın ve modemde (UDP) yönlendirin, yoksa sesli sohbet kapalı kalır.", ru = "Голос идёт только через этот UDP-порт. Откройте его в брандмауэре и пробросьте (UDP) на роутере, иначе голосовой чат не работает.", kk = "Дауыс тек осы UDP порты арқылы жүреді. Оны брандмауэрде ашып, роутерде (UDP) бағыттаңыз, әйтпесе дауыстық чат өшік қалады." }
+
+# ---------------------------------------------------------------- channels
+
+[settings.channels]
+type = "list"
+default = []
+max_items = 64
+group = "channels"
+label = { en = "Fixed channels", tr = "Sabit kanallar", ru = "Постоянные каналы", kk = "Тұрақты арналар" }
+item = { name = { type = "string", default = "", max_length = 24, label = { en = "Name", tr = "Ad", ru = "Название", kk = "Атауы" } }, password = { type = "string", default = "", max_length = 64, label = { en = "Password (empty = open)", tr = "Parola (boş = açık)", ru = "Пароль (пусто = открытый)", kk = "Құпиясөз (бос = ашық)" } } }
+
+[settings.channels_player_created]
+type = "bool"
+default = true
+group = "channels"
+label = { en = "Players may create channels", tr = "Oyuncular kanal açabilir", ru = "Игроки могут создавать каналы", kk = "Ойыншылар арна аша алады" }
+
+[settings.channels_max_per_player]
+type = "int"
+default = 1
+min = 0
+max = 16
+group = "channels"
+label = { en = "Channels one player may own", tr = "Bir oyuncunun açabileceği kanal sayısı", ru = "Каналов на одного игрока", kk = "Бір ойыншының арна саны" }
+
+# ---------------------------------------------------------------- icons and players
+
+[settings.icon_speaking]
+type = "bool"
+default = true
+group = "icons"
+label = { en = "Show the speaking icon", tr = "Konuşma simgesini göster", ru = "Показывать значок речи", kk = "Сөйлеу белгісін көрсету" }
+
+[settings.icon_no_voice]
+type = "bool"
+default = true
+group = "icons"
+label = { en = "Show the no-voice icon", tr = "Sesi yok simgesini göster", ru = "Показывать значок «без голоса»", kk = "«Дауыссыз» белгісін көрсету" }
+
+[settings.icon_self_mute]
+type = "bool"
+default = true
+group = "icons"
+label = { en = "Show the self-mute icon", tr = "Kendini susturma simgesini göster", ru = "Показывать значок выключенного микрофона", kk = "Микрофон өшірулі белгісін көрсету" }
+
+[settings.icon_deafen]
+type = "bool"
+default = true
+group = "icons"
+label = { en = "Show the deafened icon", tr = "Sağırlaştırma simgesini göster", ru = "Показывать значок выключенного звука", kk = "Дыбыс өшірулі белгісін көрсету" }
+
+[settings.icon_admin_mute]
+type = "bool"
+default = true
+group = "icons"
+label = { en = "Show the admin-mute icon", tr = "Yönetici susturma simgesini göster", ru = "Показывать значок мута от админа", kk = "Әкімші өшірген белгісін көрсету" }
+
+[settings.speaker_gain]
+type = "list"
+default = []
+max_items = 200
+group = "players"
+label = { en = "Speaker volume per player", tr = "Oyuncu başına konuşmacı sesi", ru = "Громкость говорящего по игрокам", kk = "Әр ойыншының сөйлеу дыбысы" }
+help = { en = "Also /voice gain <player> <0-200>, which wins over this list.", tr = "Ayrıca /voice gain <oyuncu> <0-200>; bu listeden önceliklidir.", ru = "Также /voice gain <игрок> <0-200>, это важнее списка.", kk = "Сондай-ақ /voice gain <ойыншы> <0-200>; ол бұл тізімнен басым." }
+item = { player = { type = "string", default = "", max_length = 64, label = { en = "Player name or id", tr = "Oyuncu adı ya da kimliği", ru = "Имя или id игрока", kk = "Ойыншы аты не id" } }, percent = { type = "int", default = 100, min = 0, max = 200, label = { en = "Volume (%)", tr = "Ses (%)", ru = "Громкость (%)", kk = "Дыбыс (%)" } } }
+
+# ---------------------------------------------------------------- the player's own settings (stored on the device)
+
+[settings.mic]
+type = "enum"
+values = ["ask", "on", "off"]
+default = "ask"
+scope = "client"
+group = "client"
+label = { en = "Microphone", tr = "Mikrofon", ru = "Микрофон", kk = "Микрофон" }
+help = { en = "ask: ask on the first voice server. off: listen only.", tr = "ask: ilk sesli sunucuda sor. off: yalnızca dinle.", ru = "ask: спросить на первом сервере с голосом. off: только слушать.", kk = "ask: алғашқы дауыстық серверде сұрау. off: тек тыңдау." }
+
+[settings.default_mode]
+type = "enum"
+values = ["proximity", "global", "channel", "broadcast"]
+default = "proximity"
+scope = "client"
+group = "client"
+label = { en = "Default talk mode", tr = "Varsayılan konuşma kipi", ru = "Режим речи по умолчанию", kk = "Әдепкі сөйлеу режимі" }
+
+[settings.activation]
+type = "enum"
+values = ["ptt", "vad", "toggle"]
+default = "ptt"
+scope = "client"
+group = "client"
+label = { en = "Talk with", tr = "Konuşma yöntemi", ru = "Способ речи", kk = "Сөйлеу тәсілі" }
+help = { en = "ptt: hold the key. vad: when you speak. toggle: press once to start, again to stop.", tr = "ptt: tuşu basılı tut. vad: konuşunca. toggle: başlatmak için bir kez, durdurmak için yine bas.", ru = "ptt: держать клавишу. vad: когда говорите. toggle: нажать для начала, снова - для конца.", kk = "ptt: пернені басып тұру. vad: сөйлегенде. toggle: бастау үшін бір рет, тоқтату үшін тағы басу." }
+
+[settings.vad_threshold]
+type = "float"
+default = -45.0
+min = -80.0
+max = 0.0
+step = 1.0
+scope = "client"
+group = "client"
+label = { en = "Voice activation threshold (dB)", tr = "Sesle etkinleşme eşiği (dB)", ru = "Порог активации голосом (дБ)", kk = "Дауыспен қосылу шегі (дБ)" }
+
+[settings.master_volume]
+type = "int"
+default = 100
+min = 0
+max = 200
+step = 5
+scope = "client"
+group = "client"
+label = { en = "Voice chat volume (%)", tr = "Sesli sohbet düzeyi (%)", ru = "Громкость голосового чата (%)", kk = "Дауыстық чат дыбысы (%)" }
+
+[settings.button]
+type = "enum"
+values = ["auto", "on", "off"]
+default = "auto"
+scope = "client"
+group = "client"
+label = { en = "On-screen talk button", tr = "Ekrandaki konuşma düğmesi", ru = "Кнопка речи на экране", kk = "Экрандағы сөйлеу батырмасы" }
+help = { en = "auto: on touch screens.", tr = "auto: dokunmatik ekranlarda.", ru = "auto: на сенсорных экранах.", kk = "auto: сенсорлы экрандарда." }
+
+[settings.button_size]
+type = "int"
+default = 72
+min = 32
+max = 160
+step = 8
+scope = "client"
+group = "client"
+label = { en = "Talk button size", tr = "Konuşma düğmesi boyutu", ru = "Размер кнопки речи", kk = "Сөйлеу батырмасының өлшемі" }
+
+[settings.button_opacity]
+type = "int"
+default = 70
+min = 10
+max = 100
+step = 5
+scope = "client"
+group = "client"
+label = { en = "Talk button opacity (%)", tr = "Konuşma düğmesi opaklığı (%)", ru = "Непрозрачность кнопки речи (%)", kk = "Сөйлеу батырмасының мөлдірсіздігі (%)" }

@@ -1,0 +1,18 @@
+package blockheads-club:voice@1.0.0;
+
+/// The `voice` service of the voice chat mod (server side, local): other server mods (clans, teams) put players into
+/// voice channels.
+interface voice {
+    /// A connected player (host handle).
+    type player = u64;
+
+    /// The player's voice channel.
+    channel-of: func(who: player) -> option<string>;
+
+    /// Puts the player into a channel (no password needed); a missing channel is created. False when the name is
+    /// not 1-24 characters of `A-Z a-z 0-9 _ -`.
+    join-channel: func(who: player, name: string) -> bool;
+
+    /// Takes the player out of their channel. False when they were in none.
+    leave-channel: func(who: player) -> bool;
+}
