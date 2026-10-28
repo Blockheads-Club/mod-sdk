@@ -137,6 +137,13 @@
           }
         }
       }
+    },
+    "settings": {
+      "type": "object",
+      "description": "API 0.3.3: typed settings the admin (or the player, scope = client) can change; see docs/settings.md. Declaration order is the form order. Value rules (default fits min/max, matrix default has every row and column, ...) are checked by `bhmod check`.",
+      "propertyNames": {"$ref": "#/$defs/settingKey"},
+      "maxProperties": 128,
+      "additionalProperties": {"$ref": "#/$defs/setting"}
     }
   },
   "$defs": {
@@ -199,6 +206,67 @@
       }
     },
     "contentKey": { "type": "string", "pattern": "^[a-z0-9_-]{2,40}:[a-z0-9_-]{1,40}$" },
-    "texture": { "$ref": "#/$defs/path", "pattern": "^assets/.*\\.png$" }
+    "texture": { "$ref": "#/$defs/path", "pattern": "^assets/.*\\.png$" },
+    "settingKey": {"type": "string", "pattern": "^[a-z0-9_]{1,48}$"},
+    "settingText": {"description": "An English text, or a table per language with `en` required.", "oneOf": [{"type": "string", "minLength": 1, "pattern": "\\S"}, {"type": "object", "required": ["en"], "propertyNames": {"$ref": "#/$defs/lang"}, "additionalProperties": {"type": "string", "minLength": 1, "pattern": "\\S"}}]},
+    "settingKeys": {"type": "array", "minItems": 1, "maxItems": 64, "uniqueItems": true, "items": {"$ref": "#/$defs/settingKey"}},
+    "setting": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "default", "label"],
+      "properties": {
+        "type": {"enum": ["bool", "int", "float", "enum", "string", "roles", "matrix", "list"]},
+        "default": {},
+        "label": {"$ref": "#/$defs/settingText"},
+        "help": {"$ref": "#/$defs/settingText"},
+        "min": {"type": "number"},
+        "max": {"type": "number"},
+        "step": {"type": "number", "exclusiveMinimum": 0},
+        "values": {"type": "array", "minItems": 1, "maxItems": 64, "uniqueItems": true, "items": {"type": "string", "minLength": 1, "maxLength": 64, "pattern": "\\S"}},
+        "max_length": {"type": "integer", "minimum": 1, "maximum": 65536},
+        "rows": {"$ref": "#/$defs/settingKeys"},
+        "cols": {"$ref": "#/$defs/settingKeys"},
+        "cell": {"enum": ["bool", "roles"]},
+        "group": {"$ref": "#/$defs/settingKey"},
+        "scope": {"enum": ["server", "client"], "default": "server"},
+        "restart": {"type": "boolean", "default": false},
+        "item": {"type": "object", "minProperties": 1, "maxProperties": 32, "propertyNames": {"$ref": "#/$defs/settingKey"}, "additionalProperties": {"$ref": "#/$defs/settingItem"}},
+        "max_items": {"type": "integer", "minimum": 1, "maximum": 1000}
+      },
+      "allOf": [
+        {"if": {"properties": {"type": {"const": "int"}}}, "then": {"properties": {"min": {"type": "integer"}, "max": {"type": "integer"}, "step": {"type": "integer"}}}},
+        {"if": {"properties": {"type": {"enum": ["bool", "enum", "string", "roles", "matrix", "list"]}}}, "then": {"not": {"anyOf": [{"required": ["min"]}, {"required": ["max"]}, {"required": ["step"]}]}}},
+        {"if": {"properties": {"type": {"const": "enum"}}}, "then": {"required": ["values"]}, "else": {"not": {"required": ["values"]}}},
+        {"if": {"properties": {"type": {"const": "string"}}}, "else": {"not": {"required": ["max_length"]}}},
+        {"if": {"properties": {"type": {"const": "matrix"}}}, "then": {"required": ["rows", "cols"]}, "else": {"not": {"anyOf": [{"required": ["rows"]}, {"required": ["cols"]}, {"required": ["cell"]}]}}},
+        {"if": {"properties": {"type": {"const": "list"}}}, "then": {"required": ["item"]}, "else": {"not": {"anyOf": [{"required": ["item"]}, {"required": ["max_items"]}]}}}
+      ]
+    },
+    "settingItem": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "default", "label"],
+      "properties": {
+        "type": {"enum": ["bool", "int", "float", "enum", "string", "roles", "matrix"], "description": "A list item cannot hold a list."},
+        "default": {},
+        "label": {"$ref": "#/$defs/settingText"},
+        "help": {"$ref": "#/$defs/settingText"},
+        "min": {"type": "number"},
+        "max": {"type": "number"},
+        "step": {"type": "number", "exclusiveMinimum": 0},
+        "values": {"type": "array", "minItems": 1, "maxItems": 64, "uniqueItems": true, "items": {"type": "string", "minLength": 1, "maxLength": 64, "pattern": "\\S"}},
+        "max_length": {"type": "integer", "minimum": 1, "maximum": 65536},
+        "rows": {"$ref": "#/$defs/settingKeys"},
+        "cols": {"$ref": "#/$defs/settingKeys"},
+        "cell": {"enum": ["bool", "roles"]}
+      },
+      "allOf": [
+        {"if": {"properties": {"type": {"const": "int"}}}, "then": {"properties": {"min": {"type": "integer"}, "max": {"type": "integer"}, "step": {"type": "integer"}}}},
+        {"if": {"properties": {"type": {"enum": ["bool", "enum", "string", "roles", "matrix", "list"]}}}, "then": {"not": {"anyOf": [{"required": ["min"]}, {"required": ["max"]}, {"required": ["step"]}]}}},
+        {"if": {"properties": {"type": {"const": "enum"}}}, "then": {"required": ["values"]}, "else": {"not": {"required": ["values"]}}},
+        {"if": {"properties": {"type": {"const": "string"}}}, "else": {"not": {"required": ["max_length"]}}},
+        {"if": {"properties": {"type": {"const": "matrix"}}}, "then": {"required": ["rows", "cols"]}, "else": {"not": {"anyOf": [{"required": ["rows"]}, {"required": ["cols"]}, {"required": ["cell"]}]}}}
+      ]
+    }
   }
 }

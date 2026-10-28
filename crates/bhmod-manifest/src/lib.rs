@@ -13,6 +13,7 @@ pub mod manifest;
 pub mod pack;
 pub mod package;
 pub mod rules;
+pub mod settings;
 
 pub use manifest::Manifest;
 

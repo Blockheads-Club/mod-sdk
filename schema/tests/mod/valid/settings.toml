@@ -1,0 +1,69 @@
+schema = 1
+id = "voice-demo"
+version = "1.0.0"
+name = { en = "Voice demo" }
+authors = ["me"]
+license = "MIT"
+api = "^0.3"
+
+[sides]
+server = true
+
+[entry]
+server = { runtime = "lua", path = "server/main.luau" }
+
+[settings.enabled]
+type = "bool"
+default = true
+label = { en = "Voice chat on", tr = "Sesli sohbet açık" }
+
+[settings.radius]
+type = "int"
+default = 32
+min = 4
+max = 128
+step = 4
+label = "Hearing radius (blocks)"
+help = { en = "How far proximity voice carries." }
+group = "proximity"
+
+[settings.gain]
+type = "float"
+default = 1.0
+min = 0
+max = 2
+label = "Volume"
+scope = "client"
+
+[settings.curve]
+type = "enum"
+values = ["linear", "log"]
+default = "log"
+label = "Falloff"
+restart = true
+
+[settings.motd]
+type = "string"
+default = ""
+max_length = 80
+label = "Message of the day"
+
+[settings.admins]
+type = "roles"
+default = ["owner", "admin"]
+label = "Who may broadcast"
+
+[settings.talk]
+type = "matrix"
+rows = ["proximity", "global"]
+cols = ["admin", "everyone"]
+cell = "bool"
+default = { proximity = { admin = true, everyone = true }, global = { admin = true, everyone = false } }
+label = "Who may talk"
+
+[settings.channels]
+type = "list"
+default = [{ name = "main", password = "" }]
+max_items = 16
+label = "Channels"
+item = { name = { type = "string", default = "", max_length = 32, label = "Name" }, password = { type = "string", default = "", label = "Password" } }
