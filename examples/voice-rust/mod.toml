@@ -183,21 +183,14 @@ max = 200
 group = "quality"
 label = { en = "Frame limit per player (per second)", tr = "Oyuncu başına kare sınırı (saniyede)", ru = "Лимит кадров на игрока (в секунду)", kk = "Ойыншыға кадр шегі (секундына)" }
 
-[settings.transport]
-type = "enum"
-values = ["auto", "inband", "udp"]
-default = "auto"
-group = "quality"
-label = { en = "Voice transport", tr = "Ses taşıma yolu", ru = "Передача голоса", kk = "Дауысты жеткізу" }
-help = { en = "auto: inside the game connection, the UDP port when needed. udp needs a port.", tr = "auto: oyun bağlantısı içinde, gerekince UDP portu. udp bir port ister.", ru = "auto: внутри игрового соединения, при необходимости UDP-порт. Для udp нужен порт.", kk = "auto: ойын қосылымы ішінде, қажет болса UDP порты. udp үшін порт керек." }
-
 [settings.udp_port]
 type = "int"
 default = 0
 min = 0
 max = 65535
 group = "quality"
-label = { en = "Voice UDP port (0 = none)", tr = "Ses UDP portu (0 = yok)", ru = "UDP-порт голоса (0 = нет)", kk = "Дауыс UDP порты (0 = жоқ)" }
+label = { en = "Voice UDP port (0 = game port + 1)", tr = "Ses UDP portu (0 = oyun portu + 1)", ru = "UDP-порт голоса (0 = порт игры + 1)", kk = "Дауыс UDP порты (0 = ойын порты + 1)" }
+help = { en = "Voice travels only over this UDP port. Open it in the firewall and forward it (UDP) on the router, or voice chat stays off.", tr = "Ses yalnızca bu UDP portundan gider. Güvenlik duvarında açın ve modemde (UDP) yönlendirin, yoksa sesli sohbet kapalı kalır.", ru = "Голос идёт только через этот UDP-порт. Откройте его в брандмауэре и пробросьте (UDP) на роутере, иначе голосовой чат не работает.", kk = "Дауыс тек осы UDP порты арқылы жүреді. Оны брандмауэрде ашып, роутерде (UDP) бағыттаңыз, әйтпесе дауыстық чат өшік қалады." }
 
 # ---------------------------------------------------------------- channels
 

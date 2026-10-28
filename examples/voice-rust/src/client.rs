@@ -392,10 +392,15 @@ pub fn enable() -> Result<(), String> {
     })?;
     // What the server allows changed: fall back to push-to-talk if the chosen activation is not allowed any more.
     on_custom("voice:allowed", |_| apply_activation(&with(|c| c.cfg.clone())))?;
-    on_custom("voice:mic", |v| {
-        if mic_event(v).as_deref() == Some("denied") {
+    on_custom("voice:mic", |v| match mic_event(v).as_deref() {
+        Some("denied") => {
             let _ = ui::toast("The microphone was refused. Allow it in the system settings to talk.");
         }
+        Some("unavailable") => {
+            let _ =
+                ui::toast("Voice chat is off: this server's voice UDP port is not open (or there is no microphone).");
+        }
+        _ => {}
     })?;
     commands::register(
         Command::new("voicevol").usage("/voicevol <player> <0-200|mute|unmute> | master <0-200>"),

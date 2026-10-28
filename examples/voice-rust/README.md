@@ -42,11 +42,24 @@ Defaults:
 | `proximity_pan`, `proximity_muffle`, `proximity_muffle_per_block` | on, on, 0.15 | Stereo direction, muffling through solid blocks |
 | `dead_can_talk`, `sleeping_can_talk` | off, off | Whether dead / sleeping players talk nearby |
 | `max_bitrate`, `max_speakers`, `max_frames_per_sec` | 24000, 8, 60 | Relay caps |
-| `transport`, `udp_port` | `auto`, 0 | In-band or a dedicated UDP port |
+| `udp_port` | 0 (= game port + 1, 15152 by default) | The voice UDP port; see below |
 | `channels`, `channels_player_created`, `channels_max_per_player` | none, on, 1 | Fixed channels (name, optional password); player channels |
 | `broadcast_overrides_deafen` | off | Broadcast reaches deafened players |
 | `icon_speaking` ... `icon_admin_mute` | on | Overhead icon visibility |
 | `speaker_gain` | none | Per-player speaker volume (`{ player, percent }`) |
+
+### Open the voice UDP port
+
+Voice audio does **not** travel inside the game connection: it uses one extra **UDP** port that the server opens,
+by default the game port + 1 (**15152** for the usual 15151; `udp_port` changes it). Control messages (keys, states,
+mutes, settings) stay in the game connection. For players outside your network to hear each other:
+
+- allow the port (UDP, incoming) in the server's firewall (`ufw allow 15152/udp`, Windows Defender Firewall, ...);
+- forward it on your router (UDP 15152 -> the server machine), next to the game's own port;
+- on a hosted server, open it in the provider's panel.
+
+Without it the game still works, but voice chat stays off: clients get no voice port and the mod tells the player
+"Voice chat is off: this server's voice UDP port is not open".
 
 **Who may talk.** A list holds `owner`, `admin`, `mod`, `everyone` (a role includes the higher ones: `["mod"]` lets
 moderators, admins and the owner talk) and **permission groups**: any other name `g` matches players who have the node
@@ -73,7 +86,7 @@ Other mods (clans, teams) can put players into channels through the `voice` serv
 - **Server**: every world step (5 Hz) the mod builds, for each speaker, the list of listeners with mode, gain, pan and
   muffle (`voice.set-routes`): proximity by distance (with `terrain.solid-count` for muffling), global and broadcast
   to everyone, channel to the channel's members. It tells each client what it may use (`voice.set-allowed`) and
-  applies caps, transport, icons, mutes and speaker gains.
+  applies caps, the voice UDP port, icons, mutes and speaker gains.
   Proximity distance and pan go the short way round the world (`terrain.world-width`); dead (`player.alive`) and
   sleeping (`player.sleeping`) speakers follow the admin's rules, re-routed at once on `player:sleep|wake|respawn`.
 - **Client**: binds the push-to-talk keys, shows the on-screen button on touch screens (`ui.has-touch`), offers the

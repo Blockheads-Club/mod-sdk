@@ -9,7 +9,7 @@ use blockheads_mod::{terrain, voice as wv};
 
 use crate::channels::{list_lines, Channels};
 use crate::command::{self, format_duration, VoiceCmd};
-use crate::config::{ServerConfig, Transport};
+use crate::config::ServerConfig;
 use crate::glue::{log_err, now_ms, on_custom, role_of, wit_activation, wit_mode};
 use crate::ledger::{Ledger, Mute};
 use crate::model::{ModeSet, Role as R};
@@ -55,12 +55,9 @@ fn apply_global(cfg: &ServerConfig) {
         max_frames_per_sec: cfg.max_frames_per_sec,
     };
     log_err("voice caps", wv::set_caps(caps));
-    let mode = match cfg.transport {
-        Transport::Auto => wv::Transport::Auto,
-        Transport::Inband => wv::Transport::Inband,
-        Transport::Udp => wv::Transport::Udp,
-    };
-    log_err("voice transport", wv::set_transport(wv::TransportConfig { mode, udp_port: cfg.udp_port }));
+    // Voice frames always use the voice UDP port (`mode` is ignored by the host); `None` = game port + 1.
+    let port = wv::TransportConfig { mode: wv::Transport::Udp, udp_port: cfg.udp_port };
+    log_err("voice UDP port", wv::set_transport(port));
     let i = cfg.icons;
     log_err(
         "voice icons",

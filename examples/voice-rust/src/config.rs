@@ -14,17 +14,6 @@ pub enum Curve {
     Log,
 }
 
-/// Voice transport (`set-transport`).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Transport {
-    /// In-band, UDP when needed.
-    Auto,
-    /// In-band only.
-    Inband,
-    /// The UDP port only.
-    Udp,
-}
-
 /// An admin-defined channel.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FixedChannel {
@@ -78,9 +67,7 @@ pub struct ServerConfig {
     pub max_speakers: u32,
     /// Per-player frame rate limit.
     pub max_frames_per_sec: u32,
-    /// Transport mode.
-    pub transport: Transport,
-    /// UDP port (`None` = no port).
+    /// The voice UDP port (`None`: the host's default, the game port + 1). Voice frames travel only over it.
     pub udp_port: Option<u16>,
     /// Admin-defined channels.
     pub channels: Vec<FixedChannel>,
@@ -201,11 +188,6 @@ impl ServerConfig {
             max_bitrate: get_int(v, "max_bitrate", 24000, 6000, 64000) as u32,
             max_speakers: get_int(v, "max_speakers", 8, 1, 64) as u32,
             max_frames_per_sec: get_int(v, "max_frames_per_sec", 60, 50, 200) as u32,
-            transport: match get_str(v, "transport") {
-                Some("inband") => Transport::Inband,
-                Some("udp") => Transport::Udp,
-                _ => Transport::Auto,
-            },
             udp_port: match get_int(v, "udp_port", 0, 0, 65535) {
                 0 => None,
                 p => Some(p as u16),
@@ -404,7 +386,7 @@ mod tests {
         assert_eq!(c.talk_roles(Mode::Global), ["admin"]);
         assert_eq!((c.radius, c.curve, c.pan, c.muffle, c.muffle_per_block), (32.0, Curve::Log, true, true, 0.15));
         assert_eq!((c.max_bitrate, c.max_speakers, c.max_frames_per_sec), (24000, 8, 60));
-        assert_eq!((c.transport, c.udp_port), (Transport::Auto, None));
+        assert_eq!(c.udp_port, None);
         assert!(c.channels.is_empty() && c.player_created && c.max_per_player == 1);
         assert!(!c.broadcast_overrides_deafen && !c.dead_can_talk && !c.sleeping_can_talk);
         assert_eq!(c.icons, Icons { speaking: true, no_voice: true, self_mute: true, deafen: true, admin_mute: true });
@@ -425,7 +407,6 @@ mod tests {
             ("dead_can_talk", Value::Bool(true)),
             ("max_bitrate", Value::Int(1)),
             ("max_speakers", Value::Int(16)),
-            ("transport", text("udp")),
             ("udp_port", Value::Int(24001)),
             (
                 "channels",
@@ -456,7 +437,7 @@ mod tests {
         assert_eq!((c.radius, c.curve, c.muffle_per_block), (64.0, Curve::Linear, 1.0));
         assert!(c.dead_can_talk);
         assert_eq!((c.max_bitrate, c.max_speakers), (24000, 16), "out of range -> default");
-        assert_eq!((c.transport, c.udp_port), (Transport::Udp, Some(24001)));
+        assert_eq!(c.udp_port, Some(24001));
         assert_eq!(
             c.channels,
             [
@@ -467,12 +448,11 @@ mod tests {
         assert!(!c.player_created && !c.icons.no_voice && c.icons.speaking);
         assert_eq!(c.speaker_gain, [("LOUDGUY".to_string(), 60), ("quiet".to_string(), 100)]);
         let c = ServerConfig::from_value(&map(vec![
-            ("transport", text("inband")),
             ("proximity_muffle_per_block", Value::Float(0.5)),
             ("channels", Value::Int(1)),
             ("speaker_gain", Value::Int(1)),
         ]));
-        assert_eq!((c.transport, c.muffle_per_block), (Transport::Inband, 0.5));
+        assert_eq!(c.muffle_per_block, 0.5);
         assert!(c.channels.is_empty() && c.speaker_gain.is_empty());
         let c = ServerConfig::from_value(&map(vec![("proximity_muffle_per_block", Value::Float(2.0))]));
         assert_eq!(c.muffle_per_block, 0.15);
