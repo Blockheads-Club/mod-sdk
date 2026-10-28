@@ -1,0 +1,106 @@
+package blockheads:api@0.3.2;
+
+/// Mod UI on the client (IG-HUD, IG-ModUI): HUD widgets, toasts, notices and dialogs. Mods send data, the loader
+/// draws it with its own kit: mods cannot restyle it, place widgets freely or take focus away from the game. Needs
+/// no permission, and players can hide any mod's widgets. Server-side hosts and clients without a UI return
+/// `api-error::unsupported`. Added in 0.3.
+///
+/// Dialog results arrive as a custom event named `<mod-id>:ui-action` (subscribe with `events.subscribe-custom`),
+/// delivered to the mod that opened the dialog only; the payload is a `types.value` map
+/// `{"dialog": u32, "button": u32, "text": string or null}` (`button` counts from 0, `null` text when the dialog
+/// has no field). Closing the dialog from the loader side (back, the game leaving the world) is `button` 4294967295.
+interface ui {
+    use types.{api-error};
+
+    /// Where a HUD widget goes. The loader stacks the widgets of a slot, keeps the game's own HUD and the screen
+    /// cutout clear and hides what does not fit.
+    enum slot {
+        /// Under the game's HUD, top left.
+        top-left,
+        /// Top right.
+        top-right,
+    }
+
+    /// What a HUD widget looks like.
+    enum widget-kind {
+        /// One line of text (with an optional icon).
+        text,
+        /// An icon and a number: `text` holds the number.
+        counter,
+        /// A small panel: `title` and up to four lines of `text` (split on newlines).
+        panel,
+    }
+
+    /// One HUD widget. Updating a widget with the same id replaces it.
+    record widget {
+        slot: slot,
+        kind: widget-kind,
+        /// A kit icon name: `coin`, `heart`, `info`, `warn`, `check`, `cross`, `bell` or `clock` (more are added
+        /// over time). Unknown names draw no icon.
+        icon: option<string>,
+        /// The panel title (ignored by the other kinds).
+        title: option<string>,
+        /// The text, at most 256 bytes.
+        text: string,
+    }
+
+    /// Shows or updates a widget. `id` is 1 to 32 characters of `a-z0-9_.-`, unique within the mod; a mod has up to
+    /// 16 widgets.
+    set-widget: func(id: string, widget: widget) -> result<_, api-error>;
+
+    /// Removes a widget. Returns false if it did not exist.
+    remove-widget: func(id: string) -> bool;
+
+    /// How a notice looks.
+    enum notice-level {
+        info,
+        warning,
+        success,
+        error,
+    }
+
+    /// A short message that stacks bottom right (at most three visible, about four seconds each). `text` is at most
+    /// 200 bytes.
+    toast: func(text: string) -> result<_, api-error>;
+
+    /// A notice in the top centre, one at a time (a new one replaces the last). `text` is at most 200 bytes.
+    notice: func(text: string, level: notice-level) -> result<_, api-error>;
+
+    /// How a dialog button looks.
+    enum button-kind {
+        primary,
+        secondary,
+        danger,
+    }
+
+    /// One dialog button.
+    record dialog-button {
+        /// At most 24 bytes.
+        label: string,
+        kind: button-kind,
+    }
+
+    /// The single text field of a dialog.
+    record field {
+        placeholder: string,
+        initial: string,
+        /// At most 200.
+        max-length: u32,
+    }
+
+    /// A dialog: title, text, an optional field and one to three buttons.
+    record dialog {
+        /// At most 64 bytes.
+        title: string,
+        /// At most 512 bytes.
+        text: string,
+        field: option<field>,
+        buttons: list<dialog-button>,
+    }
+
+    /// Opens a dialog (one at a time per mod) and returns its id. The answer comes as a `<mod-id>:ui-action` event.
+    show-dialog: func(dialog: dialog) -> result<u32, api-error>;
+
+    /// Closes a dialog of the mod without an answer. Returns false if it was not open.
+    close-dialog: func(id: u32) -> bool;
+}

@@ -628,6 +628,20 @@ pub mod v03 {
             Ok(self.api()?.content_block_at(tx, ty))
         }
     }
+
+    use crate::wit::blockheads::api::settings;
+
+    impl settings::Host for State {
+        fn get(&mut self, key: String) -> R<Option<Vec<u8>>> {
+            Ok(self.api()?.settings_get(&key))
+        }
+        fn all(&mut self) -> R<Vec<u8>> {
+            Ok(self.api()?.settings_all())
+        }
+        fn set(&mut self, key: String, value: Vec<u8>) -> R<Result<(), types::ApiError>> {
+            Ok(self.api()?.settings_set(&key, &value).map_err(api_error))
+        }
+    }
 }
 
 /// `blockheads:api@0.1.0`: the events of 0.2 that 0.1 does not know are never delivered (0.1 mods cannot

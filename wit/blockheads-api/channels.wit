@@ -1,4 +1,4 @@
-package blockheads:api@0.3.2;
+package blockheads:api@0.3.3;
 
 /// Named byte channels between mods, and between a server mod and its client half. Local delivery works since 0.2
 /// (messages are queued and delivered on the next poll or tick, never during `send`); the network targets travel
