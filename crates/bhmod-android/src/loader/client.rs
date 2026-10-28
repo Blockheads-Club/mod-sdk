@@ -252,7 +252,7 @@ impl<P: Platform + 'static> Loader<P> {
     }
 
     fn setting_failed(&self, mod_id: &str, message: &str) {
-        self.p.ui(ui::settings_result(mod_id, false, Some(message), false));
+        self.p.ui(ui::settings_result(mod_id, None, false, Some(message), false));
     }
 
     /// A change in the settings screen.
@@ -265,7 +265,7 @@ impl<P: Platform + 'static> Loader<P> {
                 let Some(h) = self.host.as_mut() else { return self.setting_failed(mod_id, "no mods are running") };
                 match h.set_setting(mod_id, key, &value) {
                     Ok(_) => {
-                        self.p.ui(ui::settings_result(mod_id, true, None, false));
+                        self.p.ui(ui::settings_result(mod_id, Some(key), true, None, false));
                         self.open_settings(mod_id);
                     }
                     Err(e) => self.setting_failed(mod_id, &e.to_string()),
@@ -326,13 +326,12 @@ impl<P: Platform + 'static> Loader<P> {
 
     /// `SETTINGS_RESULT`: the answer to the last server setting change.
     pub(super) fn on_settings_result(&mut self, r: &SettingsResult) {
-        let m = self.settings_open.clone().unwrap_or_default();
-        match &r.outcome {
-            Ok(()) => self.p.ui(ui::settings_result(&m, true, None, false)),
-            Err(f) => {
-                let text = f.message.clone().unwrap_or_else(|| format!("refused (code {})", f.code));
-                self.setting_failed(&m, &text);
-            }
-        }
+        // Servers before API 0.3.4 do not name the setting: the answer then belongs to the open screen.
+        let m = r.mod_id.clone().or_else(|| self.settings_open.clone()).unwrap_or_default();
+        let (ok, text) = match &r.outcome {
+            Ok(()) => (true, None),
+            Err(f) => (false, Some(f.message.clone().unwrap_or_else(|| format!("refused (code {})", f.code)))),
+        };
+        self.p.ui(ui::settings_result(&m, r.key.as_deref(), ok, text.as_deref(), false));
     }
 }

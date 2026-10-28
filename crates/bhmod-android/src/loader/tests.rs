@@ -1021,10 +1021,19 @@ fn the_settings_screen_sets_client_keys_voice_and_server_values() {
     r.p.sent.borrow_mut().clear();
     set(&mut r, "server", "radius", "64");
     assert!(matches!(&r.p.msgs()[..], [Message::SettingsSet(s)] if s.key == "radius"));
-    r.l.handle(vec![Output::SettingsResult(bhmod_proto::SettingsResult { outcome: Ok(()) })]);
-    assert_eq!(last_result(&r)["ok"], true);
+    r.l.handle(vec![Output::SettingsResult(bhmod_proto::SettingsResult {
+        outcome: Ok(()),
+        mod_id: Some("vtest".into()),
+        key: Some("radius".into()),
+    })]);
+    assert_eq!((last_result(&r)["ok"].as_bool(), last_result(&r)["key"].as_str()), (Some(true), Some("radius")));
     let refused = SettingsFailure { code: 1, message: None };
-    r.l.handle(vec![Output::SettingsResult(bhmod_proto::SettingsResult { outcome: Err(refused) })]);
+    r.l.handle(vec![Output::SettingsResult(bhmod_proto::SettingsResult {
+        outcome: Err(refused),
+        mod_id: None,
+        key: None,
+    })]);
+    assert_eq!(last_result(&r)["mod"], "vtest", "an old server: the open screen's mod");
     assert_eq!(last_result(&r)["message"], "refused (code 1)");
     // after leaving the world: nothing runs, the server is gone
     r.l.on_world(None);
@@ -1035,7 +1044,7 @@ fn the_settings_screen_sets_client_keys_voice_and_server_values() {
     r.l.on_ui(UiEvent::Button { mod_id: "vtest".into(), id: "ptt".into(), action: "press".into() });
     r.l.on_ui(UiEvent::Key("v".into(), true));
     r.l.on_ui(UiEvent::MicPermission(true));
-    r.l.handle(vec![Output::SettingsResult(bhmod_proto::SettingsResult { outcome: Ok(()) })]);
+    r.l.handle(vec![Output::SettingsResult(bhmod_proto::SettingsResult { outcome: Ok(()), mod_id: None, key: None })]);
     // the unsaved device: a button position and prefs that cannot be written are logged
     std::fs::remove_dir_all(&r.dirs.device).unwrap();
     std::fs::write(&r.dirs.device, b"file").unwrap();

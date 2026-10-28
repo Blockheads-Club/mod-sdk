@@ -186,9 +186,10 @@ pub fn settings_screen(
     .to_string()
 }
 
-/// The answer to a setting change (`message` shown when it failed; `restart`: applies after a restart).
-pub fn settings_result(mod_id: &str, ok: bool, message: Option<&str>, restart: bool) -> String {
-    json!({"t": "settings-result", "mod": mod_id, "ok": ok, "message": message, "restart": restart}).to_string()
+/// The answer to a setting change of `key` (`message` shown when it failed; `restart`: applies after a restart).
+pub fn settings_result(mod_id: &str, key: Option<&str>, ok: bool, message: Option<&str>, restart: bool) -> String {
+    json!({"t": "settings-result", "mod": mod_id, "key": key, "ok": ok, "message": message, "restart": restart})
+        .to_string()
 }
 
 #[cfg(test)]
@@ -289,7 +290,8 @@ mod tests {
         let s = v(settings_screen("m", None, &[], None, Some(&(json!({}), json!({})))));
         assert_eq!(s["server"]["fields"], json!([]));
         assert!(s["voice"].is_null());
-        let r = v(settings_result("m", false, Some("bad"), false));
+        let r = v(settings_result("m", Some("k"), false, Some("bad"), false));
+        assert_eq!(r["key"], "k");
         assert_eq!((r["ok"].as_bool(), r["message"].as_str()), (Some(false), Some("bad")));
     }
 }
