@@ -33,7 +33,7 @@ fn pair() -> (VoiceServer, VoiceClient, VoiceClient, Sink) {
     let mut sink = Sink::default();
     let mut cs = Vec::new();
     for (name, seed) in [("a", 1u8), ("b", 2)] {
-        s.join(name, &feats());
+        s.join(name, &uc_alias(name), &feats());
         let mut c = VoiceClient::new(Arc::new(TestCodec), true);
         let key = c.start_with(KeyPair::from_secret([seed; 32]));
         s.receive(0, name, &Message::decode(&key).unwrap(), 0, &mut sink);
@@ -143,7 +143,11 @@ fn activation_and_allowed() {
     let (_s, mut a, _b, _) = pair();
     a.set_mic(true);
     assert!(a.set_activation(Act::Toggle));
+    a.take_events();
     a.set_default_mode(Mode::Channel);
+    a.set_default_mode(Mode::Channel);
+    assert_eq!(a.take_events(), vec![VoiceEvent::Mode(Mode::Channel)]);
+    assert_eq!(a.default_mode(), Mode::Channel);
     a.talk(None, true);
     assert_eq!(a.transmitting(), Some(Mode::Channel));
     a.talk(None, false);
@@ -202,9 +206,13 @@ fn state_messages_and_prefs() {
     assert!(!c.icons().admin_mute);
     assert_eq!(c.bitrate, 16_000);
     c.on_message(&Message::VoiceState(full));
+    assert_eq!(c.alias("x"), None, "no names sent");
+    let named = VoiceState { names: BTreeMap::from([("x".into(), "EX".into())]), ..Default::default() };
+    c.on_message(&Message::VoiceState(named));
+    assert_eq!(c.alias("x").as_deref(), Some("EX"));
     let delta = VoiceState { players: BTreeMap::from([("x".into(), "gone".into())]), ..Default::default() };
     c.on_message(&Message::VoiceState(delta));
-    assert_eq!(c.state("x"), State::None);
+    assert_eq!((c.state("x"), c.alias("x")), (State::None, None));
     let ev = c.take_events();
     assert_eq!(ev.len(), 3, "unchanged states are not repeated: {ev:?}");
     let only = VoiceState { full: true, players: BTreeMap::from([("q".into(), "ready".into())]), ..Default::default() };
@@ -233,7 +241,7 @@ fn udp_path_and_keepalive() {
         udp_port: Some(9000),
     });
     let mut sink = Sink::default();
-    s.join("a", &["voice".to_string()]);
+    s.join("a", &uc_alias("a"), &["voice".to_string()]);
     let mut c = VoiceClient::new(Arc::new(TestCodec), false);
     let key = c.start_with(KeyPair::from_secret([3; 32]));
     s.receive(0, "a", &Message::decode(&key).unwrap(), 0, &mut sink);
@@ -387,4 +395,9 @@ fn heard_speakers_feed_the_loss_of_auto() {
     a.talk(None, true);
     a.on_mic_frame(&tone());
     assert_eq!(a.poll_send(20).len(), 1);
+}
+
+/// The alias the tests give a player id.
+fn uc_alias(p: &str) -> String {
+    p.to_uppercase()
 }

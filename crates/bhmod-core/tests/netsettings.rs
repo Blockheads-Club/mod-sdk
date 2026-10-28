@@ -87,6 +87,10 @@ fn schemas_sets_and_refreshes() {
     assert!(matches!(bad, Err((settings_error::INVALID_VALUE, Some(m))) if m.contains("at least")));
     assert_eq!(result(&n.receive_set(&mut h, "admin", true, &set("cfg", "radius", json!(8)), 0)), Ok(()));
     assert_eq!(h.settings_values("cfg").unwrap()["radius"], json!(8));
+    let keyed = Message::decode(&n.receive_set(&mut h, "admin", true, &set("cfg", "radius", json!(8)), 0)).unwrap();
+    assert!(
+        matches!(keyed, Message::SettingsResult(r) if r.mod_id.as_deref() == Some("cfg") && r.key.as_deref() == Some("radius"))
+    );
 
     // the change goes to the admins; `player` became an admin and gets everything
     let out = n.refresh(&mut h, &|p| p == "admin" || p == "player");

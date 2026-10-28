@@ -20,6 +20,8 @@ package blockheads:api@0.3.4;
 /// - `voice:mic` `{"state": "off" | "on" | "denied"}` (client): the microphone opened, closed or the OS refused it.
 /// - `voice:allowed` `{"modes": [text], "activations": [text], "max-bitrate": n}` (client): what the server allows
 ///   this player changed.
+/// - `voice:mode` `{"mode": text}` (client): the default mode changed (`set-default-mode` or the loader's mode
+///   picker).
 interface voice {
     use types.{api-error};
     use players.{player};

@@ -86,11 +86,11 @@ client                                   modded server                  vanilla 
 | `14` | both | `SERVICE_RESULT` | `{id, ok, value}` or `{id, ok, code, message}` |
 | `15` | both | `VOICE_KEY` | `{pub[, peer, udpPort]}` |
 | `16` | both | `VOICE_FRAME` | raw, unreliable: `nonce:u64le sealed[16..=1024]` |
-| `17` | S->C | `VOICE_STATE` | `{full, players[, speakers, icons, modes, activations, bitrate]}` |
+| `17` | S->C | `VOICE_STATE` | `{full, players[, speakers, icons, modes, activations, bitrate, names]}` |
 | `18` | C->S | `VOICE_CTRL` | `{selfMute, deafen}` |
 | `19` | S->C | `SETTINGS_SCHEMA` | `{mod, schema, values}` |
 | `1a` | C->S | `SETTINGS_SET` | `{mod, key, value}` |
-| `1b` | S->C | `SETTINGS_RESULT` | `{ok}` or `{ok, code[, message]}` |
+| `1b` | S->C | `SETTINGS_RESULT` | `{ok[, mod, key]}` or `{ok, code[, message, mod, key]}` |
 
 Ops `09`, `0a`-`0f` and `1c`-`ff` are reserved.
 
@@ -350,6 +350,7 @@ is over 10 % or the server's poll lag is over 30 ms.
 | `modes` | uint ≤ 255, optional | (API 0.3.4) Talk modes the **receiving** player may use: bit 0 proximity, 1 global, 2 channel, 3 broadcast. |
 | `activations` | uint ≤ 255, optional | (API 0.3.4) Activations the receiving player may use: bit 0 push-to-talk, 1 voice activation, 2 toggle. |
 | `bitrate` | uint, optional | (API 0.3.4) Encoder bitrate (bits per second) the server's cap asks for. |
+| `names` | map playerID -> text, optional | (API 0.3.4) Aliases of players listed for the first time (the full state names everyone), so clients know every player. |
 
 Absent `modes` / `activations` / `bitrate` keep the last value (a delta) or mean the defaults (a full state: no
 modes, all activations, 24000). The reference server is `bhmod_voice::server` (sends a full state when a player's
@@ -371,7 +372,7 @@ Server-scope mod settings, for the in-game admin form. Only between the server a
 - `SETTINGS_SET {mod: text, key: text, value: bytes}` (C->S): `value` is canonical CBOR, at most 32768 bytes. The
   server checks admin rights and validates against the schema.
 - `SETTINGS_RESULT` (S->C), one per `SETTINGS_SET` in order: `{ok: true}` or `{ok: false, code: uint ≤ 255,
-  message?: text}`; codes `1` NOT_PERMITTED, `2` UNKNOWN_MOD, `3` UNKNOWN_KEY, `4` INVALID_VALUE, `5` BUSY,
+  message?: text}`, since API 0.3.4 with optional `mod` and `key` naming the answered set; codes `1` NOT_PERMITTED, `2` UNKNOWN_MOD, `3` UNKNOWN_KEY, `4` INVALID_VALUE, `5` BUSY,
   `6` INTERNAL (unknown codes read as INTERNAL).
 
 ## 6. Join after acceptance

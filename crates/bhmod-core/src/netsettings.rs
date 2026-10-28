@@ -72,7 +72,8 @@ impl SettingsNet {
         now: u64,
     ) -> Vec<u8> {
         let outcome = self.check_set(host, player, is_admin, set, now);
-        Message::SettingsResult(SettingsResult { outcome }).encode()
+        let (mod_id, key) = (Some(set.mod_id.clone()), Some(set.key.clone()));
+        Message::SettingsResult(SettingsResult { outcome, mod_id, key }).encode()
     }
 
     fn check_set(

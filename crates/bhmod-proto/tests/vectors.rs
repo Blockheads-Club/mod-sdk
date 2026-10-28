@@ -434,10 +434,11 @@ fn valid() -> Vec<(&'static str, &'static str, &'static str, Message)> {
         (
             "17-voice-state-allowed",
             "S->C",
-            "API 0.3.4: delta for the receiving player: may use proximity and channel, push-to-talk only, 24 kbps; deafen icon hidden.",
+            "API 0.3.4: delta for the receiving player: may use proximity and channel, push-to-talk only, 24 kbps; deafen icon hidden; player-a's name.",
             Message::VoiceState(VoiceState {
                 full: false,
                 players: BTreeMap::from([("player-a".into(), "ready".into())]),
+                names: BTreeMap::from([("player-a".into(), "ALICE".into())]),
                 icons: BTreeMap::from([("deafen".into(), false)]),
                 modes: Some(0b0101),
                 activations: Some(0b001),
@@ -490,7 +491,7 @@ fn valid() -> Vec<(&'static str, &'static str, &'static str, Message)> {
                 value: cbor::encode(&Value::Uint(48)),
             }),
         ),
-        ("1b-settings-result-ok", "S->C", "Stored.", Message::SettingsResult(SettingsResult { outcome: Ok(()) })),
+        ("1b-settings-result-ok", "S->C", "Stored.", Message::SettingsResult(SettingsResult { outcome: Ok(()), mod_id: None, key: None })),
         (
             "1b-settings-result-error",
             "S->C",
@@ -500,6 +501,18 @@ fn valid() -> Vec<(&'static str, &'static str, &'static str, Message)> {
                     code: settings_error::INVALID_VALUE,
                     message: Some("radius must be 8..=64".into()),
                 }),
+                mod_id: None,
+                key: None,
+            }),
+        ),
+        (
+            "1b-settings-result-keyed",
+            "S->C",
+            "API 0.3.4: an answer naming the mod and key it answers.",
+            Message::SettingsResult(SettingsResult {
+                outcome: Ok(()),
+                mod_id: Some("voice".into()),
+                key: Some("radius".into()),
             }),
         ),
         (
@@ -508,6 +521,8 @@ fn valid() -> Vec<(&'static str, &'static str, &'static str, Message)> {
             "Not an admin (NOT_PERMITTED), no message.",
             Message::SettingsResult(SettingsResult {
                 outcome: Err(SettingsFailure { code: settings_error::NOT_PERMITTED, message: None }),
+                mod_id: None,
+                key: None,
             }),
         ),
     ]
@@ -702,6 +717,18 @@ fn invalid() -> Vec<(&'static str, String, &'static str)> {
                     (Value::text("full"), Value::Bool(true)),
                     (Value::text("players"), Value::Map(vec![])),
                     (Value::text("modes"), Value::Uint(256)),
+                ]))
+            ),
+            "type",
+        ),
+        (
+            "voice-state-name-not-text",
+            format!(
+                "bc17{}",
+                cbor_hex(Value::Map(vec![
+                    (Value::text("full"), Value::Bool(true)),
+                    (Value::text("players"), Value::Map(vec![])),
+                    (Value::text("names"), Value::Map(vec![(Value::text("a"), Value::Uint(1))])),
                 ]))
             ),
             "type",

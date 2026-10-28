@@ -23,6 +23,8 @@ package club.blockheads.api.voice;
  * - `voice:mic` `{"state": "off" | "on" | "denied"}` (client): the microphone opened, closed or the OS refused it.
  * - `voice:allowed` `{"modes": [text], "activations": [text], "max-bitrate": n}` (client): what the server allows
  * this player changed.
+ * - `voice:mode` `{"mode": text}` (client): the default mode changed (`set-default-mode` or the loader's mode
+ * picker).
  */
 public interface Voice {
     /**

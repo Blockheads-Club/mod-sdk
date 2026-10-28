@@ -67,7 +67,7 @@ fn connect(s: &mut VoiceServer, sink: &mut Sink, name: &str, seed: u8) -> VoiceC
 }
 
 fn connect_with(s: &mut VoiceServer, sink: &mut Sink, name: &str, seed: u8, unsequenced: bool) -> VoiceClient {
-    s.join(name, &features(unsequenced));
+    s.join(name, &uc_alias(name), &features(unsequenced));
     let mut c = VoiceClient::new(Arc::new(TestCodec), unsequenced);
     let key = c.start_with(KeyPair::from_secret([seed; 32]));
     s.receive(0, name, &Message::decode(&key).unwrap(), 0, sink);
@@ -88,7 +88,7 @@ fn handshake_states_and_relay() {
     let mut s = server();
     let mut sink = Sink::default();
     // a vanilla player and a modded one without voice: ops are ignored
-    s.join("vanilla", &[]);
+    s.join("vanilla", &uc_alias("vanilla"), &[]);
     let (_, key) = client(9);
     s.receive(0, "vanilla", &Message::decode(&key).unwrap(), 0, &mut sink);
     s.receive(0, "nobody", &Message::decode(&key).unwrap(), 0, &mut sink);
@@ -114,6 +114,9 @@ fn handshake_states_and_relay() {
     }
     assert_eq!(a.state("b"), State::Ready);
     assert_eq!(a.state("vanilla"), State::None);
+    assert_eq!(a.players(), [("a".into(), "A".into()), ("b".into(), "B".into()), ("vanilla".into(), "VANILLA".into())]);
+    assert_eq!((a.alias("b").as_deref(), a.alias("x")), (Some("B"), None));
+    assert_eq!(a.speakers(), ["a", "b"]);
 
     // a talks to b
     s.set_allowed("a", Mode::mask(&[Mode::Proximity]), Activation::mask(&[Activation::Ptt]));
@@ -148,7 +151,7 @@ fn handshake_states_and_relay() {
     s.receive(1_001, "a", &Message::VoiceCtrl(VoiceCtrl { self_mute: true, deafen: false }), 0, &mut sink);
     assert_eq!(s.state("a"), State::SelfMuted);
     s.receive(1_001, "a", &Message::ListRequest, 0, &mut sink);
-    s.join("late", &features(false));
+    s.join("late", &uc_alias("late"), &features(false));
     s.receive(1_001, "late", &Message::VoiceCtrl(VoiceCtrl::default()), 0, &mut sink);
     s.receive(1_001, "late", &Message::VoiceFrame(VoiceFrame { nonce: 1, sealed: vec![0; 20] }), 0, &mut sink);
     s.receive(1_001, "a", &Message::VoiceFrame(VoiceFrame { nonce: 1, sealed: vec![0; 20] }), 0, &mut sink);
@@ -266,12 +269,12 @@ fn keys_and_helpers() {
     // no randomness: the exchange is refused; a low-order public key too
     let mut s = VoiceServer::with_keys(Box::new(|| None));
     let mut sink = Sink::default();
-    s.join("a", &features(true));
+    s.join("a", &uc_alias("a"), &features(true));
     let (_, key) = client(1);
     s.receive(0, "a", &Message::decode(&key).unwrap(), 0, &mut sink);
     assert!(sink.take().is_empty());
     let mut s = server();
-    s.join("a", &features(true));
+    s.join("a", &uc_alias("a"), &features(true));
     s.receive(0, "a", &Message::VoiceKey(VoiceKey { public: [0; 32], peer: None, udp_port: None }), 0, &mut sink);
     assert!(sink.take().is_empty() && s.peer_of("a").is_none());
     // a rekey keeps the speaker id; ids wrap
@@ -301,7 +304,7 @@ fn keys_and_helpers() {
 fn shared_server_is_a_voice_host() {
     let shared = SharedVoiceServer::new(server());
     let h: &dyn VoiceHost = &shared;
-    shared.lock().join("a", &features(true));
+    shared.lock().join("a", &uc_alias("a"), &features(true));
     assert_eq!(h.state("a"), Ok(State::None));
     assert_eq!(h.icons(), Ok(Icons::default()));
     h.set_routes("a", &[route("b")]).unwrap();
@@ -332,4 +335,9 @@ fn random_keys_and_a_poisoned_lock() {
     })
     .join();
     assert_eq!(shared.lock().peer_of("a"), Some(1));
+}
+
+/// The alias the tests give a player id.
+fn uc_alias(p: &str) -> String {
+    p.to_uppercase()
 }

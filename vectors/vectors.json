@@ -130,6 +130,10 @@
     },
     {
       "error": "type",
+      "file": "invalid/voice-state-name-not-text.hex"
+    },
+    {
+      "error": "type",
       "file": "invalid/voice-state-bitrate-text.hex"
     },
     {
@@ -835,14 +839,17 @@
           "deafen": false
         },
         "modes": 5,
+        "names": {
+          "player-a": "ALICE"
+        },
         "players": {
           "player-a": "ready"
         }
       },
-      "description": "API 0.3.4: delta for the receiving player: may use proximity and channel, push-to-talk only, 24 kbps; deafen icon hidden.",
+      "description": "API 0.3.4: delta for the receiving player: may use proximity and channel, push-to-talk only, 24 kbps; deafen icon hidden; player-a's name.",
       "direction": "S->C",
       "file": "17-voice-state-allowed.hex",
-      "length": 79,
+      "length": 101,
       "op": "0x17"
     },
     {
@@ -919,6 +926,18 @@
       "direction": "S->C",
       "file": "1b-settings-result-error.hex",
       "length": 43,
+      "op": "0x1b"
+    },
+    {
+      "body": {
+        "key": "radius",
+        "mod": "voice",
+        "ok": true
+      },
+      "description": "API 0.3.4: an answer naming the mod and key it answers.",
+      "direction": "S->C",
+      "file": "1b-settings-result-keyed.hex",
+      "length": 28,
       "op": "0x1b"
     },
     {

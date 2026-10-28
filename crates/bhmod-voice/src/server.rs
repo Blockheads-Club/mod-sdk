@@ -62,6 +62,7 @@ fn transport_mode(t: Transport) -> TransportMode {
 
 #[derive(Debug, Default)]
 struct Player {
+    alias: String,
     voice: bool,
     unsequenced: bool,
     peer: Option<PeerId>,
@@ -92,6 +93,8 @@ pub struct VoiceServer {
     new_speakers: BTreeSet<String>,
     /// Players who left, to announce as `gone`.
     gone: BTreeSet<String>,
+    /// Players whose name the others do not know yet.
+    new_names: BTreeSet<String>,
     events: Vec<VoiceEvent>,
     now: u64,
     keys: Box<dyn FnMut() -> Option<KeyPair> + Send>,
@@ -141,6 +144,7 @@ impl VoiceServer {
             states: BTreeMap::new(),
             new_speakers: BTreeSet::new(),
             gone: BTreeSet::new(),
+            new_names: BTreeSet::new(),
             events: Vec::new(),
             now: 0,
             keys,
@@ -162,17 +166,20 @@ impl VoiceServer {
         self.players.get(player)?.peer
     }
 
-    /// A player is in the game; `features` is their `HELLO.features`. Players without `voice` stay `none`.
-    pub fn join(&mut self, player: &str, features: &[String]) {
+    /// A player is in the game, with their alias; `features` is their `HELLO.features`. Players without `voice` stay
+    /// `none`. Every voice client learns the alias (`VOICE_STATE.names`), so it knows all players.
+    pub fn join(&mut self, player: &str, alias: &str, features: &[String]) {
         let has = |f: &str| features.iter().any(|x| x == f);
         let p = Player {
             voice: has(feature::VOICE),
             unsequenced: has(feature::VOICE_UNSEQUENCED),
             activations: Activation::mask(Activation::ALL),
+            alias: alias.to_string(),
             ..Player::default()
         };
         self.players.insert(player.to_string(), p);
         self.gone.remove(player);
+        self.new_names.insert(player.to_string());
     }
 
     /// A player left: their session ends; the others learn it with the next tick (`gone`). Admin mutes and speaker
@@ -189,6 +196,7 @@ impl VoiceServer {
         self.routes.remove(player);
         self.states.remove(player);
         self.new_speakers.remove(player);
+        self.new_names.remove(player);
         self.gone.insert(player.to_string());
         self.apply_routes();
     }
@@ -284,7 +292,8 @@ impl VoiceServer {
     fn full_state(&mut self, to: &str) -> VoiceState {
         let players = self.players.keys().map(|p| (p.clone(), self.status(p).wire().to_string())).collect();
         let speakers = self.peers.iter().map(|(peer, p)| (p.clone(), *peer)).collect();
-        let mut s = VoiceState { full: true, players, speakers, ..VoiceState::default() };
+        let names = self.players.iter().map(|(p, x)| (p.clone(), x.alias.clone())).collect();
+        let mut s = VoiceState { full: true, players, speakers, names, ..VoiceState::default() };
         s.icons = self.icons.wire().iter().map(|(k, v)| (k.to_string(), *v)).collect();
         self.tell_allowed(to, &mut s);
         s
@@ -366,10 +375,22 @@ impl VoiceServer {
             .into_iter()
             .filter_map(|p| Some((p.clone(), self.peer_of(&p)?)))
             .collect();
+        let names: BTreeMap<String, String> = std::mem::take(&mut self.new_names)
+            .into_iter()
+            .map(|p| {
+                let alias = self.players[&p].alias.clone();
+                (p, alias)
+            })
+            .collect();
         let icons = std::mem::take(&mut self.icons_dirty);
         let to: Vec<String> = self.peers.values().cloned().collect();
         for player in to {
-            let mut s = VoiceState { players: changed.clone(), speakers: speakers.clone(), ..VoiceState::default() };
+            let mut s = VoiceState {
+                players: changed.clone(),
+                speakers: speakers.clone(),
+                names: names.clone(),
+                ..VoiceState::default()
+            };
             if icons {
                 s.icons = self.icons.wire().iter().map(|(k, v)| (k.to_string(), *v)).collect();
             }

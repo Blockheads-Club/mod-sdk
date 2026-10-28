@@ -598,7 +598,11 @@ fn voice_and_settings_ops_need_both_features() {
     let state = Message::VoiceState(VoiceState { full: true, ..Default::default() });
     let frame = Message::VoiceFrame(VoiceFrame { nonce: 1, sealed: vec![0; 16] });
     let schema = Message::SettingsSchema(SettingsSchema { mod_id: "v".into(), schema: vec![0xa0], values: vec![0xa0] });
-    let result = Message::SettingsResult(SettingsResult { outcome: Err(SettingsFailure { code: 1, message: None }) });
+    let result = Message::SettingsResult(SettingsResult {
+        outcome: Err(SettingsFailure { code: 1, message: None }),
+        mod_id: None,
+        key: None,
+    });
 
     // before the join nothing flows
     let mut r = rig();

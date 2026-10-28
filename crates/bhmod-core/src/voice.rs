@@ -341,6 +341,8 @@ pub enum VoiceEvent {
     Mic(MicState),
     /// `voice:allowed` (clients).
     Allowed(Allowance),
+    /// `voice:mode` (clients): the default mode changed.
+    Mode(Mode),
 }
 
 impl VoiceEvent {
@@ -357,6 +359,7 @@ impl VoiceEvent {
                 ("state", vec![("player", Value::text(player)), ("state", Value::text(state.name()))])
             }
             VoiceEvent::Mic(s) => ("mic", vec![("state", Value::text(s.name()))]),
+            VoiceEvent::Mode(m) => ("mode", vec![("mode", Value::text(m.name()))]),
             VoiceEvent::Allowed(a) => {
                 let names = |v: Vec<&str>| Value::List(v.into_iter().map(Value::text).collect());
                 let modes = names(Mode::from_mask(a.modes).into_iter().map(Mode::name).collect());
@@ -830,6 +833,7 @@ mod tests {
                 "self-muted",
             ),
             (VoiceEvent::Mic(MicState::On), "voice:mic", "state", "on"),
+            (VoiceEvent::Mode(Mode::Broadcast), "voice:mode", "mode", "broadcast"),
         ];
         for (ev, name, key, val) in cases {
             let (n, p) = ev.custom();

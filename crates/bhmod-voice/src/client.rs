@@ -80,6 +80,7 @@ pub struct VoiceClient {
     opus: Vec<u8>,
     speakers: HashMap<PeerId, Speaker>,
     peer_of: BTreeMap<String, PeerId>,
+    names: BTreeMap<String, String>,
     states: BTreeMap<String, State>,
     icons: Icons,
     activation: Activation,
@@ -113,6 +114,7 @@ impl VoiceClient {
             opus: Vec::new(),
             speakers: HashMap::new(),
             peer_of: BTreeMap::new(),
+            names: BTreeMap::new(),
             states: BTreeMap::new(),
             icons: Icons::default(),
             activation,
@@ -185,13 +187,16 @@ impl VoiceClient {
         let before = self.allowed();
         if s.full {
             self.peer_of.clear();
+            self.names.clear();
         }
+        self.names.extend(s.names.iter().map(|(p, n)| (p.clone(), n.clone())));
         self.peer_of.extend(s.speakers.iter().map(|(p, id)| (p.clone(), *id)));
         let mut seen = BTreeSet::new();
         for (p, w) in &s.players {
             seen.insert(p.clone());
             if w == "gone" {
                 self.states.remove(p);
+                self.names.remove(p);
                 if let Some(id) = self.peer_of.remove(p) {
                     self.speakers.remove(&id);
                     self.mixer.forget(id);
@@ -418,9 +423,33 @@ impl VoiceClient {
         self.icons
     }
 
-    /// `voice.set-default-mode`.
+    /// `voice.set-default-mode`; a change fires `voice:mode` (the loader's mode picker calls it too).
     pub fn set_default_mode(&mut self, m: Mode) {
-        self.activation.default_mode = voice_mode(m);
+        if self.activation.default_mode != voice_mode(m) {
+            self.activation.default_mode = voice_mode(m);
+            self.events.push(VoiceEvent::Mode(m));
+        }
+    }
+
+    /// The default mode.
+    pub fn default_mode(&self) -> Mode {
+        mode_of(self.activation.default_mode)
+    }
+
+    /// Every player the server listed, `(player id, alias)` sorted by id: what the loader's bridge answers for
+    /// `players.online` / `players.get` on the client.
+    pub fn players(&self) -> Vec<(String, String)> {
+        self.names.iter().map(|(p, n)| (p.clone(), n.clone())).collect()
+    }
+
+    /// A listed player's alias.
+    pub fn alias(&self, player: &str) -> Option<String> {
+        self.names.get(player).cloned()
+    }
+
+    /// The players with a voice session (they have a speaker id), sorted: the per-player volume list.
+    pub fn speakers(&self) -> Vec<String> {
+        self.peer_of.keys().cloned().collect()
     }
 
     /// `voice.set-activation`: false when the server does not allow it.

@@ -74,6 +74,7 @@ is the vanilla `playerID` text (`players.get` gives the handle).
 | `voice:state` | `{player, state}` | A `voice-state` changed (state names as in WIT: `self-muted`, ...). |
 | `voice:mic` | `{state: "off" \| "on" \| "denied"}` | Client: the microphone opened, closed, or the OS refused. |
 | `voice:allowed` | `{modes: [text], activations: [text], max-bitrate}` | Client: what the server allows changed. |
+| `voice:mode` | `{mode}` | Client: the default mode changed (`set-default-mode` or the loader's mode picker). |
 
 ### `terrain` (no permission)
 
@@ -121,7 +122,9 @@ both scopes in `mods.toml` as before (V1).
 
 `VOICE_STATE` (0x17) gains optional keys for the receiving player only: `modes` (uint mask, bit 0 proximity, 1 global,
 2 channel, 3 broadcast: what `set-allowed` allows this player), `activations` (uint mask, bit 0 PTT, 1 VAD, 2 toggle)
-and `bitrate` (uint, the encoder bitrate = `max-bitrate`). `icons` gains the key `deafen`. Absent = unchanged (in a
+and `bitrate` (uint, the encoder bitrate = `max-bitrate`), plus `names` (map playerID -> alias of players listed for
+the first time; the full state names everyone) so a client knows every player. `icons` gains the key `deafen`.
+`SETTINGS_RESULT` (0x1b) gains optional `mod` and `key` naming the answered `SETTINGS_SET`. Absent = unchanged (in a
 delta) or the defaults (in a full state: no modes, all activations, 24000).
 
 ## Luau
@@ -169,7 +172,7 @@ implement it compiles and behaves exactly as before; without the voice mod no ne
 ### `bhmod-voice` (GPL, hosts only)
 
 - `bhmod_voice::server::VoiceServer` (shared as `SharedVoiceServer`, which implements `VoiceHost`): `join(player,
-  features)`, `leave(player)`, `receive(now, player, &Message, lag_ms, sink)` for `VOICE_KEY`, `VOICE_CTRL`,
+  alias, features)`, `leave(player)`, `receive(now, player, &Message, lag_ms, sink)` for `VOICE_KEY`, `VOICE_CTRL`,
   `VOICE_FRAME`, `receive_udp(now, datagram, &bound, lag_ms, sink) -> Option<peer to bind>`, `udp_port()`, `tick(now, sink)` (talk-stop, mute expiry,
   `VOICE_STATE` deltas), `take_events() -> Vec<VoiceEvent>` (pass to `ModHost::voice_event`). `now` is Unix time in
   ms. Output goes to a `ServerSink` (`reliable(player, packet)`, `unsequenced(player, packet)`, `udp(peer, datagram)`).
@@ -178,7 +181,10 @@ implement it compiles and behaves exactly as before; without the voice mod no ne
   `VOICE_FRAME`), `on_packet(&[u8])` (raw 0xBC), `on_udp(&[u8])`, `on_mic_frame(&[f32; 960 mono])`,
   `poll_send(now) -> Vec<Outgoing>` (`Reliable`, `Unsequenced`, `Udp`), `mix(&mut [f32] stereo)`, `mic_wanted()`,
   `mic_state(MicState)`, `transmitting() -> Option<Mode>` (host-drawn mic indicator), `take_events()`,
-  `prefs()` / `load_prefs()` (master, per-player volumes and mutes as text for a file on the device).
+  `prefs()` / `load_prefs()` (master, per-player volumes and mutes as text for a file on the device),
+  `players()` / `alias(id)` (every player the server listed with its alias: what the loader's bridge answers for
+  `online_players` / `player_alias`), `speakers()` (players with a voice session, for a per-player volume list),
+  `allowed()`, `default_mode()`, `self_muted()`, `deafened()`, `mic()`.
 - Opus: `bhmod_opus_sys::OpusCodec` implements `bhmod_voice::codec::Codec` (in `bhmod-opus-sys`, so the server,
   which relays without decoding, does not build libopus).
 

@@ -316,7 +316,7 @@ fn service_packets_without_mods_are_ignored() {
     r.l.handle(vec![Output::ServiceResult(ServiceResult { id: 1, outcome: Ok(vec![0xf6]) })]);
     r.l.handle(vec![
         Output::Voice(bhmod_proto::Message::VoiceState(Default::default())),
-        Output::SettingsResult(bhmod_proto::SettingsResult { outcome: Ok(()) }),
+        Output::SettingsResult(bhmod_proto::SettingsResult { outcome: Ok(()), mod_id: None, key: None }),
     ]);
     assert!(r.p.msgs().iter().all(|m| !matches!(m, Message::ServiceResult(_))));
 }
