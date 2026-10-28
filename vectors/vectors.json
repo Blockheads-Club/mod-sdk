@@ -105,6 +105,42 @@
       "file": "invalid/server-hello-players-too-big.hex"
     },
     {
+      "error": "truncated",
+      "file": "invalid/voice-frame-short-nonce.hex"
+    },
+    {
+      "error": "invalid",
+      "file": "invalid/voice-frame-no-tag.hex"
+    },
+    {
+      "error": "type",
+      "file": "invalid/voice-key-short.hex"
+    },
+    {
+      "error": "type",
+      "file": "invalid/voice-key-port-too-big.hex"
+    },
+    {
+      "error": "type",
+      "file": "invalid/voice-state-icon-not-bool.hex"
+    },
+    {
+      "error": "missing",
+      "file": "invalid/voice-ctrl-missing-deafen.hex"
+    },
+    {
+      "error": "type",
+      "file": "invalid/settings-set-value-text.hex"
+    },
+    {
+      "error": "missing",
+      "file": "invalid/settings-result-error-without-code.hex"
+    },
+    {
+      "error": "type",
+      "file": "invalid/server-hello-features-not-text.hex"
+    },
+    {
       "error": "type",
       "file": "invalid/reject-text-big-reason.hex"
     }
@@ -189,6 +225,28 @@
     },
     {
       "body": {
+        "api": "0.4.0",
+        "cached": [],
+        "features": [
+          "voice",
+          "settings"
+        ],
+        "loader": "0.4.0",
+        "platform": "pc-linux-x86_64",
+        "proto": 1,
+        "runtimes": [
+          "wasm",
+          "lua"
+        ]
+      },
+      "description": "Modded PC client that speaks the voice and settings ops.",
+      "direction": "C->S",
+      "file": "00-hello-features.hex",
+      "length": 110,
+      "op": "0x00"
+    },
+    {
+      "body": {
         "clientRequired": true,
         "count": 2,
         "modsHash": {
@@ -232,6 +290,26 @@
       "direction": "S->C",
       "file": "01-server-hello-players.hex",
       "length": 97,
+      "op": "0x01"
+    },
+    {
+      "body": {
+        "clientRequired": false,
+        "count": 1,
+        "features": [
+          "voice",
+          "settings"
+        ],
+        "modsHash": {
+          "$bytes": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "proto": 1,
+        "voiceUdpPort": 15152
+      },
+      "description": "Server speaking the voice and settings ops, with a dedicated voice UDP port.",
+      "direction": "S->C",
+      "file": "01-server-hello-features.hex",
+      "length": 117,
       "op": "0x01"
     },
     {
@@ -641,6 +719,152 @@
       "file": "14-service-result-provider-error.hex",
       "length": 45,
       "op": "0x14"
+    },
+    {
+      "body": {
+        "pub": {
+          "$bytes": "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20"
+        }
+      },
+      "description": "The client's X25519 public key (bytes 0x01..=0x20).",
+      "direction": "C->S",
+      "file": "15-voice-key-client.hex",
+      "length": 41,
+      "op": "0x15"
+    },
+    {
+      "body": {
+        "peer": 7,
+        "pub": {
+          "$bytes": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf"
+        },
+        "udpPort": 15152
+      },
+      "description": "The server's public key, the client's speaker id 7 and the voice UDP port.",
+      "direction": "S->C",
+      "file": "15-voice-key-server.hex",
+      "length": 58,
+      "op": "0x15"
+    },
+    {
+      "body": {
+        "nonce": 1,
+        "raw": true,
+        "sealed": "000102030405060708090a0b0c0d0e0f101112"
+      },
+      "description": "Nonce 1 and a 19-byte sealed body (3-byte plaintext + 16-byte tag; content arbitrary here, see bhmod-voice for real frames).",
+      "direction": "both",
+      "file": "16-voice-frame.hex",
+      "length": 29,
+      "op": "0x16"
+    },
+    {
+      "body": {
+        "full": true,
+        "icons": {
+          "no_voice": true,
+          "speaking": true
+        },
+        "players": {
+          "player-a": "talking",
+          "player-b": "none"
+        },
+        "speakers": {
+          "player-a": 1
+        }
+      },
+      "description": "Full state: player-a talks, player-b has no mod loader; icon visibility.",
+      "direction": "S->C",
+      "file": "17-voice-state-full.hex",
+      "length": 96,
+      "op": "0x17"
+    },
+    {
+      "body": {
+        "full": false,
+        "players": {
+          "player-a": "ready"
+        }
+      },
+      "description": "Delta: player-a stopped talking.",
+      "direction": "S->C",
+      "file": "17-voice-state-delta.hex",
+      "length": 33,
+      "op": "0x17"
+    },
+    {
+      "body": {
+        "deafen": false,
+        "selfMute": true
+      },
+      "description": "The player muted the microphone but still hears others.",
+      "direction": "C->S",
+      "file": "18-voice-ctrl.hex",
+      "length": 21,
+      "op": "0x18"
+    },
+    {
+      "body": {
+        "mod": "voice",
+        "schema": {
+          "$bytes": "a1666669656c647381a5636b657966726164697573636d61781840636d696e08647479706563696e746764656661756c741820"
+        },
+        "values": {
+          "$bytes": "a1667261646975731820"
+        }
+      },
+      "description": "One int field `radius` (8..=64, default 32); schema and values are canonical CBOR byte strings.",
+      "direction": "S->C",
+      "file": "19-settings-schema.hex",
+      "length": 91,
+      "op": "0x19"
+    },
+    {
+      "body": {
+        "key": "radius",
+        "mod": "voice",
+        "value": {
+          "$bytes": "1830"
+        }
+      },
+      "description": "An admin sets voice.radius to 48.",
+      "direction": "C->S",
+      "file": "1a-settings-set.hex",
+      "length": 33,
+      "op": "0x1a"
+    },
+    {
+      "body": {
+        "ok": true
+      },
+      "description": "Stored.",
+      "direction": "S->C",
+      "file": "1b-settings-result-ok.hex",
+      "length": 7,
+      "op": "0x1b"
+    },
+    {
+      "body": {
+        "code": 4,
+        "message": "radius must be 8..=64",
+        "ok": false
+      },
+      "description": "Out of range (INVALID_VALUE).",
+      "direction": "S->C",
+      "file": "1b-settings-result-error.hex",
+      "length": 43,
+      "op": "0x1b"
+    },
+    {
+      "body": {
+        "code": 1,
+        "ok": false
+      },
+      "description": "Not an admin (NOT_PERMITTED), no message.",
+      "direction": "S->C",
+      "file": "1b-settings-result-denied.hex",
+      "length": 13,
+      "op": "0x1b"
     }
   ],
   "vanillaReject": {

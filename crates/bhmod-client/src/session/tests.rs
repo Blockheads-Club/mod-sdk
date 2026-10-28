@@ -46,8 +46,16 @@ fn sent(out: &[Output]) -> Vec<Message> {
 }
 
 fn hello_pkt(hash: Hash, required: bool, count: u64) -> Vec<u8> {
-    Message::ServerHello(ServerHello { proto: 1, mods_hash: hash, client_required: required, count, players: None })
-        .encode()
+    Message::ServerHello(ServerHello {
+        proto: 1,
+        mods_hash: hash,
+        client_required: required,
+        count,
+        players: None,
+        features: vec![],
+        voice_udp_port: None,
+    })
+    .encode()
 }
 
 fn list_pkt(mods: Vec<ModInfo>) -> Vec<u8> {
@@ -126,10 +134,15 @@ fn server_hello_player_count_is_kept() {
         client_required: false,
         count: 0,
         players: Some(bhmod_proto::PlayerCount { online: 2, capacity: 8 }),
+        features: vec!["voice".into()],
+        voice_udp_port: Some(15151),
     })
     .encode();
+    assert!(r.s.server_features().is_empty());
     assert!(r.s.receive(&pkt, 10).is_empty());
     assert_eq!(r.s.players(), Some(bhmod_proto::PlayerCount { online: 2, capacity: 8 }));
+    assert_eq!(r.s.server_features(), ["voice".to_string()]);
+    assert_eq!(r.s.voice_udp_port(), Some(15151));
 }
 
 #[test]

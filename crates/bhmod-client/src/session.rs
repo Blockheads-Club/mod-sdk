@@ -48,6 +48,8 @@ pub struct Options {
     /// Packages (by SHA-256) the host trusts to carry native code: the player installed exactly this file from the
     /// public index and confirmed the red warning. A server listing native code with another hash is refused.
     pub native_trusted: Vec<Hash>,
+    /// `HELLO.features`: optional protocol features this loader speaks (`voice`, `settings`). Empty by default.
+    pub features: Vec<String>,
 }
 
 impl Options {
@@ -64,6 +66,7 @@ impl Options {
             busy_retry_ms: 1_000,
             allow_native: false,
             native_trusted: Vec::new(),
+            features: Vec::new(),
         }
     }
 }
@@ -237,6 +240,8 @@ pub struct Session {
     channels: BTreeMap<String, u16>,
     registry: Wire,
     players: Option<PlayerCount>,
+    server_features: Vec<String>,
+    voice_udp_port: Option<u16>,
 }
 
 fn client_side(m: &ModInfo) -> bool {
@@ -257,7 +262,19 @@ impl Session {
             channels: BTreeMap::new(),
             registry: Wire::new(),
             players: None,
+            server_features: Vec::new(),
+            voice_udp_port: None,
         }
+    }
+
+    /// The optional features the server listed in `SERVER_HELLO` (`voice`, `settings`); empty until it answered.
+    pub fn server_features(&self) -> &[String] {
+        &self.server_features
+    }
+
+    /// The dedicated voice UDP port the server announced in `SERVER_HELLO`, if any.
+    pub fn voice_udp_port(&self) -> Option<u16> {
+        self.voice_udp_port
     }
 
     /// The player count the server put into `SERVER_HELLO`, if it did.
@@ -299,6 +316,7 @@ impl Session {
             api: self.opts.api.clone(),
             runtimes: self.opts.runtimes.clone(),
             cached: self.cache.cached(),
+            features: self.opts.features.clone(),
         }
     }
 
@@ -415,6 +433,8 @@ impl Session {
             return Vec::new();
         }
         self.players = h.players;
+        self.server_features.clone_from(&h.features);
+        self.voice_udp_port = h.voice_udp_port;
         if h.count == 0 {
             return self.modded(h.mods_hash);
         }

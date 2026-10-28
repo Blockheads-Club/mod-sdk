@@ -153,3 +153,59 @@ fn constants() {
     assert_eq!(MAX_SERVICE_PAYLOAD, 32 * 1024);
     assert_eq!(file_error::BAD_OFFSET + file_error::BUSY + file_error::INTERNAL, 9);
 }
+
+#[test]
+fn voice_and_settings_limits() {
+    let mut frame = vec![PACKET_TYPE, 0x16];
+    frame.extend(5u64.to_le_bytes());
+    frame.extend(vec![0u8; MAX_VOICE_SEALED]);
+    assert!(Message::decode(&frame).unwrap().is_unreliable());
+    frame.push(0);
+    assert_eq!(err(&frame), Error::TooLarge("voice frame"));
+
+    let schema = |schema: Vec<u8>, values: Vec<u8>| {
+        packet(
+            0x19,
+            map(vec![("mod", Value::text("m")), ("schema", Value::Bytes(schema)), ("values", Value::Bytes(values))]),
+        )
+    };
+    assert!(Message::decode(&schema(vec![0xa0; MAX_SETTINGS_PAYLOAD], vec![0xa0])).is_ok());
+    assert_eq!(err(&schema(vec![0xa0; MAX_SETTINGS_PAYLOAD + 1], vec![0xa0])), Error::TooLarge("schema"));
+    assert_eq!(err(&schema(vec![0xa0], vec![0xa0; MAX_SETTINGS_PAYLOAD + 1])), Error::TooLarge("values"));
+    let set = packet(
+        0x1a,
+        map(vec![
+            ("mod", Value::text("m")),
+            ("key", Value::text("k")),
+            ("value", Value::Bytes(vec![0; MAX_SETTINGS_VALUE + 1])),
+        ]),
+    );
+    assert_eq!(err(&set), Error::TooLarge("value"));
+    let result = packet(0x1b, map(vec![("ok", Value::Bool(false)), ("code", Value::Uint(256))]));
+    assert_eq!(err(&result), Error::Type("code"));
+}
+
+#[test]
+fn voice_state_maps_are_checked() {
+    let state = |extra: (&str, Value)| {
+        packet(0x17, map(vec![("full", Value::Bool(false)), ("players", Value::Map(vec![])), extra]))
+    };
+    assert_eq!(err(&state(("speakers", Value::Uint(1)))), Error::Type("speakers"));
+    let big = Value::Map(vec![(Value::text("p"), Value::Uint(70000))]);
+    assert_eq!(err(&state(("speakers", big))), Error::Type("speakers"));
+    let key = Value::Map(vec![(Value::Uint(1), Value::Uint(1))]);
+    assert_eq!(err(&state(("speakers", key))), Error::Type("speakers"));
+    let Message::VoiceState(s) = Message::decode(&state(("other", Value::Null))).unwrap() else { panic!() };
+    assert!(s.speakers.is_empty() && s.icons.is_empty() && !s.full);
+}
+
+#[test]
+fn reliability_per_op() {
+    for b in 0..=0xffu8 {
+        if let Some(op) = Op::from_u8(b) {
+            assert_eq!(op as u8, b);
+            assert_eq!(op.is_unreliable(), b == 0x16);
+        }
+    }
+    assert!(!Message::ListRequest.is_unreliable());
+}
