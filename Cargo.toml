@@ -21,6 +21,7 @@ exclude = [
     "examples/scheduler-rust",
     "examples/shop-rust",
     "examples/prices-rust",
+    "examples/voice-rust",
     "sdk/rust/blockheads-mod",
     "crates/bhmod-wasm/tests/guest",
     "crates/bhmod-wasm/tests/guest01",
