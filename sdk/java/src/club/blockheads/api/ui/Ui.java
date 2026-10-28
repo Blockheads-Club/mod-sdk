@@ -15,7 +15,8 @@ package club.blockheads.api.ui;
  * 
  * (0.3.4) Overhead icons, on-screen buttons and the settings screen. Button input arrives as the custom event
  * `&lt;mod-id&gt;:ui-button` with the payload `{"id": text, "action": "press" | "release" | "long-press"}`, delivered to
- * the mod that owns the button only.
+ * the mod that owns the button only. When the player taps or clicks a blockhead, every client mod gets the custom
+ * event `&lt;its-mod-id&gt;:ui-pick` with `{"player": id}` (for example to open a per-player volume dialog).
  */
 public interface Ui {
     /**
@@ -77,4 +78,9 @@ public interface Ui {
      * sent the mod's schema (0xBC `SETTINGS_SCHEMA`), its server settings. `invalid-argument` for an unknown mod.
      */
     void openSettings(String modId);
+
+    /**
+     * (0.3.4) True when the device has a touch screen (draw on-screen buttons, expect taps instead of keys).
+     */
+    boolean hasTouch();
 }

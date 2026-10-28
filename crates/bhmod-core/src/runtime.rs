@@ -381,6 +381,37 @@ pub trait HostApi {
         let _ = id;
         false
     }
+    /// `host.platform` (API 0.3.4).
+    fn host_platform(&mut self) -> String {
+        "unknown".into()
+    }
+    /// `player.sleeping` (API 0.3.4).
+    fn player_sleeping(&mut self, id: &str) -> bool {
+        let _ = id;
+        false
+    }
+    /// `player.alive` (API 0.3.4).
+    fn player_alive(&mut self, id: &str) -> bool {
+        let _ = id;
+        false
+    }
+    /// `players.local-player` (API 0.3.4).
+    fn players_local(&mut self) -> Option<String> {
+        None
+    }
+    /// `players.has-mod` (API 0.3.4).
+    fn players_has_mod(&mut self, id: &str, mod_id: &str) -> bool {
+        let _ = (id, mod_id);
+        false
+    }
+    /// `terrain.world-width` (API 0.3.4).
+    fn terrain_world_width(&mut self) -> Option<i32> {
+        None
+    }
+    /// `ui.has-touch` (API 0.3.4).
+    fn ui_has_touch(&mut self) -> bool {
+        false
+    }
     /// `ui.set-overhead` (API 0.3.4); `player` is a player id.
     fn ui_set_overhead(&mut self, player: &str, icon: OverheadIcon) -> Result<(), ApiError> {
         let _ = (player, icon);

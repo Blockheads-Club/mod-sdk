@@ -355,3 +355,75 @@ fn client_settings_live_on_the_device() {
     o.client_settings = Some(t.path().join("nope.toml"));
     let _h = ModHost::load(o, FakeBridge::new());
 }
+
+const FACTS: &str = r#"
+local mod = {}
+function mod.on_enable()
+    bh.commands.register({ name = "facts", usage = "" }, function()
+        local a = bh.players.get("p1")
+        local me = bh.players.local_player()
+        local out = {
+            bh.host.platform(), tostring(a:sleeping()), tostring(a:alive()), tostring(me and me:id()),
+            tostring(bh.players.has_mod(a, "voice")), tostring(bh.terrain.world_width()), tostring(bh.ui.has_touch()),
+        }
+        if bh.host.current_side() == "client" then
+            local al = bh.voice.allowed()
+            for _, x in ipairs({ table.concat(al.modes, "+"), table.concat(al.activations, "+"), tostring(al.max_bitrate),
+                tostring(bh.voice.self_muted()), tostring(bh.voice.deafened()), bh.voice.mic() }) do
+                table.insert(out, x)
+            end
+        end
+        return table.concat(out, " ")
+    end)
+    for _, e in ipairs({ "player:sleep", "player:wake", "player:respawn", "vf:ui-pick", "voice:allowed" }) do
+        bh.events.on_custom(e, function(ev)
+            print(e, tostring(ev.payload.player), tostring(ev.payload["max-bitrate"]))
+        end)
+    end
+    local id = bh.ui.show_dialog({ title = "Mode", buttons = { { label = "1" }, { label = "2" }, { label = "3" }, { label = "Cancel" } } })
+    print("four buttons", id)
+end
+return mod
+"#;
+
+#[test]
+fn api_gaps_for_the_voice_mod() {
+    for side in [Side::Server, Side::Client] {
+        let mut r = rig(side, &[("vf", "voice = true", FACTS)], "[vf]\ngrant = [\"voice\"]\n", |_, _| {});
+        assert_eq!(r.h.mods()[0].state, ModState::Enabled, "{}", r.b.log_text());
+        assert!(r.b.log_text().contains("four buttons\t1"), "{}", r.b.log_text());
+        let console = bhmod_core::types::CommandSender::Console;
+        let empty = r.h.command(console.clone(), "/facts").unwrap();
+        r.b.sleeping.borrow_mut().push("p1".into());
+        r.b.alive.borrow_mut().push("p1".into());
+        *r.b.local.borrow_mut() = Some("p2".into());
+        r.b.has_mods.borrow_mut().push(("p1".into(), "voice".into()));
+        r.b.width.set(Some(8192));
+        r.b.touch.set(true);
+        let full = r.h.command(console, "/facts").unwrap();
+        match side {
+            Side::Server => {
+                assert_eq!(empty, ["test-linux-x86_64 false false nil false nil false"]);
+                assert_eq!(full, ["test-linux-x86_64 true true p2 true 8192 true"]);
+            }
+            Side::Client => {
+                assert_eq!(
+                    full,
+                    ["test-linux-x86_64 false false p2 false 8192 true proximity+global ptt 16000 true false on"]
+                );
+            }
+        }
+        r.h.player_event(bhmod_core::PlayerEvent::Sleep, "p1");
+        r.h.player_event(bhmod_core::PlayerEvent::Wake, "p1");
+        r.h.player_event(bhmod_core::PlayerEvent::Respawn, "p2");
+        r.h.ui_pick("p2");
+        let a = bhmod_core::voice::Allowance { modes: 1, activations: 1, max_bitrate: 8000 };
+        r.h.voice_event(&VoiceEvent::Allowed(a));
+        let log = r.b.log_text();
+        for line in
+            ["player:sleep\tp1", "player:wake\tp1", "player:respawn\tp2", "vf:ui-pick\tp2", "voice:allowed\tnil\t8000"]
+        {
+            assert!(log.contains(line), "{line} in {log}");
+        }
+    }
+}

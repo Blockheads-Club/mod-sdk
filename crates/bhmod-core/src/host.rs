@@ -230,6 +230,28 @@ impl fmt::Display for ReloadResult {
     }
 }
 
+/// A player change the host reports with [`ModHost::player_event`] (API 0.3.4).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PlayerEvent {
+    /// `player:sleep`.
+    Sleep,
+    /// `player:wake`.
+    Wake,
+    /// `player:respawn`.
+    Respawn,
+}
+
+impl PlayerEvent {
+    /// The event name after `player:`.
+    pub fn name(self) -> &'static str {
+        match self {
+            PlayerEvent::Sleep => "sleep",
+            PlayerEvent::Wake => "wake",
+            PlayerEvent::Respawn => "respawn",
+        }
+    }
+}
+
 /// The reason shown for a mod whose package vanished.
 const GONE: &str = "its package is gone or no longer loadable";
 
@@ -1133,6 +1155,26 @@ impl ModHost {
         self.fire_filtered(Event::Custom { name, source, payload, cancelled: false }, Some(&to));
     }
 
+    /// A player's blockhead fell asleep, woke up or respawned (API 0.3.4, servers): the custom event `player:sleep`,
+    /// `player:wake` or `player:respawn` with `{"player": id}` to every subscribed mod.
+    pub fn player_event(&mut self, event: PlayerEvent, player: &str) {
+        let payload = Value::Map(vec![("player".into(), Value::text(player))]).encode();
+        let name = format!("player:{}", event.name());
+        self.fire(Event::Custom { name, source: "player".into(), payload, cancelled: false });
+    }
+
+    /// The player tapped or clicked a blockhead (API 0.3.4, clients): every mod gets its own custom event
+    /// `<mod-id>:ui-pick` with `{"player": id}`.
+    pub fn ui_pick(&mut self, player: &str) {
+        let payload = Value::Map(vec![("player".into(), Value::text(player))]).encode();
+        for i in 0..self.slots.len() {
+            let id = self.slots[i].info.id.clone();
+            let ev =
+                Event::Custom { name: format!("{id}:ui-pick"), source: id, payload: payload.clone(), cancelled: false };
+            self.fire_filtered(ev, Some(&[i]));
+        }
+    }
+
     /// The player used an on-screen button of mod `mod_id` (API 0.3.4): the custom event `<mod-id>:ui-button`
     /// `{"id", "action"}` to that mod only. False when the mod has no such button.
     pub fn ui_button(&mut self, mod_id: &str, id: &str, action: ButtonAction) -> bool {
@@ -1426,6 +1468,27 @@ impl HostApi for Ctx<'_> {
     }
     fn host_name(&self) -> String {
         self.host.bridge.host_name()
+    }
+    fn host_platform(&mut self) -> String {
+        self.host.bridge.platform()
+    }
+    fn player_sleeping(&mut self, id: &str) -> bool {
+        self.host.side == Side::Server && self.host.bridge.player_sleeping(id)
+    }
+    fn player_alive(&mut self, id: &str) -> bool {
+        self.host.side == Side::Server && self.host.bridge.player_alive(id)
+    }
+    fn players_local(&mut self) -> Option<String> {
+        self.host.bridge.local_player()
+    }
+    fn players_has_mod(&mut self, id: &str, mod_id: &str) -> bool {
+        self.host.side == Side::Server && self.host.bridge.player_has_mod(id, mod_id)
+    }
+    fn terrain_world_width(&mut self) -> Option<i32> {
+        self.host.bridge.world_width()
+    }
+    fn ui_has_touch(&mut self) -> bool {
+        self.host.bridge.has_touch()
     }
     fn log(&mut self, level: LogLevel, message: &str) {
         self.log_as_mod(level, truncate(message, MAX_LOG));
@@ -1862,7 +1925,7 @@ impl HostApi for Ctx<'_> {
     fn terrain_solid_count(&mut self, x1: i32, y1: i32, x2: i32, y2: i32) -> Result<u32, ApiError> {
         self.require_content_side()?;
         let bridge = &self.host.bridge;
-        Ok(crate::voice::solid_count((x1, y1), (x2, y2), bridge.world_width(), |x, y| bridge.tile_solid(x, y)))
+        Ok(crate::voice::solid_count((x1, y1), (x2, y2), bridge.world_width(), &|x, y| bridge.tile_solid(x, y)))
     }
 
     fn input_bind(&mut self, action: &str, default_key: &str) -> Result<(), ApiError> {

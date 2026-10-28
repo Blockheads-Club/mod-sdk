@@ -28,8 +28,8 @@ pub const MAX_DIALOG_TEXT: usize = 512;
 pub const MAX_BUTTON: usize = 24;
 /// Longest dialog field in characters.
 pub const MAX_FIELD: u32 = 200;
-/// Most buttons of a dialog.
-pub const MAX_BUTTONS: usize = 3;
+/// Most buttons of a dialog (4 since API 0.3.4).
+pub const MAX_BUTTONS: usize = 4;
 /// The `button` of a `ui-action` event when the dialog was closed without an answer (back, leaving the world).
 pub const CLOSED: u32 = u32::MAX;
 /// Most on-screen buttons one mod may have (0.3.4).
@@ -564,7 +564,7 @@ mod tests {
         assert!(check_dialog(&d).is_ok());
         d.buttons.clear();
         assert!(matches!(check_dialog(&d), Err(ApiError::InvalidArgument(_))));
-        d.buttons = vec![DialogButton { label: "a".into(), kind: ButtonKind::Danger }; 4];
+        d.buttons = vec![DialogButton { label: "a".into(), kind: ButtonKind::Danger }; 5];
         assert!(check_dialog(&d).is_err());
         d.buttons = vec![DialogButton { label: String::new(), kind: ButtonKind::Danger }];
         assert!(check_dialog(&d).is_err());

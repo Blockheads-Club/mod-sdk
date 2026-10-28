@@ -78,6 +78,9 @@ fn vox() -> Result<(), String> {
     let button = ui::Button { icon: "mic".into(), label: None, x: 0.5, y: 0.5, size: 64, opacity: 80 };
     show("button", (ui::set_button("ptt", &button), ui::remove_button("ptt")));
     show("settings-screen", ui::open_settings("vox"));
+    show("gaps", (host::platform(), a.sleeping(), a.alive(), players::local_player().is_none(), players::has_mod(&a, "vox")));
+    show("gaps2", (terrain::world_width(), ui::has_touch()));
+    show("client-state", (v::allowed().is_err(), v::self_muted(), v::deafened(), v::mic()));
     Ok(())
 }
 

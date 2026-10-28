@@ -104,6 +104,7 @@ macro_rules! api_version {
             fn host_name(&mut self) -> R<String> {
                 Ok(self.api()?.host_name())
             }
+            host_extra!();
         }
 
         impl log::Host for State {
@@ -444,6 +445,10 @@ pub mod v02 {
         () => {};
     }
 
+    macro_rules! host_extra {
+        () => {};
+    }
+
     macro_rules! players_extra {
         () => {
             fn from_value_handle(&mut self, handle: u64) -> R<Option<Resource<PlayerRes>>> {
@@ -475,6 +480,15 @@ pub mod v02 {
 /// are bound with the `client-mod` world (a superset of the imports, the same `guest` export).
 pub mod v03 {
     pub use crate::wit::ClientMod as ServerMod;
+
+    /// `host.platform` (0.3.4).
+    macro_rules! host_extra {
+        () => {
+            fn platform(&mut self) -> R<String> {
+                Ok(self.api()?.host_platform())
+            }
+        };
+    }
 
     /// The remote service calls added in 0.3.1 (a 0.3.0 component never imports them).
     macro_rules! services_extra {
@@ -511,6 +525,14 @@ pub mod v03 {
                 let found = self.api()?.player_of_handle(handle).ok();
                 found.map(|id| self.new_player(id)).transpose()
             }
+            fn local_player(&mut self) -> R<Option<Resource<PlayerRes>>> {
+                let found = self.api()?.players_local();
+                found.map(|id| self.new_player(id)).transpose()
+            }
+            fn has_mod(&mut self, p: Resource<PlayerRes>, mod_id: String) -> R<bool> {
+                let id = self.player_id(&p)?;
+                Ok(self.api()?.players_has_mod(&id, &mod_id))
+            }
         };
     }
 
@@ -526,6 +548,14 @@ pub mod v03 {
         fn value_handle(&mut self, p: Resource<PlayerRes>) -> R<u64> {
             let id = self.player_id(&p)?;
             Ok(self.api()?.handle_of_player(&id))
+        }
+        fn sleeping(&mut self, p: Resource<PlayerRes>) -> R<bool> {
+            let id = self.player_id(&p)?;
+            Ok(self.api()?.player_sleeping(&id))
+        }
+        fn alive(&mut self, p: Resource<PlayerRes>) -> R<bool> {
+            let id = self.player_id(&p)?;
+            Ok(self.api()?.player_alive(&id))
         }
     });
 
@@ -597,6 +627,9 @@ pub mod v03 {
         fn open_settings(&mut self, mod_id: String) -> R<Result<(), types::ApiError>> {
             Ok(self.api()?.ui_open_settings(&mod_id).map_err(api_error))
         }
+        fn has_touch(&mut self) -> R<bool> {
+            Ok(self.api()?.ui_has_touch())
+        }
     }
 
     enum_fn!(overhead_from: ui::OverheadIcon => core_ui::OverheadIcon { Speaking, NoVoice, SelfMute, Deafen, AdminMute });
@@ -608,6 +641,13 @@ pub mod v03 {
     enum_fn!(activation_from: voice::Activation => cv::Activation { Ptt, Vad, Toggle });
     enum_fn!(transport_from: voice::Transport => cv::Transport { Auto, Inband, Udp });
     enum_fn!(state_to: cv::VoiceState => voice::VoiceState { None, Ready, Talking, SelfMuted, Deafened, AdminMuted });
+    enum_fn!(mic_to: cv::MicState => voice::MicState { Off, On, Denied });
+
+    fn names<T: Copy, U>(mask: u8, all: fn(u8) -> Vec<T>, to: fn(T) -> U) -> Vec<U> {
+        all(mask).into_iter().map(to).collect()
+    }
+    enum_fn!(mode_to: cv::Mode => voice::Mode { Proximity, Global, Channel, Broadcast });
+    enum_fn!(activation_to: cv::Activation => voice::Activation { Ptt, Vad, Toggle });
 
     fn icons_from(i: voice::IconVisibility) -> cv::Icons {
         cv::Icons {
@@ -744,11 +784,33 @@ pub mod v03 {
             let id = self.player_id(&p)?;
             Ok(self.voice_call(cv::VoiceCall::PlayerMuted(id))?.map(cv::VoiceReply::as_bool))
         }
+        fn allowed(&mut self) -> R<Result<voice::Allowance, types::ApiError>> {
+            Ok(self.voice_call(cv::VoiceCall::Allowed)?.map(|r| {
+                let a = r.as_allowance();
+                voice::Allowance {
+                    modes: names(a.modes, cv::Mode::from_mask, mode_to),
+                    activations: names(a.activations, cv::Activation::from_mask, activation_to),
+                    max_bitrate: a.max_bitrate,
+                }
+            }))
+        }
+        fn self_muted(&mut self) -> R<Result<bool, types::ApiError>> {
+            Ok(self.voice_call(cv::VoiceCall::SelfMuted)?.map(cv::VoiceReply::as_bool))
+        }
+        fn deafened(&mut self) -> R<Result<bool, types::ApiError>> {
+            Ok(self.voice_call(cv::VoiceCall::Deafened)?.map(cv::VoiceReply::as_bool))
+        }
+        fn mic(&mut self) -> R<Result<voice::MicState, types::ApiError>> {
+            Ok(self.voice_call(cv::VoiceCall::Mic)?.map(|r| mic_to(r.as_mic())))
+        }
     }
 
     impl terrain::Host for State {
         fn solid_count(&mut self, x1: i32, y1: i32, x2: i32, y2: i32) -> R<Result<u32, types::ApiError>> {
             Ok(self.api()?.terrain_solid_count(x1, y1, x2, y2).map_err(api_error))
+        }
+        fn world_width(&mut self) -> R<Option<i32>> {
+            Ok(self.api()?.terrain_world_width())
         }
     }
 
@@ -833,6 +895,10 @@ pub mod v01 {
     pub use crate::wit::v01::ServerMod;
 
     macro_rules! services_extra {
+        () => {};
+    }
+
+    macro_rules! host_extra {
         () => {};
     }
 

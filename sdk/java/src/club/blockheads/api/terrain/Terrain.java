@@ -13,4 +13,10 @@ public interface Terrain {
      * `unsupported`.
      */
     long solidCount(int x1, int y1, int x2, int y2);
+
+    /**
+     * The world width in tiles (`x` wraps around it), for distances and stereo pan the short way round; `none` when
+     * the host does not know it (before the world loaded, on clients that do not track it).
+     */
+    Integer worldWidth();
 }

@@ -216,4 +216,41 @@ public final class VoiceImpl implements Voice {
         Object r = Wire.unwrap(b.call("voice.player-muted", who.key()), x -> new club.blockheads.api.types.ApiErrorException(club.blockheads.api.types.ApiError.fromWire(x, b)));
         return Wire.bool(r);
     }
+
+    /**
+     * *Client.* What the server allows this player; changes arrive as `voice:allowed`
+     * `{"modes": [...], "activations": [...], "max-bitrate": n}`. No modes before the server said.
+     */
+    @Override
+    public club.blockheads.api.voice.Allowance allowed() {
+        Object r = Wire.unwrap(b.call("voice.allowed"), x -> new club.blockheads.api.types.ApiErrorException(club.blockheads.api.types.ApiError.fromWire(x, b)));
+        return club.blockheads.api.voice.Allowance.fromWire(r, b);
+    }
+
+    /**
+     * *Client.* The self mute switch.
+     */
+    @Override
+    public boolean selfMuted() {
+        Object r = Wire.unwrap(b.call("voice.self-muted"), x -> new club.blockheads.api.types.ApiErrorException(club.blockheads.api.types.ApiError.fromWire(x, b)));
+        return Wire.bool(r);
+    }
+
+    /**
+     * *Client.* The deafen switch.
+     */
+    @Override
+    public boolean deafened() {
+        Object r = Wire.unwrap(b.call("voice.deafened"), x -> new club.blockheads.api.types.ApiErrorException(club.blockheads.api.types.ApiError.fromWire(x, b)));
+        return Wire.bool(r);
+    }
+
+    /**
+     * *Client.* The microphone's state.
+     */
+    @Override
+    public club.blockheads.api.voice.MicState mic() {
+        Object r = Wire.unwrap(b.call("voice.mic"), x -> new club.blockheads.api.types.ApiErrorException(club.blockheads.api.types.ApiError.fromWire(x, b)));
+        return club.blockheads.api.voice.MicState.fromWire(r, b);
+    }
 }

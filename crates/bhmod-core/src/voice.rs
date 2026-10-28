@@ -233,6 +233,23 @@ pub fn check_vad_db(db: f32) -> Result<(), ApiError> {
     Ok(())
 }
 
+/// `voice.allowance` (client): what the server allows this player.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Allowance {
+    /// [`Mode`] mask.
+    pub modes: u8,
+    /// [`Activation`] mask.
+    pub activations: u8,
+    /// The encoder bitrate.
+    pub max_bitrate: u32,
+}
+
+impl Default for Allowance {
+    fn default() -> Allowance {
+        Allowance { modes: 0, activations: 0x07, max_bitrate: 24_000 }
+    }
+}
+
 /// `voice.transport-config`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TransportConfig {
@@ -322,6 +339,8 @@ pub enum VoiceEvent {
     },
     /// `voice:mic` (clients).
     Mic(MicState),
+    /// `voice:allowed` (clients).
+    Allowed(Allowance),
 }
 
 impl VoiceEvent {
@@ -338,6 +357,13 @@ impl VoiceEvent {
                 ("state", vec![("player", Value::text(player)), ("state", Value::text(state.name()))])
             }
             VoiceEvent::Mic(s) => ("mic", vec![("state", Value::text(s.name()))]),
+            VoiceEvent::Allowed(a) => {
+                let names = |v: Vec<&str>| Value::List(v.into_iter().map(Value::text).collect());
+                let modes = names(Mode::from_mask(a.modes).into_iter().map(Mode::name).collect());
+                let acts = names(Activation::from_mask(a.activations).into_iter().map(Activation::name).collect());
+                let rate = Value::Int(i64::from(a.max_bitrate));
+                ("allowed", vec![("modes", modes), ("activations", acts), ("max-bitrate", rate)])
+            }
         };
         let payload = Value::Map(fields.into_iter().map(|(k, v)| (k.to_string(), v)).collect()).encode();
         (format!("{EVENT_PREFIX}:{name}"), payload)
@@ -395,6 +421,14 @@ pub enum VoiceCall {
     MutePlayer(String, bool),
     /// `player-muted`.
     PlayerMuted(String),
+    /// `allowed`.
+    Allowed,
+    /// `self-muted`.
+    SelfMuted,
+    /// `deafened`.
+    Deafened,
+    /// `mic`.
+    Mic,
 }
 
 impl VoiceCall {
@@ -481,6 +515,10 @@ impl VoiceCall {
             VoiceCall::PlayerVolume(p) => Percent(h.player_volume(&p)?),
             VoiceCall::MutePlayer(p, m) => h.mute_player(&p, m).map(|_| Unit)?,
             VoiceCall::PlayerMuted(p) => Bool(h.player_muted(&p)?),
+            VoiceCall::Allowed => VoiceReply::Allowed(h.allowed()?),
+            VoiceCall::SelfMuted => Bool(h.self_muted()?),
+            VoiceCall::Deafened => Bool(h.deafened()?),
+            VoiceCall::Mic => VoiceReply::Mic(h.mic()?),
         })
     }
 }
@@ -498,6 +536,10 @@ pub enum VoiceReply {
     State(VoiceState),
     /// `icons`.
     Icons(Icons),
+    /// `allowed`.
+    Allowed(Allowance),
+    /// `mic`.
+    Mic(MicState),
 }
 
 impl VoiceReply {
@@ -521,6 +563,24 @@ impl VoiceReply {
             s
         } else {
             VoiceState::None
+        }
+    }
+
+    /// The allowance of `allowed` (the defaults for any other reply).
+    pub fn as_allowance(self) -> Allowance {
+        if let VoiceReply::Allowed(a) = self {
+            a
+        } else {
+            Allowance::default()
+        }
+    }
+
+    /// The state of `mic` (`off` for any other reply).
+    pub fn as_mic(self) -> MicState {
+        if let VoiceReply::Mic(m) = self {
+            m
+        } else {
+            MicState::Off
         }
     }
 
@@ -637,6 +697,22 @@ pub trait VoiceHost {
     fn player_muted(&self, player: &str) -> Result<bool, ApiError> {
         Err(ApiError::Unsupported)
     }
+    /// `voice.allowed` (client).
+    fn allowed(&self) -> Result<Allowance, ApiError> {
+        Err(ApiError::Unsupported)
+    }
+    /// `voice.self-muted` (client).
+    fn self_muted(&self) -> Result<bool, ApiError> {
+        Err(ApiError::Unsupported)
+    }
+    /// `voice.deafened` (client).
+    fn deafened(&self) -> Result<bool, ApiError> {
+        Err(ApiError::Unsupported)
+    }
+    /// `voice.mic` (client).
+    fn mic(&self) -> Result<MicState, ApiError> {
+        Err(ApiError::Unsupported)
+    }
 }
 
 /// Most tiles `terrain.solid-count` walks.
@@ -649,7 +725,7 @@ pub fn solid_count(
     (x1, y1): (i32, i32),
     (x2, y2): (i32, i32),
     width: Option<i32>,
-    solid: impl Fn(i32, i32) -> Option<bool>,
+    solid: &dyn Fn(i32, i32) -> Option<bool>,
 ) -> u32 {
     let mut dx = i64::from(x2) - i64::from(x1);
     if let Some(w) = width.filter(|w| *w > 0).map(i64::from) {
@@ -777,6 +853,15 @@ mod tests {
         assert_eq!(VoiceReply::State(VoiceState::Talking).as_state(), VoiceState::Talking);
         assert!(!VoiceReply::Icons(Icons { deafen: false, ..Icons::default() }).as_icons().deafen);
         assert_eq!(VoiceCall::Master.run(&Nothing), Err(ApiError::Unsupported));
+        assert_eq!((u.as_allowance(), u.as_mic()), (Allowance::default(), MicState::Off));
+        assert_eq!(VoiceReply::Mic(MicState::On).as_mic(), MicState::On);
+        let a = Allowance { modes: 5, activations: 1, max_bitrate: 16_000 };
+        assert_eq!(VoiceReply::Allowed(a).as_allowance(), a);
+        let (n, p) = VoiceEvent::Allowed(a).custom();
+        let v = Value::decode(&p).unwrap();
+        assert_eq!(n, "voice:allowed");
+        assert_eq!(v.get("modes"), Some(&Value::List(vec![Value::text("proximity"), Value::text("channel")])));
+        assert_eq!(v.get("max-bitrate"), Some(&Value::Int(16_000)));
     }
 
     #[test]
@@ -807,28 +892,32 @@ mod tests {
         assert_eq!(n.player_volume("p"), Err(ApiError::Unsupported));
         assert_eq!(n.mute_player("p", true), u);
         assert_eq!(n.player_muted("p"), Err(ApiError::Unsupported));
+        assert_eq!(n.allowed(), Err(ApiError::Unsupported));
+        assert_eq!(n.self_muted(), Err(ApiError::Unsupported));
+        assert_eq!(n.deafened(), Err(ApiError::Unsupported));
+        assert_eq!(n.mic(), Err(ApiError::Unsupported));
     }
 
     #[test]
     fn lines() {
         let wall = |x: i32, _y: i32| Some(x == 5);
-        assert_eq!(solid_count((0, 0), (10, 0), None, wall), 1);
-        assert_eq!(solid_count((0, 0), (5, 0), None, wall), 0, "end tile excluded");
-        assert_eq!(solid_count((3, 3), (3, 3), None, wall), 0);
+        assert_eq!(solid_count((0, 0), (10, 0), None, &wall), 1);
+        assert_eq!(solid_count((0, 0), (5, 0), None, &wall), 0, "end tile excluded");
+        assert_eq!(solid_count((3, 3), (3, 3), None, &wall), 0);
         // vertical and diagonal lines over a solid world: every tile between counts
-        assert_eq!(solid_count((0, 0), (0, 10), None, |_, _| Some(true)), 9);
-        assert_eq!(solid_count((0, 0), (4, -4), None, |_, _| Some(true)), 3);
-        assert_eq!(solid_count((0, 0), (10, 3), None, |_, _| None), 0, "unloaded tiles are not solid");
+        assert_eq!(solid_count((0, 0), (0, 10), None, &|_, _| Some(true)), 9);
+        assert_eq!(solid_count((0, 0), (4, -4), None, &|_, _| Some(true)), 3);
+        assert_eq!(solid_count((0, 0), (10, 3), None, &|_, _| None), 0, "unloaded tiles are not solid");
         // the short way round a 100-wide world: 98 -> 2 crosses x = 99, 0, 1
         let seen = std::cell::RefCell::new(Vec::new());
-        let n = solid_count((98, 0), (2, 0), Some(100), |x, _| {
+        let n = solid_count((98, 0), (2, 0), Some(100), &|x, _| {
             seen.borrow_mut().push(x);
             Some(true)
         });
         assert_eq!((n, seen.into_inner()), (3, vec![99, 0, 1]));
-        assert_eq!(solid_count((2, 0), (98, 0), Some(100), |_, _| Some(true)), 3);
-        assert_eq!(solid_count((0, 0), (10, 0), Some(0), |_, _| Some(true)), 9, "width 0 = unknown");
+        assert_eq!(solid_count((2, 0), (98, 0), Some(100), &|_, _| Some(true)), 3);
+        assert_eq!(solid_count((0, 0), (10, 0), Some(0), &|_, _| Some(true)), 9, "width 0 = unknown");
         // capped
-        assert_eq!(solid_count((0, 0), (10_000, 0), None, |_, _| Some(true)), MAX_LINE);
+        assert_eq!(solid_count((0, 0), (10_000, 0), None, &|_, _| Some(true)), MAX_LINE);
     }
 }

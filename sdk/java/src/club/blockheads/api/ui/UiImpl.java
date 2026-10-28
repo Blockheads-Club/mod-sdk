@@ -109,4 +109,13 @@ public final class UiImpl implements Ui {
     public void openSettings(String modId) {
         Wire.unwrap(b.call("ui.open-settings", modId), x -> new club.blockheads.api.types.ApiErrorException(club.blockheads.api.types.ApiError.fromWire(x, b)));
     }
+
+    /**
+     * (0.3.4) True when the device has a touch screen (draw on-screen buttons, expect taps instead of keys).
+     */
+    @Override
+    public boolean hasTouch() {
+        Object r = b.call("ui.has-touch");
+        return Wire.bool(r);
+    }
 }

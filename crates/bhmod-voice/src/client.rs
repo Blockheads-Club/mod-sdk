@@ -17,7 +17,9 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use bhmod_core::types::ApiError;
-use bhmod_core::voice::{Activation as Act, Icons, MicState, Mode, VoiceEvent, VoiceHost, VoiceState as State};
+use bhmod_core::voice::{
+    Activation as Act, Allowance, Icons, MicState, Mode, VoiceEvent, VoiceHost, VoiceState as State,
+};
 use bhmod_proto::{Message, VoiceCtrl, VoiceKey, VoiceState};
 
 use crate::activation::{Activation, Allowed, Input, Kind};
@@ -87,6 +89,7 @@ pub struct VoiceClient {
     volumes: BTreeMap<String, u16>,
     muted: BTreeSet<String>,
     mic_wanted: bool,
+    mic: MicState,
     self_mute: bool,
     deafen: bool,
     transmitting: Option<VoiceMode>,
@@ -119,6 +122,7 @@ impl VoiceClient {
             volumes: BTreeMap::new(),
             muted: BTreeSet::new(),
             mic_wanted: false,
+            mic: MicState::Off,
             self_mute: false,
             deafen: false,
             transmitting: None,
@@ -178,6 +182,7 @@ impl VoiceClient {
     }
 
     fn on_state(&mut self, s: &VoiceState) {
+        let before = self.allowed();
         if s.full {
             self.peer_of.clear();
         }
@@ -213,6 +218,9 @@ impl VoiceClient {
             if let Some(e) = self.encoder.as_mut() {
                 e.set_bitrate(b);
             }
+        }
+        if self.allowed() != before {
+            self.events.push(VoiceEvent::Allowed(self.allowed()));
         }
         self.sync_volumes();
     }
@@ -344,6 +352,7 @@ impl VoiceClient {
         if state == MicState::Denied {
             self.mic_wanted = false;
         }
+        self.mic = state;
         self.events.push(VoiceEvent::Mic(state));
     }
 
@@ -514,6 +523,28 @@ impl VoiceClient {
     pub fn player_muted(&self, player: &str) -> bool {
         self.muted.contains(player)
     }
+
+    /// `voice.allowed`: what the server allows this player.
+    pub fn allowed(&self) -> Allowance {
+        let a = self.activation.allowed;
+        let acts = u8::from(a.ptt) | u8::from(a.vad) << 1 | u8::from(a.toggle) << 2;
+        Allowance { modes: self.activation.modes, activations: acts, max_bitrate: self.bitrate }
+    }
+
+    /// `voice.self-muted`.
+    pub fn self_muted(&self) -> bool {
+        self.self_mute
+    }
+
+    /// `voice.deafened`.
+    pub fn deafened(&self) -> bool {
+        self.deafen
+    }
+
+    /// `voice.mic`: the device state the loader last reported.
+    pub fn mic(&self) -> MicState {
+        self.mic
+    }
 }
 
 /// A [`VoiceClient`] shared between the game thread, the bridge ([`VoiceHost`]) and the audio threads.
@@ -589,6 +620,18 @@ impl VoiceHost for SharedVoiceClient {
     }
     fn player_muted(&self, player: &str) -> Result<bool, ApiError> {
         Ok(self.lock().player_muted(player))
+    }
+    fn allowed(&self) -> Result<Allowance, ApiError> {
+        Ok(self.lock().allowed())
+    }
+    fn self_muted(&self) -> Result<bool, ApiError> {
+        Ok(self.lock().self_muted())
+    }
+    fn deafened(&self) -> Result<bool, ApiError> {
+        Ok(self.lock().deafened())
+    }
+    fn mic(&self) -> Result<MicState, ApiError> {
+        Ok(self.lock().mic())
     }
 }
 

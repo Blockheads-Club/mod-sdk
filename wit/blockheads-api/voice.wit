@@ -18,6 +18,8 @@ package blockheads:api@0.3.4;
 /// - `voice:state` `{"player": text, "state": text}`: a player's `voice-state` changed (server: from the relay,
 ///   client: from the server's `VOICE_STATE`).
 /// - `voice:mic` `{"state": "off" | "on" | "denied"}` (client): the microphone opened, closed or the OS refused it.
+/// - `voice:allowed` `{"modes": [text], "activations": [text], "max-bitrate": n}` (client): what the server allows
+///   this player changed.
 interface voice {
     use types.{api-error};
     use players.{player};
@@ -100,6 +102,24 @@ interface voice {
         mode: transport,
         /// The dedicated voice UDP port the host opens; `none` = no port (everything in-band).
         udp-port: option<u16>,
+    }
+
+    /// The microphone (client).
+    enum mic-state {
+        /// Closed.
+        off,
+        /// Open.
+        on,
+        /// The OS refused the permission.
+        denied,
+    }
+
+    /// What the server allows this client (client; from `VOICE_STATE`).
+    record allowance {
+        modes: list<mode>,
+        activations: list<activation>,
+        /// The encoder bitrate (the server's `max-bitrate`).
+        max-bitrate: u32,
     }
 
     /// Which overhead icons modded clients may show (admin setting). Sent to every client.
@@ -191,4 +211,14 @@ interface voice {
     mute-player: func(who: borrow<player>, muted: bool) -> result<_, api-error>;
     /// *Client.* True when the player is muted locally.
     player-muted: func(who: borrow<player>) -> result<bool, api-error>;
+
+    /// *Client.* What the server allows this player; changes arrive as `voice:allowed`
+    /// `{"modes": [...], "activations": [...], "max-bitrate": n}`. No modes before the server said.
+    allowed: func() -> result<allowance, api-error>;
+    /// *Client.* The self mute switch.
+    self-muted: func() -> result<bool, api-error>;
+    /// *Client.* The deafen switch.
+    deafened: func() -> result<bool, api-error>;
+    /// *Client.* The microphone's state.
+    mic: func() -> result<mic-state, api-error>;
 }

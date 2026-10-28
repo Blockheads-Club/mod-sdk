@@ -59,7 +59,7 @@ pub mod voice;
 pub mod watch;
 
 pub use bridge::GameBridge;
-pub use host::{HostOptions, ModHost, ModInfo, ModState, ReloadOutcome, ReloadResult};
+pub use host::{HostOptions, ModHost, ModInfo, ModState, PlayerEvent, ReloadOutcome, ReloadResult};
 pub use remote::{RemoteCall, RemoteCaller, RemoteError, RemoteLimits, RemoteTarget};
 pub use runtime::{CallError, HostApi, Instance, Runtime};
 pub use voice::VoiceHost;

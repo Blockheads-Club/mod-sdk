@@ -796,6 +796,21 @@ fn voice_call(f: &str, a: &[Value]) -> Result<(VoiceCall, ShowReply), String> {
         "voice.player-volume" => (VoiceCall::PlayerVolume(p(0)?), percent),
         "voice.mute-player" => (VoiceCall::MutePlayer(p(0)?, flag(a, 1)?), unit),
         "voice.player-muted" => (VoiceCall::PlayerMuted(p(0)?), boolean),
+        "voice.allowed" => (VoiceCall::Allowed, |r| {
+            let a = r.as_allowance();
+            let names = |v: Vec<&str>| Value::List(v.into_iter().map(Value::text).collect());
+            Value::Map(vec![
+                (
+                    "activations".into(),
+                    names(Activation::from_mask(a.activations).into_iter().map(Activation::name).collect()),
+                ),
+                ("max-bitrate".into(), Value::Int(a.max_bitrate.into())),
+                ("modes".into(), names(Mode::from_mask(a.modes).into_iter().map(Mode::name).collect())),
+            ])
+        }),
+        "voice.self-muted" => (VoiceCall::SelfMuted, boolean),
+        "voice.deafened" => (VoiceCall::Deafened, boolean),
+        "voice.mic" => (VoiceCall::Mic, |r| Value::text(r.as_mic().name())),
         other => return Err(format!("unknown host function {other:?} (this host does not implement it)")),
     })
 }
@@ -809,6 +824,7 @@ fn call_host(h: &mut dyn HostApi, f: &str, a: &[Value]) -> Result<Value, String>
         "host.mod-version" => Value::Text(h.mod_version()),
         "host.current-side" => Value::text(h.current_side().name()),
         "host.host-name" => Value::Text(h.host_name()),
+        "host.platform" => Value::Text(h.host_platform()),
 
         "log.log" => {
             let level = text(a, 0)?;
@@ -830,6 +846,10 @@ fn call_host(h: &mut dyn HostApi, f: &str, a: &[Value]) -> Result<Value, String>
         "players.player.pos" => h.player_pos(text(a, 0)?).ok().flatten().map_or(Value::Null, pos_value),
         "players.player.value-handle" => Value::Int(h.handle_of_player(text(a, 0)?) as i64),
         "players.player.kick" => api_result(h.player_kick(text(a, 0)?, text(a, 1)?), |()| Value::Null),
+        "players.player.sleeping" => Value::Bool(h.player_sleeping(text(a, 0)?)),
+        "players.player.alive" => Value::Bool(h.player_alive(text(a, 0)?)),
+        "players.local-player" => opt_text(h.players_local()),
+        "players.has-mod" => Value::Bool(h.players_has_mod(text(a, 0)?, text(a, 1)?)),
 
         "events.subscribe" => {
             let kind = text(a, 0)?;
@@ -933,6 +953,8 @@ fn call_host(h: &mut dyn HostApi, f: &str, a: &[Value]) -> Result<Value, String>
         "ui.set-button" => api_result(h.ui_set_button(text(a, 0)?, button_of(arg(a, 1)?)?), |()| Value::Null),
         "ui.remove-button" => Value::Bool(h.ui_remove_button(text(a, 0)?)),
         "ui.open-settings" => api_result(h.ui_open_settings(text(a, 0)?), |()| Value::Null),
+        "ui.has-touch" => Value::Bool(h.ui_has_touch()),
+        "terrain.world-width" => h.terrain_world_width().map_or(Value::Null, |w| Value::Int(w.into())),
 
         "terrain.solid-count" => {
             let n = h.terrain_solid_count(signed(a, 0)?, signed(a, 1)?, signed(a, 2)?, signed(a, 3)?);
@@ -1572,9 +1594,17 @@ mod tests {
                 VoiceCall::Icons => VoiceReply::Icons(Icons { deafen: false, ..Icons::default() }),
                 VoiceCall::Unmute(_) | VoiceCall::PlayerMuted(_) => VoiceReply::Bool(true),
                 VoiceCall::Master | VoiceCall::PlayerVolume(_) => VoiceReply::Percent(70),
+                VoiceCall::Allowed => {
+                    VoiceReply::Allowed(crate::voice::Allowance { modes: 1, activations: 2, max_bitrate: 9 })
+                }
+                VoiceCall::Mic => VoiceReply::Mic(crate::voice::MicState::Denied),
+                VoiceCall::SelfMuted | VoiceCall::Deafened => VoiceReply::Bool(true),
                 _ => VoiceReply::Unit,
             };
             self.res(&format!("{call:?}"), reply)
+        }
+        fn terrain_world_width(&mut self) -> Option<i32> {
+            Some(100)
         }
         fn terrain_solid_count(&mut self, x1: i32, y1: i32, x2: i32, y2: i32) -> Result<u32, ApiError> {
             self.res(&format!("solid {x1} {y1} {x2} {y2}"), 3)
@@ -2171,6 +2201,16 @@ mod tests {
                 ok(Value::Int(3)),
             ),
             ("input.bind", vec![t("ptt"), t("v")], unit.clone()),
+            ("voice.self-muted", vec![], ok(Value::Bool(true))),
+            ("voice.deafened", vec![], ok(Value::Bool(true))),
+            ("voice.mic", vec![], ok(t("denied"))),
+            ("host.platform", vec![], t("unknown")),
+            ("players.player.sleeping", vec![p()], Value::Bool(false)),
+            ("players.player.alive", vec![p()], Value::Bool(false)),
+            ("players.local-player", vec![], Value::Null),
+            ("players.has-mod", vec![p(), t("voice")], Value::Bool(false)),
+            ("ui.has-touch", vec![], Value::Bool(false)),
+            ("terrain.world-width", vec![], Value::Int(100)),
             ("input.unbind", vec![t("ptt")], Value::Bool(true)),
             ("input.key-of", vec![t("ptt")], t("v")),
             ("input.key-of", vec![t("x")], Value::Null),
@@ -2182,6 +2222,9 @@ mod tests {
         for (f, args, want) in cases {
             assert_eq!(call(&mut h, f, &args), want, "{f}");
         }
+        let allowed = call(&mut h, "voice.allowed", &[]);
+        assert_eq!(allowed.get("ok").and_then(|a| a.get("modes")), Some(&Value::List(vec![t("proximity")])));
+        assert_eq!(allowed.get("ok").and_then(|a| a.get("max-bitrate")), Some(&Value::Int(9)));
         let icons_back = call(&mut h, "voice.icons", &[]);
         assert_eq!(icons_back.get("ok").and_then(|i| i.get("deafen")), Some(&Value::Bool(false)));
         let button = record(vec![

@@ -195,7 +195,7 @@ impl<M: Mod> guest::Guest for Exported<M> {
 
 /// Facts about the host and this mod.
 pub mod host {
-    pub use crate::wit::host::{api_version, current_side, host_name, mod_id, mod_version};
+    pub use crate::wit::host::{api_version, current_side, host_name, mod_id, mod_version, platform};
 }
 
 /// Logging to the server console or client log (prefixed with the mod id by the host).
@@ -333,7 +333,9 @@ pub mod channels {
 
 /// Connected players.
 pub mod players {
-    pub use crate::wit::players::{broadcast, find_by_alias, from_value_handle, get, online, Player, Role};
+    pub use crate::wit::players::{
+        broadcast, find_by_alias, from_value_handle, get, has_mod, local_player, online, Player, Role,
+    };
 }
 
 /// Content ids and cosmetics (API 0.3).
@@ -377,7 +379,7 @@ pub mod voice {
 
 /// Terrain queries (API 0.3.4): `solid_count` for muffling voice through walls (server only).
 pub mod terrain {
-    pub use crate::wit::terrain::solid_count;
+    pub use crate::wit::terrain::{solid_count, world_width};
 }
 
 /// Key bindings of client mods (API 0.3.4); presses arrive as `<mod-id>:input {"action", "pressed"}`.
@@ -391,7 +393,7 @@ pub mod ui {
     use crate::{events, ApiError};
 
     pub use crate::wit::ui::{
-        clear_overhead, close_dialog, notice, open_settings, remove_button, remove_widget, set_button, set_overhead,
+        clear_overhead, close_dialog, has_touch, notice, open_settings, remove_button, remove_widget, set_button, set_overhead,
         set_widget, show_dialog, toast, Button, ButtonKind, Dialog, DialogButton, Field, NoticeLevel, OverheadIcon, Slot,
         Widget, WidgetKind,
     };

@@ -1,4 +1,4 @@
-# Luau API mapping (API 0.3)
+# Luau API mapping (API 0.3.4)
 
 Lua mods use **Luau** (sandboxed, with a memory limit and an interrupt for time budgets). The API is the same
 `blockheads:api` WIT ([`../wit/blockheads-api/`](../wit/blockheads-api/)), mapped by these rules. Since milestone M1
@@ -216,16 +216,39 @@ The mod's own settings, declared as `[settings.<key>]` in `mod.toml` and set by 
   `<mod-id>:settings-changed` with the payload `{ keys = { ... } }`. Subscribe with
   `bh.events.on_custom("<mod-id>:settings-changed", fn)`; other mods may listen to it too.
 
+### `bh.voice`, `bh.terrain`, `bh.input` and the `bh.ui` additions (0.3.4)
+
+See [voice.md](voice.md) for the whole API, the permission `voice` and the events. The mapping is the usual one:
+players are player handles, `list<mode>` is a list of strings (`{ "proximity", "global" }`), records are tables with
+snake_case keys, missing optional fields take the defaults.
+
+- `bh.voice.*` (permission `voice`): `state(p)`, `icons()`; server: `set_routes(speaker, { { listener = p, modes = {...},
+  gain, pan, muffle } })`, `mute(p, until_ms?)`, `unmute(p)`, `set_speaker_gain(p, n)`, `set_caps{...}`,
+  `set_transport{ mode, udp_port }`, `set_allowed(p, modes, activations)`, `set_icons{...}`,
+  `set_broadcast_overrides_deafen(b)`; client: `set_default_mode(m)`, `set_activation(a)`, `talk(mode?, pressed)`,
+  `set_mic(b)`, `set_self_mute(b)`, `set_deafen(b)`, `set_vad_threshold(db)`, `set_master(n)`, `master()`,
+  `set_player_volume(p, n)`, `player_volume(p)`, `mute_player(p, b)`, `player_muted(p)`, `allowed()`,
+  `self_muted()`, `deafened()`, `mic()`.
+- `bh.terrain.solid_count(x1, y1, x2, y2)` (server), `bh.terrain.world_width()`.
+- `bh.input.bind(action, default_key)`, `unbind(action)`, `key_of(action)` (client); presses arrive as
+  `<mod-id>:input { action, pressed }`.
+- `bh.ui.set_overhead(p, icon)`, `clear_overhead(p)`, `set_button(id, { icon, label, x, y, size, opacity })`,
+  `remove_button(id)`, `open_settings(mod_id)`, `has_touch()`; button input as `<mod-id>:ui-button { id, action }`,
+  taps on blockheads as `<mod-id>:ui-pick { player }`. Dialogs take up to four buttons.
+- `bh.host.platform()`, `player:sleeping()`, `player:alive()` (server; events `player:sleep`, `player:wake`,
+  `player:respawn` with `{ player }`), `bh.players.local_player()` (client), `bh.players.has_mod(p, mod_id)` (server).
+
 ## API versions
 
-The host implements `blockheads:api@0.3.3` (`bh.host.api_version()`) and also serves 0.3.2, 0.3.1, 0.3.0, 0.2 and 0.1: in 0.x a new
+The host implements `blockheads:api@0.3.4` (`bh.host.api_version()`) and also serves 0.3.3, 0.3.2, 0.3.1, 0.3.0, 0.2 and 0.1: in 0.x a new
 minor only adds events, functions and fields, so a mod with `api = "^0.1"` keeps loading and running unchanged. A mod
 that uses anything from 0.2 declares `api = "^0.2"`, one that uses `bh.ui` or `bh.content` declares `api = "^0.3"`, one
 that uses remote services (`bh.services.call_remote`) or `remote = true` declares `api = "^0.3.1"`. 0.3.1 is a patch
 release because it only adds (a function group in `services`, no new export, no changed type): components built for
 0.3.0 link and run on a 0.3.1 host without a new binding, which wasmtime matches semver-compatibly. 0.3.2 adds the
 same way `bh.content.give_item`, `place_block` and `block_at` (a mod that uses them declares `api = "^0.3.2"`), and
-0.3.3 the `settings` interface with `[settings]` in `mod.toml` (`api = "^0.3.3"`). WASM hosts bind the
+0.3.3 the `settings` interface with `[settings]` in `mod.toml` (`api = "^0.3.3"`), 0.3.4 `voice`, `terrain`,
+`input`, the `ui`/`players`/`host` additions and the `voice` permission (`api = "^0.3.4"`). WASM hosts bind the
 frozen 0.2 and 0.1 WIT in [`../wit/compat/blockheads-api-0.2.0/`](../wit/compat/blockheads-api-0.2.0/) and
 [`../wit/compat/blockheads-api-0.1.0/`](../wit/compat/blockheads-api-0.1.0/) for components built against them.
 

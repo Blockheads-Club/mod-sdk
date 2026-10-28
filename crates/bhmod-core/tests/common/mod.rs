@@ -14,7 +14,9 @@ use bhmod_core::input::InputCommand;
 use bhmod_core::remote::{RemoteCall, RemoteError};
 use bhmod_core::types::{ApiError, ChannelTarget, ContentKind, LogLevel, Pos, Role, Side};
 use bhmod_core::ui::UiCommand;
-use bhmod_core::voice::{Activation, Caps, Icons, Mode, Route, TransportConfig, VoiceHost, VoiceState};
+use bhmod_core::voice::{
+    Activation, Allowance, Caps, Icons, MicState, Mode, Route, TransportConfig, VoiceHost, VoiceState,
+};
 use bhmod_core::GameBridge;
 
 /// A channel message the bridge was asked to send: (mod, channel, target, data).
@@ -62,6 +64,12 @@ pub struct FakeBridge {
     pub rebinds: RefCell<Vec<(String, String, Option<String>)>>,
     /// The side the bridge reports (the server unless set).
     pub client: Cell<bool>,
+    /// API 0.3.4 facts: sleeping players, living players, the local player, (player, mod) pairs that run a mod, touch.
+    pub sleeping: RefCell<Vec<String>>,
+    pub alive: RefCell<Vec<String>>,
+    pub local: RefCell<Option<String>>,
+    pub has_mods: RefCell<Vec<(String, String)>>,
+    pub touch: Cell<bool>,
 }
 
 /// A voice host that records every call as text and answers with fixed values.
@@ -172,6 +180,18 @@ impl VoiceHost for RecVoice {
     fn player_muted(&self, _p: &str) -> Result<bool, ApiError> {
         Ok(true)
     }
+    fn allowed(&self) -> Result<Allowance, ApiError> {
+        Ok(Allowance { modes: 0b0011, activations: 0b001, max_bitrate: 16_000 })
+    }
+    fn self_muted(&self) -> Result<bool, ApiError> {
+        Ok(true)
+    }
+    fn deafened(&self) -> Result<bool, ApiError> {
+        Ok(false)
+    }
+    fn mic(&self) -> Result<MicState, ApiError> {
+        Ok(MicState::On)
+    }
 }
 
 impl FakeBridge {
@@ -228,6 +248,24 @@ impl GameBridge for FakeBridge {
     }
     fn world_width(&self) -> Option<i32> {
         self.width.get()
+    }
+    fn platform(&self) -> String {
+        "test-linux-x86_64".into()
+    }
+    fn player_sleeping(&self, id: &str) -> bool {
+        self.sleeping.borrow().iter().any(|p| p == id)
+    }
+    fn player_alive(&self, id: &str) -> bool {
+        self.alive.borrow().iter().any(|p| p == id)
+    }
+    fn local_player(&self) -> Option<String> {
+        self.local.borrow().clone()
+    }
+    fn player_has_mod(&self, id: &str, mod_id: &str) -> bool {
+        self.has_mods.borrow().iter().any(|(p, m)| p == id && m == mod_id)
+    }
+    fn has_touch(&self) -> bool {
+        self.touch.get()
     }
     fn input(&self, mod_id: &str, command: &InputCommand) -> Result<(), ApiError> {
         if self.no_ui.get() {

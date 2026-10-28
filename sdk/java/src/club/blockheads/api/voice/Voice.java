@@ -21,6 +21,8 @@ package club.blockheads.api.voice;
  * - `voice:state` `{"player": text, "state": text}`: a player's `voice-state` changed (server: from the relay,
  * client: from the server's `VOICE_STATE`).
  * - `voice:mic` `{"state": "off" | "on" | "denied"}` (client): the microphone opened, closed or the OS refused it.
+ * - `voice:allowed` `{"modes": [text], "activations": [text], "max-bitrate": n}` (client): what the server allows
+ * this player changed.
  */
 public interface Voice {
     /**
@@ -149,4 +151,25 @@ public interface Voice {
      * *Client.* True when the player is muted locally.
      */
     boolean playerMuted(club.blockheads.api.players.Player who);
+
+    /**
+     * *Client.* What the server allows this player; changes arrive as `voice:allowed`
+     * `{"modes": [...], "activations": [...], "max-bitrate": n}`. No modes before the server said.
+     */
+    club.blockheads.api.voice.Allowance allowed();
+
+    /**
+     * *Client.* The self mute switch.
+     */
+    boolean selfMuted();
+
+    /**
+     * *Client.* The deafen switch.
+     */
+    boolean deafened();
+
+    /**
+     * *Client.* The microphone's state.
+     */
+    club.blockheads.api.voice.MicState mic();
 }

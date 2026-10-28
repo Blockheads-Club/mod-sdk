@@ -158,7 +158,13 @@ fn activation_and_allowed() {
     a.on_mic_frame(&[0.0; FRAME_SAMPLES]);
     assert!(a.set_activation(Act::Ptt));
     // the server allows PTT only
+    a.take_events();
     a.on_message(&Message::VoiceState(VoiceState { activations: Some(1), modes: Some(1), ..Default::default() }));
+    let allowed = Allowance { modes: 1, activations: 1, max_bitrate: 24_000 };
+    assert_eq!(a.take_events(), vec![VoiceEvent::Allowed(allowed)]);
+    a.set_self_mute(true);
+    a.set_deafen(true);
+    assert!(a.self_muted() && a.deafened());
     assert!(!a.set_activation(Act::Vad));
     assert!(!a.set_activation(Act::Toggle));
     // denied microphone
@@ -200,7 +206,7 @@ fn state_messages_and_prefs() {
     c.on_message(&Message::VoiceState(delta));
     assert_eq!(c.state("x"), State::None);
     let ev = c.take_events();
-    assert_eq!(ev.len(), 2, "unchanged states are not repeated: {ev:?}");
+    assert_eq!(ev.len(), 3, "unchanged states are not repeated: {ev:?}");
     let only = VoiceState { full: true, players: BTreeMap::from([("q".into(), "ready".into())]), ..Default::default() };
     c.on_message(&Message::VoiceState(only));
     assert_eq!(c.states.len(), 1);
@@ -337,6 +343,10 @@ fn shared_client_is_a_voice_host() {
     assert_eq!(h.player_muted("p"), Ok(true));
     assert_eq!(h.mute("p", None), Err(ApiError::Unsupported), "server functions stay unsupported");
     assert!(shared.lock().mic_wanted());
+    assert_eq!(h.allowed().unwrap(), Allowance { modes: 0, activations: 0b101, max_bitrate: 24_000 });
+    assert_eq!((h.self_muted(), h.deafened(), h.mic()), (Ok(false), Ok(false), Ok(MicState::Off)));
+    shared.lock().mic_state(MicState::On);
+    assert_eq!(h.mic(), Ok(MicState::On));
 }
 
 #[test]

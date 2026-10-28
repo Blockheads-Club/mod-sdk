@@ -23,4 +23,14 @@ public final class TerrainImpl implements Terrain {
         Object r = Wire.unwrap(b.call("terrain.solid-count", (long) x1, (long) y1, (long) x2, (long) y2), x -> new club.blockheads.api.types.ApiErrorException(club.blockheads.api.types.ApiError.fromWire(x, b)));
         return Wire.num(r);
     }
+
+    /**
+     * The world width in tiles (`x` wraps around it), for distances and stereo pan the short way round; `none` when
+     * the host does not know it (before the world loaded, on clients that do not track it).
+     */
+    @Override
+    public Integer worldWidth() {
+        Object r = b.call("terrain.world-width");
+        return Wire.optIn(r, x0 -> (int) Wire.num(x0));
+    }
 }

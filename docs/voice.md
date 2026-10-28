@@ -52,6 +52,9 @@ the accept dialog: "Use voice chat: microphone and speakers through the game"). 
 | `set-master(percent)`, `master()` | client | 0..=200, default 100; stored on the device. |
 | `set-player-volume(who, percent)`, `player-volume(who)` | client | 0..=200, default 100; stored on the device by player id. |
 | `mute-player(who, muted)`, `player-muted(who)` | client | Local mute; stored on the device by player id. |
+| `allowed() -> allowance{modes, activations, max-bitrate}` | client | What the server allows this player (from `VOICE_STATE`). |
+| `self-muted()`, `deafened()` | client | The player's own switches. |
+| `mic() -> mic-state` | client | `off`, `on`, `denied`. |
 
 Wrong side -> `unsupported`; a host without voice -> `unsupported`; out-of-range numbers -> `invalid-argument`;
 a player who left -> `stale-handle`. The server never learns client volumes or local mutes.
@@ -70,11 +73,23 @@ is the vanilla `playerID` text (`players.get` gives the handle).
 | `voice:talk-stop` | `{player, mode}` | 300 ms without a frame. |
 | `voice:state` | `{player, state}` | A `voice-state` changed (state names as in WIT: `self-muted`, ...). |
 | `voice:mic` | `{state: "off" \| "on" \| "denied"}` | Client: the microphone opened, closed, or the OS refused. |
+| `voice:allowed` | `{modes: [text], activations: [text], max-bitrate}` | Client: what the server allows changed. |
 
 ### `terrain` (no permission)
 
 `solid-count(x1, y1, x2, y2) -> u32`: solid tiles on the Bresenham line between two tiles, both end tiles excluded,
 x wrapping the short way round the world, unloaded tiles not solid, cut after 256 tiles. Server only.
+`world-width() -> option<s32>`: the width `x` wraps around (for distance and pan the short way round).
+
+### Other 0.3.4 additions (no permission)
+
+- `host.platform() -> string`: `<host>-<os>-<arch>` (`server-linux-x86_64`, `pc-windows-x86_64`, `android-armv7`, ...).
+- `player.sleeping() -> bool`, `player.alive() -> bool` (server; false on clients and for players who left). The host
+  fires the custom events `player:sleep`, `player:wake` and `player:respawn` with `{player}` to every subscriber.
+- `players.local-player() -> option<player>` (client; `local` is a Luau keyword), `players.has-mod(who, mod-id) -> bool`
+  (server: the player's client runs that mod; tells vanilla from "modded, voice not started").
+- `ui.has-touch() -> bool`; `<mod-id>:ui-pick {player}` to every client mod when the player taps or clicks a
+  blockhead (per-player volume by clicking someone); dialogs take up to **four** buttons.
 
 ### `input` (client, no permission)
 
@@ -131,29 +146,35 @@ implement it compiles and behaves exactly as before; without the voice mod no ne
   - `fn tile_solid(&self, x: i32, y: i32) -> Option<bool>` and `fn world_width(&self) -> Option<i32>` for
     `terrain.solid-count` (the Bresenham walk is in the core);
   - `fn input(&self, mod_id: &str, cmd: &InputCommand) -> Result<(), ApiError>` (`Bind {action, default_key}`,
-    `Unbind {action}`, `ClearMod`) and `fn input_key(&self, mod_id: &str, action: &str) -> Option<String>` (the
-    player's current key; default: the declared default key).
+    `Unbind {action}`, `ClearMod`) and `fn input_key(&self, mod_id: &str, action: &str, default_key: &str) ->
+    Option<String>` (the player's current key; the default returns `default_key`);
+  - `fn platform(&self) -> String` (`unknown`), `fn player_sleeping(&self, id) -> bool`, `fn player_alive(&self, id)
+    -> bool`, `fn local_player(&self) -> Option<String>`, `fn player_has_mod(&self, id, mod_id) -> bool`,
+    `fn has_touch(&self) -> bool` (all false / `None` by default).
   - New `UiCommand` variants through the existing `GameBridge::ui`: `SetOverhead {player, icon}`,
     `ClearOverhead {player}`, `SetButton {id, button}`, `RemoveButton {id}`, `OpenSettings {mod_id}` (`ClearMod`
     also removes the mod's icons and buttons).
 - `ModHost` inputs from the host: `voice_event(&VoiceEvent)`, `ui_button(mod_id, id, ButtonAction) -> bool`,
-  `input_event(mod_id, action, pressed) -> bool`.
+  `input_event(mod_id, action, pressed) -> bool`, `ui_pick(player)`, `player_event(PlayerEvent::{Sleep, Wake,
+  Respawn}, player)`.
+- Settings commands: `ModHost::settings_command(is_admin, &args) -> Option<Vec<String>>` for the server's
+  `/mods settings <id>` and `/mods set <id> <key> <value>` (the vanilla `/mod <player>` is not touched).
 - Client-scope settings: `HostOptions::client_settings: Option<PathBuf>`; on a client host `settings_schema`,
   `set_setting` and the mod API read and write that file.
 - Server `SETTINGS_*`: `bhmod_core::netsettings::SettingsNet`: `join(host, player, is_admin, features)` ->
   `SETTINGS_SCHEMA` packets for an admin who listed `settings`; `receive_set(host, player, is_admin, set, now)` ->
-  the `SETTINGS_RESULT` packet (admin check, rate limit, validation, store); `refresh(host, is_admin)` -> schema
+  the `SETTINGS_RESULT` packet (admin check, rate limit, validation, store); `refresh(host, &is_admin)` -> schema
   updates for admins after any settings change; `leave(player)`.
 
 ### `bhmod-voice` (GPL, hosts only)
 
 - `bhmod_voice::server::VoiceServer` (shared as `SharedVoiceServer`, which implements `VoiceHost`): `join(player,
   features)`, `leave(player)`, `receive(now, player, &Message, lag_ms, sink)` for `VOICE_KEY`, `VOICE_CTRL`,
-  `VOICE_FRAME`, `receive_udp(now, datagram, bound, lag_ms, sink)`, `tick(now, sink)` (talk-stop, mute expiry,
+  `VOICE_FRAME`, `receive_udp(now, datagram, &bound, lag_ms, sink) -> Option<peer to bind>`, `udp_port()`, `tick(now, sink)` (talk-stop, mute expiry,
   `VOICE_STATE` deltas), `take_events() -> Vec<VoiceEvent>` (pass to `ModHost::voice_event`). `now` is Unix time in
   ms. Output goes to a `ServerSink` (`reliable(player, packet)`, `unsequenced(player, packet)`, `udp(peer, datagram)`).
 - `bhmod_voice::client::VoiceClient` (shared as `SharedVoiceClient`, which implements `VoiceHost`): `new(codec,
-  unsequenced)`, `start() -> VOICE_KEY packet`, `on_message(&Message)` (`VOICE_KEY` reply, `VOICE_STATE`,
+  unsequenced)`, `start() -> Option<VOICE_KEY packet>`, `on_message(&Message)` (`VOICE_KEY` reply, `VOICE_STATE`,
   `VOICE_FRAME`), `on_packet(&[u8])` (raw 0xBC), `on_udp(&[u8])`, `on_mic_frame(&[f32; 960 mono])`,
   `poll_send(now) -> Vec<Outgoing>` (`Reliable`, `Unsequenced`, `Udp`), `mix(&mut [f32] stereo)`, `mic_wanted()`,
   `mic_state(MicState)`, `transmitting() -> Option<Mode>` (host-drawn mic indicator), `take_events()`,
@@ -172,6 +193,6 @@ The session stays free of GPL code: it routes the new ops and the host feeds the
 
 | Host | Implements |
 | --- | --- |
-| blockheads-server | `GameBridge::voice` -> `SharedVoiceServer`; `tile_solid`, `world_width`; feeds `VOICE_*` 0xBC packets and the UDP socket to `VoiceServer`, calls `tick` each poll and forwards `take_events` to `ModHost::voice_event`; `SettingsNet` for `SETTINGS_*`; lists `voice` in `SERVER_HELLO.features` only when a loaded mod holds the `voice` permission, `settings` always with mods. |
-| PC client (blockheads-pc) | `GameBridge::voice` -> `SharedVoiceClient`; mic capture -> `on_mic_frame`, `poll_send` -> unsequenced ENet / UDP, `mix` -> audio out; `input` + `input_key` (key bindings, rebinding UI, file); new `UiCommand`s (overhead icons on the blockhead render path, buttons, settings screen); `client_settings` path; `Output::Voice`/`Settings*` from the session. |
+| blockheads-server | `GameBridge::voice` -> `SharedVoiceServer`; `tile_solid`, `world_width`, `platform`, `player_sleeping`, `player_alive`, `player_has_mod`; `ModHost::player_event` on sleep/wake/respawn; route `/mods settings|set` to `ModHost::settings_command`; feeds `VOICE_*` 0xBC packets and the UDP socket to `VoiceServer`, calls `tick` each poll and forwards `take_events` to `ModHost::voice_event`; `SettingsNet` for `SETTINGS_*`; lists `voice` in `SERVER_HELLO.features` only when a loaded mod holds the `voice` permission, `settings` always with mods. |
+| PC client (blockheads-pc) | `GameBridge::voice` -> `SharedVoiceClient`; `local_player`, `platform`, `has_touch`; `ModHost::ui_pick` on blockhead clicks; mic capture -> `on_mic_frame`, `poll_send` -> unsequenced ENet / UDP, `mix` -> audio out; `input` + `input_key` (key bindings, rebinding UI, file); new `UiCommand`s (overhead icons on the blockhead render path, buttons, settings screen); `client_settings` path; `Output::Voice`/`Settings*` from the session. |
 | Android loader (bhmod-android) | Same as PC with AAudio/OpenSL capture/playback, the draggable PTT button, the runtime `RECORD_AUDIO` prompt (`voice:mic`). |

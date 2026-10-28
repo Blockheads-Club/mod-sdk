@@ -722,6 +722,7 @@ fn newer_than_0_2_components(old_wasm: Vec<u8>) {
 fn api_0_3_4_imports() {
     let (_t, b, mut h) = one("vox", "[permissions]\nvoice = true\n", "[vox]\ngrant = [\"voice\"]\n");
     b.has_voice.set(true);
+    b.width.set(Some(64));
     b.solid.borrow_mut().push((2, 0));
     b.join("p1", "ALICE", Role::Admin);
     b.join("p2", "BOB", Role::Player);
@@ -741,10 +742,54 @@ fn api_0_3_4_imports() {
         "overhead = (Ok(()), true)",
         "button = (Ok(()), true)",
         "settings-screen = Ok(())",
+        "gaps = (\"test-linux-x86_64\", false, false, true, false)",
+        "gaps2 = (Some(64), false)",
+        "client-state = (true, Err(ApiError::Unsupported), Err(ApiError::Unsupported), Err(ApiError::Unsupported))",
     ] {
         assert!(log.contains(line), "missing {line:?} in\n{log}");
     }
     let calls = b.voice.take();
     assert!(calls.contains(&"allowed p1 6 2".to_string()), "{calls:?}");
     assert!(calls.iter().any(|c| c.starts_with("routes p1 [Route { listener: \"p2\", modes: 9")), "{calls:?}");
+}
+
+#[test]
+fn api_0_3_4_client_imports() {
+    let tmp = tempfile::tempdir().unwrap();
+    let d = tmp.path().join("vox");
+    fs::create_dir_all(d.join("client")).unwrap();
+    let toml = WASM_TOML
+        .replace("ID", "vox")
+        .replace("server = true\nclient = false", "server = false\nclient = true")
+        .replace(
+            "server = { runtime = \"wasm\", path = \"server/mod.wasm\" }",
+            "client = { runtime = \"wasm\", path = \"client/mod.wasm\" }",
+        );
+    fs::write(d.join("mod.toml"), format!("{toml}[permissions]\nvoice = true\n")).unwrap();
+    fs::write(d.join("client/mod.wasm"), guest_wasm()).unwrap();
+    fs::write(tmp.path().join("mods.toml"), "[vox]\ngrant = [\"voice\"]\n").unwrap();
+    let bridge = FakeBridge::new();
+    bridge.has_voice.set(true);
+    bridge.client.set(true);
+    *bridge.local.borrow_mut() = Some("p1".into());
+    bridge.join("p1", "ALICE", Role::Player);
+    bridge.join("p2", "BOB", Role::Player);
+    let mut opts = HostOptions::new(tmp.path(), Side::Client);
+    opts.runtimes = vec![Box::new(WasmRuntime::new(WasmConfig::default()).unwrap())];
+    opts.budgets.hard = std::time::Duration::from_secs(3);
+    opts.budgets.soft = opts.budgets.hard;
+    opts.budgets.step = opts.budgets.hard;
+    let mut h = ModHost::load(opts, bridge.clone());
+    h.enable("World", "wid");
+    let log = bridge.log_text();
+    assert_eq!(h.mods()[0].state, ModState::Enabled, "{log}");
+    for line in [
+        "talk = Ok(())",
+        "master = (Ok(()), Ok(75))",
+        "mute-player = (Ok(()), Ok(true))",
+        "client-state = (false, Ok(true), Ok(false), Ok(MicState::On))",
+        "bind = (Ok(()), true, None)",
+    ] {
+        assert!(log.contains(line), "missing {line:?} in\n{log}");
+    }
 }

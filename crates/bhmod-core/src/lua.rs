@@ -153,6 +153,8 @@ impl UserData for LuaPlayer {
             with_host(&this.sh, |h| h.player_kick(&this.id, &reason))?.map_err(api_err)
         });
         m.add_method("value_handle", |_, this, ()| with_host(&this.sh, |h| h.handle_of_player(&this.id)));
+        m.add_method("sleeping", |_, this, ()| with_host(&this.sh, |h| h.player_sleeping(&this.id)));
+        m.add_method("alive", |_, this, ()| with_host(&this.sh, |h| h.player_alive(&this.id)));
         m.add_method("pos", |lua, this, ()| match with_host(&this.sh, |h| h.player_pos(&this.id))? {
             Ok(Some(p)) => Ok(Value::Table(pos_table(lua, p)?)),
             _ => Ok(Value::Nil),
@@ -835,6 +837,22 @@ fn install_voice(b: &mut Builder, bh: &Table, sh: &Rc<Shared>) -> mlua::Result<(
     });
     let s = sh.clone();
     b.func(&v, "player_muted", move |_, who: Value| Ok(call(&s, VoiceCall::PlayerMuted(player_arg(&who)?))?.as_bool()));
+    let s = sh.clone();
+    b.func(&v, "allowed", move |lua, ()| {
+        let a = call(&s, VoiceCall::Allowed)?.as_allowance();
+        let t = lua.create_table()?;
+        let acts: Vec<&str> = Activation::from_mask(a.activations).into_iter().map(Activation::name).collect();
+        t.set("modes", Mode::from_mask(a.modes).into_iter().map(Mode::name).collect::<Vec<_>>())?;
+        t.set("activations", acts)?;
+        t.set("max_bitrate", a.max_bitrate)?;
+        Ok(t)
+    });
+    let s = sh.clone();
+    b.func(&v, "self_muted", move |_, ()| Ok(call(&s, VoiceCall::SelfMuted)?.as_bool()));
+    let s = sh.clone();
+    b.func(&v, "deafened", move |_, ()| Ok(call(&s, VoiceCall::Deafened)?.as_bool()));
+    let s = sh.clone();
+    b.func(&v, "mic", move |_, ()| Ok(call(&s, VoiceCall::Mic)?.as_mic().name()));
     bh.set("voice", v)?;
 
     let t = b.lua.create_table()?;
@@ -842,6 +860,8 @@ fn install_voice(b: &mut Builder, bh: &Table, sh: &Rc<Shared>) -> mlua::Result<(
     b.func(&t, "solid_count", move |_, (x1, y1, x2, y2): (i32, i32, i32, i32)| {
         with_host(&s, |h| h.terrain_solid_count(x1, y1, x2, y2))?.map_err(api_err)
     });
+    let s = sh.clone();
+    b.func(&t, "world_width", move |_, ()| with_host(&s, |h| h.terrain_world_width()));
     bh.set("terrain", t)?;
 
     let input = b.lua.create_table()?;
@@ -932,6 +952,8 @@ impl LuaInstance {
         host.set("current_side", lua.create_function(move |_, ()| with_host(&s, |h| h.current_side().name()))?)?;
         let s = sh.clone();
         host.set("host_name", lua.create_function(move |_, ()| with_host(&s, |h| h.host_name()))?)?;
+        let s = sh.clone();
+        host.set("platform", lua.create_function(move |_, ()| with_host(&s, |h| h.host_platform()))?)?;
         bh.set("host", host)?;
 
         let log = lua.create_table()?;
@@ -974,6 +996,16 @@ impl LuaInstance {
         let s = sh.clone();
         b.func(&players, "broadcast", move |_, text: String| {
             with_host(&s, |h| h.players_broadcast(&text))?.map_err(api_err)
+        });
+        let s = sh.clone();
+        b.func(&players, "local_player", move |lua, ()| match with_host(&s, |h| h.players_local())? {
+            Some(id) => Ok(Some(player(lua, &s, id)?)),
+            None => Ok(None),
+        });
+        let s = sh.clone();
+        b.func(&players, "has_mod", move |_, (who, m): (Value, String)| {
+            let id = player_arg(&who)?;
+            with_host(&s, |h| h.players_has_mod(&id, &m))
         });
         bh.set("players", players)?;
 
@@ -1283,6 +1315,8 @@ impl LuaInstance {
         });
         let s = sh.clone();
         b.func(&ui, "remove_button", move |_, id: String| with_host(&s, |h| h.ui_remove_button(&id)));
+        let s = sh.clone();
+        b.func(&ui, "has_touch", move |_, ()| with_host(&s, |h| h.ui_has_touch()));
         let s = sh.clone();
         b.func(&ui, "open_settings", move |_, id: String| with_host(&s, |h| h.ui_open_settings(&id))?.map_err(api_err));
         bh.set("ui", ui)?;

@@ -150,4 +150,38 @@ pub trait GameBridge {
         let _ = (mod_id, action);
         Some(default_key.to_string())
     }
+
+    /// The platform (API 0.3.4 `host.platform`): `<host>-<os>-<arch>` such as `android-armv7` or
+    /// `server-linux-x86_64`. The default is `unknown`.
+    fn platform(&self) -> String {
+        "unknown".into()
+    }
+
+    /// True while a player's blockhead sleeps (API 0.3.4). The default (hosts that do not track it) is false.
+    fn player_sleeping(&self, id: &str) -> bool {
+        let _ = id;
+        false
+    }
+
+    /// True while a player's blockhead is alive (API 0.3.4). The default (hosts that do not track it) is false.
+    fn player_alive(&self, id: &str) -> bool {
+        let _ = id;
+        false
+    }
+
+    /// The player of this client (API 0.3.4 `players.local-player`); `None` on the server (the default).
+    fn local_player(&self) -> Option<String> {
+        None
+    }
+
+    /// True when player `id`'s client runs mod `mod_id` (API 0.3.4 `players.has-mod`, servers). The default is false.
+    fn player_has_mod(&self, id: &str, mod_id: &str) -> bool {
+        let _ = (id, mod_id);
+        false
+    }
+
+    /// True when the device has a touch screen (API 0.3.4 `ui.has-touch`). The default is false.
+    fn has_touch(&self) -> bool {
+        false
+    }
 }
