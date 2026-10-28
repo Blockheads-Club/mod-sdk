@@ -11,7 +11,7 @@ api = "^0.3.4"
 [sides]
 server = true
 client = true
-# Players without the mod may join; they can neither hear nor talk (see the allow_vanilla setting).
+# Players without the mod may join (they neither hear nor talk); the admin's client-required override decides.
 client-required = false
 
 [entry]
@@ -20,17 +20,13 @@ client = { runtime = "wasm", path = "client/mod.wasm" }
 
 [permissions]
 voice = true
-# The client asks the server for its allowed modes (remote service call).
-channels = true
-# allow_vanilla = false: players without voice chat are kicked.
-players = ["kick"]
 
 [soft-dependencies]
 # Permission groups in the "who may talk" lists (node `group.<name>`).
 perms = "^1"
 
 [provides]
-services = [{ name = "voice", version = "1.0.0", wit = "wit/voice.wit", remote = true, remote-methods = ["info"] }]
+services = [{ name = "voice", version = "1.0.0", wit = "wit/voice.wit" }]
 
 # ---------------------------------------------------------------- server settings: modes
 
@@ -259,13 +255,6 @@ default = true
 group = "icons"
 label = { en = "Show the admin-mute icon", tr = "Yönetici susturma simgesini göster", ru = "Показывать значок мута от админа", kk = "Әкімші өшірген белгісін көрсету" }
 
-[settings.allow_vanilla]
-type = "bool"
-default = true
-group = "players"
-label = { en = "Players without voice chat may play", tr = "Sesli sohbeti olmayan oyuncular oynayabilir", ru = "Игроки без голосового чата могут играть", kk = "Дауыстық чатсыз ойыншылар ойнай алады" }
-help = { en = "Off: players who have no voice chat 20 seconds after joining are kicked.", tr = "Kapalı: katıldıktan 20 saniye sonra sesli sohbeti olmayan oyuncular atılır.", ru = "Выкл.: игроки без голосового чата через 20 секунд после входа исключаются.", kk = "Өшірулі: кіргеннен кейін 20 секундта дауыстық чаты жоқ ойыншылар шығарылады." }
-
 [settings.speaker_gain]
 type = "list"
 default = []
@@ -330,7 +319,7 @@ default = "auto"
 scope = "client"
 group = "client"
 label = { en = "On-screen talk button", tr = "Ekrandaki konuşma düğmesi", ru = "Кнопка речи на экране", kk = "Экрандағы сөйлеу батырмасы" }
-help = { en = "auto: on Android.", tr = "auto: Android'de.", ru = "auto: на Android.", kk = "auto: Android-та." }
+help = { en = "auto: on touch screens.", tr = "auto: dokunmatik ekranlarda.", ru = "auto: на сенсорных экранах.", kk = "auto: сенсорлы экрандарда." }
 
 [settings.button_size]
 type = "int"

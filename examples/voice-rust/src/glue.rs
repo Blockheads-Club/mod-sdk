@@ -17,6 +17,15 @@ pub fn wit_mode(m: Mode) -> wv::Mode {
     }
 }
 
+pub fn from_wit_mode(m: wv::Mode) -> Mode {
+    match m {
+        wv::Mode::Proximity => Mode::Proximity,
+        wv::Mode::Global => Mode::Global,
+        wv::Mode::Channel => Mode::Channel,
+        wv::Mode::Broadcast => Mode::Broadcast,
+    }
+}
+
 pub fn wit_activation(a: Activation) -> wv::Activation {
     match a {
         Activation::Ptt => wv::Activation::Ptt,

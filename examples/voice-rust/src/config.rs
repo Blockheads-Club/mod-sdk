@@ -92,8 +92,6 @@ pub struct ServerConfig {
     pub broadcast_overrides_deafen: bool,
     /// Overhead icon visibility.
     pub icons: Icons,
-    /// Players without the voice mod may stay.
-    pub allow_vanilla: bool,
     /// Per-speaker gain from the config: (player id or name, percent).
     pub speaker_gain: Vec<(String, u16)>,
 }
@@ -223,7 +221,6 @@ impl ServerConfig {
                 deafen: get_bool(v, "icon_deafen", true),
                 admin_mute: get_bool(v, "icon_admin_mute", true),
             },
-            allow_vanilla: get_bool(v, "allow_vanilla", true),
             speaker_gain,
         }
     }
@@ -237,7 +234,7 @@ impl ServerConfig {
 /// When the on-screen push-to-talk button shows.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ButtonMode {
-    /// On touch-screen hosts (Android).
+    /// On touch screens.
     Auto,
     /// Always.
     On,
@@ -317,12 +314,12 @@ impl ClientConfig {
         }
     }
 
-    /// Whether the on-screen button shows on a host named `host_name` (`host::host-name`).
-    pub fn shows_button(&self, host_name: &str) -> bool {
+    /// Whether the on-screen button shows on a device with (`ui::has-touch`) or without a touch screen.
+    pub fn shows_button(&self, has_touch: bool) -> bool {
         match self.button {
             ButtonMode::On => true,
             ButtonMode::Off => false,
-            ButtonMode::Auto => host_name.to_ascii_lowercase().contains("android"),
+            ButtonMode::Auto => has_touch,
         }
     }
 }
@@ -409,7 +406,7 @@ mod tests {
         assert_eq!((c.max_bitrate, c.max_speakers, c.max_frames_per_sec), (24000, 8, 60));
         assert_eq!((c.transport, c.udp_port), (Transport::Auto, None));
         assert!(c.channels.is_empty() && c.player_created && c.max_per_player == 1);
-        assert!(!c.broadcast_overrides_deafen && c.allow_vanilla && !c.dead_can_talk && !c.sleeping_can_talk);
+        assert!(!c.broadcast_overrides_deafen && !c.dead_can_talk && !c.sleeping_can_talk);
         assert_eq!(c.icons, Icons { speaking: true, no_voice: true, self_mute: true, deafen: true, admin_mute: true });
         assert!(c.speaker_gain.is_empty());
     }
@@ -489,7 +486,7 @@ mod tests {
         assert_eq!(c.mic, MicChoice::Ask);
         assert_eq!((c.default_mode, c.activation, c.vad_threshold), (Mode::Proximity, Activation::Ptt, -45.0));
         assert_eq!((c.master_volume, c.button, c.button_size, c.button_opacity), (100, ButtonMode::Auto, 72, 70));
-        assert!(c.shows_button("bhmod-android 0.3") && !c.shows_button("blockheads-pc 0.1"));
+        assert!(c.shows_button(true) && !c.shows_button(false));
         let c = ClientConfig::from_value(&map(vec![
             ("mic", text("on")),
             ("default_mode", text("global")),
@@ -500,10 +497,10 @@ mod tests {
         ]));
         assert_eq!((c.mic, c.default_mode, c.activation), (MicChoice::On, Mode::Global, Activation::Vad));
         assert_eq!((c.vad_threshold, c.master_volume), (-30.0, 150));
-        assert!(c.shows_button("pc"));
+        assert!(c.shows_button(false));
         let c = ClientConfig::from_value(&map(vec![("mic", text("off")), ("button", text("off"))]));
         assert_eq!(c.mic, MicChoice::Off);
-        assert!(!c.shows_button("android"));
+        assert!(!c.shows_button(true));
         assert_eq!([MicChoice::Ask.name(), MicChoice::On.name(), MicChoice::Off.name()], ["ask", "on", "off"]);
     }
 }

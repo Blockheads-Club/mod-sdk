@@ -22,11 +22,11 @@ description = "Жақын ойыншылармен, арнаңызбен нем�
 version = "0.1.0"
 # Draft: release tag, sha256 and size come from `bhmod pack examples/voice-rust` of the released build.
 url = "https://github.com/Blockheads-Club/mod-sdk/releases/download/mods-2026.10.28/voice-0.1.0.bhmod"
-sha256 = "fdc047f1e04b3f76e67bd0c05d759b922cd377744d4a6024644fff4c2c1277bb"
-size = 257816
+sha256 = "077cbfda43920a41f4b75cedf76e678a5253760911f8b8ae5dc5458e4c0b3ecb"
+size = 247476
 sides = ["server", "client"]
 client-required = false
 api = "^0.3.4"
 soft-depends = { perms = "^1" }
-permissions = { voice = true, channels = true, players = ["kick"] }
+permissions = { voice = true }
 published = 2026-10-28

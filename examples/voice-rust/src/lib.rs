@@ -2,7 +2,7 @@
 //!
 //! - **Server** (`src/server.rs`): talk modes, the role × mode matrix (with permission groups of the `perms` mod), routes
 //!   at 5 Hz (proximity falloff, pan, muffling; global; channels; broadcast), channels, `/voice` admin commands,
-//!   persisted mutes and gains, caps, transport, icon visibility, players without voice.
+//!   persisted mutes and gains, caps, transport, icon visibility.
 //! - **Client** (`src/client.rs`): push-to-talk keys per mode, the Android push-to-talk button with a long-press mode
 //!   picker, overhead icons, the microphone opt-in, the volume dialog and `/voicevol`.
 //!

@@ -1,23 +1,10 @@
 package blockheads-club:voice@1.0.0;
 
-/// The `voice` service of the voice chat mod (server side). `info` is callable from clients (`remote = true`); the
-/// channel methods are for other server mods (clans, teams) that put players into voice channels.
+/// The `voice` service of the voice chat mod (server side, local): other server mods (clans, teams) put players into
+/// voice channels.
 interface voice {
     /// A connected player (host handle).
     type player = u64;
-
-    /// What the server allows the calling client.
-    record info {
-        /// Talk modes the caller may use: `proximity`, `global`, `channel`, `broadcast`.
-        modes: list<string>,
-        /// Activations the server allows: `ptt`, `vad`, `toggle`.
-        activations: list<string>,
-        /// The caller's voice channel.
-        channel: option<string>,
-    }
-
-    /// The calling player's allowed modes, activations and channel (remote calls from clients only).
-    info: func() -> info;
 
     /// The player's voice channel.
     channel-of: func(who: player) -> option<string>;
