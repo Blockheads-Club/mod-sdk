@@ -202,15 +202,30 @@ Content declared in `[content]` and cosmetics, see [content.md](content.md). `ki
   (its `base` block carrying the variant's id). Server only; the tile must be loaded.
 - `bh.content.block_at(x, y) -> string?` (0.3.2): the variant block key at a tile, `nil` for a plain block.
 
+### `bh.settings` (0.3.3)
+
+The mod's own settings, declared as `[settings.<key>]` in `mod.toml` and set by the admin (see
+[settings.md](settings.md)). Values are plain Luau values: booleans, numbers, strings, a list of role names
+(`roles`), `{ [row] = { [col] = cell } }` (`matrix`) and a list of tables (`list`).
+
+- `bh.settings.get(key) -> any`: the current value; `nil` for a key the mod does not declare.
+- `bh.settings.all() -> { [string]: any }`: every setting.
+- `bh.settings.set(key, value)`: changes one setting. The value is checked against the declaration (an error raises
+  `invalid argument: <key>: <why>`), stored in `mods.toml` and announced like an admin change.
+- After every change (admin command, host app, an edit of `mods.toml`, or `set`) the host fires the custom event
+  `<mod-id>:settings-changed` with the payload `{ keys = { ... } }`. Subscribe with
+  `bh.events.on_custom("<mod-id>:settings-changed", fn)`; other mods may listen to it too.
+
 ## API versions
 
-The host implements `blockheads:api@0.3.2` (`bh.host.api_version()`) and also serves 0.3.1, 0.3.0, 0.2 and 0.1: in 0.x a new
+The host implements `blockheads:api@0.3.3` (`bh.host.api_version()`) and also serves 0.3.2, 0.3.1, 0.3.0, 0.2 and 0.1: in 0.x a new
 minor only adds events, functions and fields, so a mod with `api = "^0.1"` keeps loading and running unchanged. A mod
 that uses anything from 0.2 declares `api = "^0.2"`, one that uses `bh.ui` or `bh.content` declares `api = "^0.3"`, one
 that uses remote services (`bh.services.call_remote`) or `remote = true` declares `api = "^0.3.1"`. 0.3.1 is a patch
 release because it only adds (a function group in `services`, no new export, no changed type): components built for
 0.3.0 link and run on a 0.3.1 host without a new binding, which wasmtime matches semver-compatibly. 0.3.2 adds the
-same way `bh.content.give_item`, `place_block` and `block_at` (a mod that uses them declares `api = "^0.3.2"`). WASM hosts bind the
+same way `bh.content.give_item`, `place_block` and `block_at` (a mod that uses them declares `api = "^0.3.2"`), and
+0.3.3 the `settings` interface with `[settings]` in `mod.toml` (`api = "^0.3.3"`). WASM hosts bind the
 frozen 0.2 and 0.1 WIT in [`../wit/compat/blockheads-api-0.2.0/`](../wit/compat/blockheads-api-0.2.0/) and
 [`../wit/compat/blockheads-api-0.1.0/`](../wit/compat/blockheads-api-0.1.0/) for components built against them.
 

@@ -175,6 +175,12 @@ declare bh: {
 		delete: (key: string) -> boolean,
 		keys: (prefix: string?) -> { string },
 	},
+	-- API 0.3.3: the mod's own [settings]; changes fire the custom event "<mod-id>:settings-changed" { keys = { string } }.
+	settings: {
+		get: (key: string) -> any,
+		all: () -> { [string]: any },
+		set: (key: string, value: any) -> (),
+	},
 	services: {
 		provide: (name: string, version: string, methods: { [string]: (...any) -> any }) -> (),
 		call: (name: string, version_req: string, method: string, ...any) -> any,

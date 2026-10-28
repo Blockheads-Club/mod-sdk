@@ -37,7 +37,7 @@ input always gives the same bytes and the same SHA-256.
 ## Semantic `mod.toml` rules (beyond the JSON Schema)
 
 - `[provides]` services are local by default; `remote = true` (API 0.3.1) makes a service callable from the other side over the network, `remote-methods = ["a", "b"]` limits that to some methods (empty = all). See [luau-api.md](luau-api.md#remote-services-api-031).
-- `api` must match one of the API versions the SDK serves (`0.1.0`, `0.2.0`, `0.3.0`, `0.3.1`, `0.3.2`; see [luau-api.md](luau-api.md#api-versions)); `loader` and dependency versions must be semver requirements.
+- `api` must match one of the API versions the SDK serves (`0.1.0`, `0.2.0`, `0.3.0`, `0.3.1`, `0.3.2`, `0.3.3`; see [luau-api.md](luau-api.md#api-versions)); `loader` and dependency versions must be semver requirements.
 - Each enabled side needs exactly one entry point inside `<side>/` (not `<side>/native/`); a disabled side must not have one.
 - Runtime and extension match: `wasm` → `.wasm`, `lua` → `.luau`, `jvm` → `.jar`. `jvm` needs `permissions.native = true`; the jar's manifest names the entry class (`Bhmod-Main`, else `Main-Class`) and may carry `classes.dex` for Android (see [jvm.md](jvm.md)).
 - No self-dependency; an id may not be in both `dependencies` and `soft-dependencies`.
@@ -46,4 +46,10 @@ input always gives the same bytes and the same SHA-256.
   `<id>:<name>`, unique; textures are PNGs under `assets/`. A cosmetic's `slot` is one of `hat`, `shirt`, `pants`,
   `shoes`, `hair`, `weapon`; `base` is a known vanilla item of that slot; `texture-arm` is for `shirt` only
   ([content.md](content.md)).
-- `client-required` defaults to `sides.client`.
+- `client-required` defaults to `sides.client`. The server admin may override it in `mods.toml`
+  (`[<id>] client-required = false`), except for mods with `[content]`.
+- `[settings.<key>]` (API 0.3.3): keys match `[a-z0-9_]{1,48}`, at most 128 settings; `type` is one of `bool`, `int`,
+  `float`, `enum`, `string`, `roles`, `matrix`, `list`; `default` and `label` are required and the default must be a
+  valid value; the per-type keys (`min`/`max`/`step`, `values`, `max_length`, `rows`/`cols`/`cell`,
+  `item`/`max_items`) are only allowed on their type; `item` fields cannot be lists and have no
+  `group`/`scope`/`restart`. Details: [settings.md](settings.md).
