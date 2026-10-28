@@ -10,6 +10,7 @@ authors.workspace = true
 publish = false
 
 [dependencies]
+bhmod-core = { path = "../bhmod-core", default-features = false }
 bhmod-proto.workspace = true
 sha2.workspace = true
 hmac = "0.12"
