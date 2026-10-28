@@ -20,8 +20,6 @@ pub struct Hud {
     pressed: BTreeSet<String>,
     /// Settings screens mods asked to open (`ui.open-settings`), oldest first.
     pub open_settings: Vec<String>,
-    /// Players on the server as the voice state lists them (a client has no other player list).
-    pub players: BTreeSet<String>,
 }
 
 impl Hud {
@@ -78,23 +76,8 @@ impl Hud {
         hits
     }
 
-    /// A `VOICE_STATE`: a full one replaces the player list, a delta adds players and removes the `gone` ones.
-    pub fn voice_state(&mut self, full: bool, players: &BTreeMap<String, String>) {
-        if full {
-            self.players.clear();
-        }
-        for (p, state) in players {
-            if state == "gone" {
-                self.players.remove(p);
-            } else {
-                self.players.insert(p.clone());
-            }
-        }
-    }
-
     /// Forgets everything (the mods stopped).
     pub fn clear(&mut self) {
-        self.players.clear();
         self.board.clear_all();
         self.bindings.clear();
         self.pressed.clear();
@@ -140,12 +123,6 @@ mod tests {
         assert!(h.binding_mods().is_empty());
         h.board.set("voice", "p", "speaking");
         h.open_settings.push("voice".into());
-        let state = |v: &[(&str, &str)]| v.iter().map(|(a, b)| (a.to_string(), b.to_string())).collect();
-        h.voice_state(true, &state(&[("a", "ready"), ("b", "none")]));
-        h.voice_state(false, &state(&[("a", "gone"), ("c", "talking")]));
-        assert_eq!(h.players.iter().collect::<Vec<_>>(), ["b", "c"]);
-        h.voice_state(true, &state(&[("d", "ready")]));
-        assert_eq!(h.players.len(), 1);
         h.clear();
         assert!(!h.board.active() && h.open_settings.is_empty());
     }

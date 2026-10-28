@@ -94,6 +94,20 @@ pub struct Accepted {
     pub manifest: Manifest,
 }
 
+/// An optional client mod this loader could not run (it was left out; the join went ahead without it), e.g. one
+/// that needs a newer API or loader. The host tells the player once per join ([`Output::Skipped`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SkippedMod {
+    /// The mod id.
+    pub id: String,
+    /// The version the server listed.
+    pub version: String,
+    /// The display names from `MOD_LIST` (language code -> name).
+    pub name: std::collections::BTreeMap<String, String>,
+    /// Why it was left out.
+    pub refusal: Refusal,
+}
+
 /// Why the modded join stopped. The host disconnects (or lets the server reject) and shows the text.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Failure {
@@ -212,6 +226,9 @@ pub enum Output {
     SettingsSchema(SettingsSchema),
     /// (API 0.3.4) The answer to a [`Session::settings_set`] (`SETTINGS_RESULT`), one per set, in order.
     SettingsResult(SettingsResult),
+    /// Optional client mods this loader could not run and left out (after [`Output::Load`], only when there are
+    /// any): tell the player, e.g. "update the mod loader to use it".
+    Skipped(Vec<SkippedMod>),
 }
 
 #[derive(Debug, Clone)]
@@ -600,6 +617,7 @@ impl Session {
 
     fn check_all(&mut self, hello: ServerHello, list: ModList, selected: &[usize]) -> Vec<Output> {
         let mut ok = Vec::new();
+        let mut skipped = Vec::new();
         for m in selected.iter().map(|&i| &list.mods[i]) {
             let path = self.cache.get(&m.sha256).expect("downloaded or cached");
             let bytes = match std::fs::read(&path) {
@@ -616,6 +634,12 @@ impl Session {
                 Ok(manifest) => ok.push(Accepted { info: m.clone(), path, manifest }),
                 Err(refusal) => {
                     if !m.client_required {
+                        skipped.push(SkippedMod {
+                            id: m.id.clone(),
+                            version: m.version.clone(),
+                            name: m.name.clone(),
+                            refusal,
+                        });
                         continue;
                     }
                     return self.fail(Failure::Refused { id: m.id.clone(), refusal });
@@ -623,7 +647,11 @@ impl Session {
             }
         }
         self.state = State::Loading { hello };
-        vec![Output::Load(ok)]
+        let mut out = vec![Output::Load(ok)];
+        if !skipped.is_empty() {
+            out.push(Output::Skipped(skipped));
+        }
+        out
     }
 
     /// The packages of [`Output::Load`] started (`Ok` with the `(id, version)` of every running mod) or not.

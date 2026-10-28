@@ -86,7 +86,6 @@ impl<P: Platform + 'static> Loader<P> {
         self.slot.set(None);
         self.udp = None;
         self.modes = None;
-        self.hud.borrow_mut().players.clear();
     }
 
     fn save_prefs(&mut self, link: &dyn VoiceLink) {
@@ -161,7 +160,6 @@ impl<P: Platform + 'static> Loader<P> {
     /// `Output::Voice`: the allowed modes go to the picker, everything to the voice client.
     pub(super) fn on_voice_message(&mut self, m: &Message) {
         if let Message::VoiceState(s) = m {
-            self.hud.borrow_mut().voice_state(s.full, &s.players);
             if let Some(mask) = s.modes.filter(|x| self.modes != Some(*x)) {
                 self.modes = Some(mask);
                 self.p.ui(ui::voice_modes(&Mode::from_mask(mask)));
@@ -188,7 +186,8 @@ impl<P: Platform + 'static> Loader<P> {
             admin_mute: icons.admin_mute,
         });
         let active = hud.board.active();
-        self.tracker.set_active(active);
+        // Blockheads are tracked for the icons and, while mods run, for taps on them (`ui-pick`).
+        self.tracker.set_active(active || self.host.is_some());
         if active {
             let players: BTreeSet<&str> = hud.board.players().into_iter().collect();
             let heads = self.p.camera().map(|c| self.tracker.heads(now, &players, &c)).unwrap_or_default();
@@ -200,6 +199,15 @@ impl<P: Platform + 'static> Loader<P> {
             self.overhead_shown = false;
             hud.board.reset_post();
             self.p.ui(serde_json::json!({"t": "overhead", "items": []}).to_string());
+        }
+    }
+
+    /// A tap on the game: the blockhead under it, if any, is picked for the mods.
+    pub(super) fn on_tap(&mut self, x: f32, y: f32) {
+        let Some(cam) = self.p.camera() else { return };
+        let Some(player) = self.tracker.pick(self.p.now_ms(), &cam, x, y) else { return };
+        if let Some(h) = self.host.as_mut() {
+            h.ui_pick(&player);
         }
     }
 
@@ -245,14 +253,26 @@ impl<P: Platform + 'static> Loader<P> {
                 default_key,
             })
             .collect();
-        let master = if self.voice_mods.contains(mod_id) { self.slot.master().ok() } else { None };
+        let voice = self.slot.get().filter(|_| self.voice_mods.contains(mod_id)).map(|l| ui::VoiceSection {
+            master: l.master().unwrap_or(100),
+            players: l
+                .speakers()
+                .into_iter()
+                .map(|id| ui::PlayerVolume {
+                    name: l.alias(&id).unwrap_or_else(|| id.clone()),
+                    volume: l.player_volume(&id).unwrap_or(100),
+                    muted: l.player_muted(&id).unwrap_or(false),
+                    id,
+                })
+                .collect(),
+        });
         let server = self.server_forms.get(mod_id);
         self.settings_open = Some(mod_id.to_string());
-        self.p.ui(ui::settings_screen(mod_id, client.as_ref(), &keys, master, server));
+        self.p.ui(ui::settings_screen(mod_id, client.as_ref(), &keys, voice.as_ref(), server));
     }
 
     fn setting_failed(&self, mod_id: &str, message: &str) {
-        self.p.ui(ui::settings_result(mod_id, false, Some(message), false));
+        self.p.ui(ui::settings_result(mod_id, None, false, Some(message), false));
     }
 
     /// A change in the settings screen.
@@ -265,7 +285,7 @@ impl<P: Platform + 'static> Loader<P> {
                 let Some(h) = self.host.as_mut() else { return self.setting_failed(mod_id, "no mods are running") };
                 match h.set_setting(mod_id, key, &value) {
                     Ok(_) => {
-                        self.p.ui(ui::settings_result(mod_id, true, None, false));
+                        self.p.ui(ui::settings_result(mod_id, Some(key), true, None, false));
                         self.open_settings(mod_id);
                     }
                     Err(e) => self.setting_failed(mod_id, &e.to_string()),
@@ -290,23 +310,31 @@ impl<P: Platform + 'static> Loader<P> {
                     Err(e) => self.setting_failed(mod_id, &e.to_string()),
                 }
             }
-            "voice" => {
-                let r = value
-                    .as_u64()
-                    .and_then(|n| u16::try_from(n).ok())
-                    .ok_or(ApiError::InvalidArgument("volume must be 0 to 200".into()));
-                match r.and_then(|n| {
-                    if n > bhmod_core::voice::MAX_PERCENT {
-                        return Err(ApiError::InvalidArgument("volume must be 0 to 200".into()));
-                    }
-                    self.slot.set_master(n)
-                }) {
-                    Ok(()) => self.open_settings(mod_id),
-                    Err(e) => self.setting_failed(mod_id, &e.to_string()),
-                }
-            }
+            "voice" => match self.set_voice(key, &value) {
+                Ok(()) => self.open_settings(mod_id),
+                Err(e) => self.setting_failed(mod_id, &e.to_string()),
+            },
             _ => self.setting_failed(mod_id, "unknown section"),
         }
+    }
+
+    /// A voice volume from the settings screen: `master`, `player:<id>` (0-200) or `mute:<id>` (bool).
+    fn set_voice(&self, key: &str, value: &Value) -> Result<(), ApiError> {
+        let percent = || {
+            value
+                .as_u64()
+                .filter(|n| *n <= u64::from(bhmod_core::voice::MAX_PERCENT))
+                .map(|n| n as u16)
+                .ok_or(ApiError::InvalidArgument("volume must be 0 to 200".into()))
+        };
+        if let Some(p) = key.strip_prefix("player:") {
+            return self.slot.set_player_volume(p, percent()?);
+        }
+        if let Some(p) = key.strip_prefix("mute:") {
+            let on = value.as_bool().ok_or(ApiError::InvalidArgument("mute is true or false".into()))?;
+            return self.slot.mute_player(p, on);
+        }
+        self.slot.set_master(percent()?)
     }
 
     /// `SETTINGS_SCHEMA`: the server's settings of a mod (this player is an admin).
@@ -326,13 +354,12 @@ impl<P: Platform + 'static> Loader<P> {
 
     /// `SETTINGS_RESULT`: the answer to the last server setting change.
     pub(super) fn on_settings_result(&mut self, r: &SettingsResult) {
-        let m = self.settings_open.clone().unwrap_or_default();
-        match &r.outcome {
-            Ok(()) => self.p.ui(ui::settings_result(&m, true, None, false)),
-            Err(f) => {
-                let text = f.message.clone().unwrap_or_else(|| format!("refused (code {})", f.code));
-                self.setting_failed(&m, &text);
-            }
-        }
+        // Servers before API 0.3.4 do not name the setting: the answer then belongs to the open screen.
+        let m = r.mod_id.clone().or_else(|| self.settings_open.clone()).unwrap_or_default();
+        let (ok, text) = match &r.outcome {
+            Ok(()) => (true, None),
+            Err(f) => (false, Some(f.message.clone().unwrap_or_else(|| format!("refused (code {})", f.code)))),
+        };
+        self.p.ui(ui::settings_result(&m, r.key.as_deref(), ok, text.as_deref(), false));
     }
 }

@@ -1,7 +1,7 @@
 //! UI commands for the Java side, as JSON objects with a `t` (type) key. The Java UI renders them with the in-game
 //! kit; texts are translated there from the codes.
 
-use bhmod_client::session::{Failure, Offer};
+use bhmod_client::session::{Failure, Offer, SkippedMod};
 use bhmod_client::Refusal;
 use bhmod_core::ui::{Button, UiCommand};
 use bhmod_core::voice::Mode;
@@ -83,6 +83,15 @@ pub fn failed(server: &str, f: &Failure, loader: &str) -> String {
     v.to_string()
 }
 
+/// Optional server mods this loader could not run (told once per join): `voice` is named "voice chat" by the UI.
+pub fn skipped(server: &str, mods: &[SkippedMod]) -> String {
+    let list: Vec<Value> = mods
+        .iter()
+        .map(|m| json!({"id": m.id, "version": m.version, "name": m.name, "refusal": m.refusal.code()}))
+        .collect();
+    json!({"t": "skipped", "server": server, "mods": list}).to_string()
+}
+
 /// The server's rejection text.
 pub fn reject(server: &str, r: &RejectText) -> String {
     json!({"t": "reject", "server": server, "reason": r.reason_code, "text": r.text, "url": r.url}).to_string()
@@ -158,6 +167,28 @@ pub struct KeyRow {
     pub is_default: bool,
 }
 
+/// One player of the voice volume list.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PlayerVolume {
+    /// The player id.
+    pub id: String,
+    /// The alias.
+    pub name: String,
+    /// 0-200 %.
+    pub volume: u16,
+    /// Locally muted.
+    pub muted: bool,
+}
+
+/// The voice section of the settings screen (mods holding `voice`): the master volume and every speaker's.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VoiceSection {
+    /// 0-200 %.
+    pub master: u16,
+    /// Players with a voice session.
+    pub players: Vec<PlayerVolume>,
+}
+
 /// A settings form: `({"fields": [...]}, {key: value})`.
 pub type Form = (Value, Value);
 
@@ -171,7 +202,7 @@ pub fn settings_screen(
     mod_id: &str,
     client: Option<&Form>,
     keys: &[KeyRow],
-    master: Option<u16>,
+    voice: Option<&VoiceSection>,
     server: Option<&Form>,
 ) -> String {
     let keys: Vec<Value> = keys
@@ -181,14 +212,18 @@ pub fn settings_screen(
     json!({
         "t": "settings", "mod": mod_id, "name": mod_id,
         "client": client.map(form), "server": server.map(form), "keys": keys,
-        "voice": master.map(|m| json!({"master": m})),
+        "voice": voice.map(|v| json!({
+            "master": v.master,
+            "players": v.players.iter().map(|p| json!({"id": p.id, "name": p.name, "volume": p.volume, "muted": p.muted})).collect::<Vec<_>>(),
+        })),
     })
     .to_string()
 }
 
-/// The answer to a setting change (`message` shown when it failed; `restart`: applies after a restart).
-pub fn settings_result(mod_id: &str, ok: bool, message: Option<&str>, restart: bool) -> String {
-    json!({"t": "settings-result", "mod": mod_id, "ok": ok, "message": message, "restart": restart}).to_string()
+/// The answer to a setting change of `key` (`message` shown when it failed; `restart`: applies after a restart).
+pub fn settings_result(mod_id: &str, key: Option<&str>, ok: bool, message: Option<&str>, restart: bool) -> String {
+    json!({"t": "settings-result", "mod": mod_id, "key": key, "ok": ok, "message": message, "restart": restart})
+        .to_string()
 }
 
 #[cfg(test)]
@@ -273,6 +308,22 @@ mod tests {
     }
 
     #[test]
+    fn skipped_shape() {
+        let m = SkippedMod {
+            id: "voice".into(),
+            version: "1.0.0".into(),
+            name: [("en".to_string(), "Voice".to_string())].into(),
+            refusal: Refusal::NeedsNewerApi("^0.4".into()),
+        };
+        let x = v(skipped("h:1", &[m]));
+        assert_eq!(
+            (x["mods"][0]["id"].as_str(), x["mods"][0]["refusal"].as_str()),
+            (Some("voice"), Some("needs-newer-api"))
+        );
+        assert_eq!(x["mods"][0]["name"]["en"], "Voice");
+    }
+
+    #[test]
     fn voice_and_settings_shapes() {
         assert_eq!(v(mic_indicator(Some(Mode::Global)))["mode"], "global");
         assert_eq!(v(mic_indicator(None))["on"], false);
@@ -280,7 +331,10 @@ mod tests {
         assert_eq!(v(mic_denied())["t"], "voice-denied");
         let form: Form = (json!({"fields": [{"key": "a"}]}), json!({"a": 1}));
         let keys = [KeyRow { action: "talk".into(), key: None, default_key: "v".into(), is_default: false }];
-        let s = v(settings_screen("voice", Some(&form), &keys, Some(120), None));
+        let pv = PlayerVolume { id: "p1".into(), name: "ALICE".into(), volume: 50, muted: true };
+        let vs = VoiceSection { master: 120, players: vec![pv] };
+        let s = v(settings_screen("voice", Some(&form), &keys, Some(&vs), None));
+        assert_eq!(s["voice"]["players"][0]["name"], "ALICE");
         assert_eq!(s["client"]["fields"][0]["key"], "a");
         assert_eq!(s["client"]["values"]["a"], 1);
         assert!(s["server"].is_null());
@@ -289,7 +343,8 @@ mod tests {
         let s = v(settings_screen("m", None, &[], None, Some(&(json!({}), json!({})))));
         assert_eq!(s["server"]["fields"], json!([]));
         assert!(s["voice"].is_null());
-        let r = v(settings_result("m", false, Some("bad"), false));
+        let r = v(settings_result("m", Some("k"), false, Some("bad"), false));
+        assert_eq!(r["key"], "k");
         assert_eq!((r["ok"].as_bool(), r["message"].as_str()), (Some(false), Some("bad")));
     }
 }

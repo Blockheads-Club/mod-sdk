@@ -248,6 +248,9 @@ impl Platform for AndroidPlatform {
     fn camera(&self) -> Option<crate::overhead::Camera> {
         overhead::camera(world())
     }
+    fn local_player(&self) -> Option<String> {
+        local_player()
+    }
 }
 
 /// Runs `f` on the loader (created on first use), then the deferred game calls. `None` off the loader thread.
@@ -826,4 +829,15 @@ pub extern "system" fn Java_com_blockheadsclub_modloader_Native_settingSet(
         json: push_str(&mut env, &json),
     };
     push_ui(ev);
+}
+
+/// `Native.tap(x, y)`: a touch on the game started there (screen fractions).
+#[no_mangle]
+pub extern "system" fn Java_com_blockheadsclub_modloader_Native_tap(
+    _env: JNIEnv,
+    _c: JClass,
+    x: jni::sys::jfloat,
+    y: jni::sys::jfloat,
+) {
+    push_ui(UiEvent::Tap(x, y));
 }

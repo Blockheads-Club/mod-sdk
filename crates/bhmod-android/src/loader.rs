@@ -75,6 +75,8 @@ pub trait Platform {
     fn send_unsequenced(&self, packet: &[u8]) -> bool;
     /// The game's world-to-screen transform now (overhead icons); `None` outside a world.
     fn camera(&self) -> Option<Camera>;
+    /// This client's own player id while connected to a server.
+    fn local_player(&self) -> Option<String>;
 }
 
 /// Makes the voice client of a new voice-enabled connection.
@@ -168,6 +170,8 @@ pub enum UiEvent {
     MicPermission(bool),
     /// The host's push-to-talk seam (`Native.ptt`): talk in the default mode.
     Ptt(bool),
+    /// A tap on the game at screen fractions `x`, `y` (a blockhead there is picked: `<mod-id>:ui-pick`).
+    Tap(f32, f32),
 }
 
 /// Builds the runtimes for a new host.
@@ -202,11 +206,20 @@ impl<P: Platform> GameBridge for Bridge<P> {
         self.p.log(level, &format!("[{}] {message}", mod_id.unwrap_or("loader")));
     }
     fn online_players(&self) -> Vec<String> {
-        self.hud.borrow().players.iter().cloned().collect()
+        // A client knows the other players from the voice state (`VOICE_STATE.names`).
+        self.slot.get().map(|l| l.players().into_iter().map(|(id, _)| id).collect()).unwrap_or_default()
     }
     fn player_alias(&self, id: &str) -> Option<String> {
-        // A client knows the players only by id (from the voice state); the id stands in for the name.
-        self.hud.borrow().players.contains(id).then(|| id.to_string())
+        self.slot.get()?.alias(id)
+    }
+    fn local_player(&self) -> Option<String> {
+        self.p.local_player()
+    }
+    fn platform(&self) -> String {
+        crate::PLATFORM.to_string()
+    }
+    fn has_touch(&self) -> bool {
+        true
     }
     fn player_role(&self, _id: &str) -> Role {
         Role::Player
@@ -495,6 +508,7 @@ impl<P: Platform + 'static> Loader<P> {
             UiEvent::Ptt(down) => {
                 let _ = self.slot.talk(None, down);
             }
+            UiEvent::Tap(x, y) => self.on_tap(x, y),
         }
         self.flush_outbox();
     }
@@ -703,6 +717,11 @@ impl<P: Platform + 'static> Loader<P> {
                 Output::Voice(m) => self.on_voice_message(&m),
                 Output::SettingsSchema(s) => self.on_settings_schema(&s),
                 Output::SettingsResult(r) => self.on_settings_result(&r),
+                Output::Skipped(mods) => {
+                    let ids: Vec<&str> = mods.iter().map(|m| m.id.as_str()).collect();
+                    self.p.log(LogLevel::Warn, &format!("optional mods this loader cannot run: {ids:?}"));
+                    self.p.ui(ui::skipped(&self.server, &mods));
+                }
                 Output::Cosmetics(c) => {
                     let changed = self.content_lock().apply(&c);
                     self.p.log(

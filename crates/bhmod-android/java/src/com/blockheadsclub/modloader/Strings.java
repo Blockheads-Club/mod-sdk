@@ -257,10 +257,16 @@ final class Strings {
         p("settings_none", "This mod has no settings.", "Bu modun ayarı yok.", "У этого мода нет настроек.", "Бұл модтың баптауы жоқ.");
         p("settings_saved", "Saved", "Kaydedildi", "Сохранено", "Сақталды");
         p("settings_restart", "Applies after a restart", "Yeniden başlatınca geçerli", "Применится после перезапуска", "Қайта іске қосқанда қолданылады");
+        p("settings_mute", "Mute {name}", "{name} sessiz", "Заглушить {name}", "{name} дыбысын өшіру");
         p("key_none", "None", "Yok", "Нет", "Жоқ");
         p("key_press", "Press a key…", "Bir tuşa bas…", "Нажми клавишу…", "Пернені бас…");
         p("key_default", "Default", "Varsayılan", "По умолчанию", "Әдепкі");
         p("save", "Save", "Kaydet", "Сохранить", "Сақтау");
+        p("voice_chat", "voice chat", "sesli sohbet", "голосовой чат", "дауыстық чат");
+        p("skipped_mods", "This server has {mods}: update the mod loader to use it.",
+            "Bu sunucuda {mods} var: kullanmak için mod yükleyiciyi güncelle.",
+            "На этом сервере есть {mods}: обнови загрузчик модов, чтобы пользоваться.",
+            "Бұл серверде {mods} бар: қолдану үшін мод жүктегішті жаңарт.");
         p("skip", "Skip", "Geç", "Пропустить", "Өткізу");
         p("next", "Next", "İleri", "Далее", "Келесі");
         p("play", "Play", "Oyna", "Играть", "Ойнау");

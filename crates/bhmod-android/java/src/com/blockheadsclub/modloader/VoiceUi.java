@@ -80,6 +80,7 @@ final class VoiceUi {
 
     /** The world closed or the overlay is rebuilt: everything goes. */
     static void clearAll() {
+        watchTaps(false);
         for (String k : new ArrayList<>(buttons.keySet())) removeButton(k);
         overhead(Overlay.activity(), null);
         if (indicator != null && Overlay.root != null) Overlay.root.removeView(indicator);
@@ -363,6 +364,38 @@ final class VoiceUi {
             }
             if (withLabel) c.drawText(label, r, px * 0.86f, text);
         }
+    }
+
+    // ---- taps on blockheads (ui-pick) --------------------------------------------------------------------------
+
+    private static View watcher;
+
+    /**
+     * While a world is open, a 1-pixel window with {@code FLAG_WATCH_OUTSIDE_TOUCH} sees where every touch on the
+     * game starts (same app, so the coordinates are kept) without taking it; the native side picks the blockhead
+     * under it.
+     */
+    static void watchTaps(boolean on) {
+        Activity a = Overlay.activity();
+        if (watcher != null) Overlay.remove(watcher);
+        watcher = null;
+        if (!on || a == null) return;
+        View v = new View(a);
+        v.setOnTouchListener(new View.OnTouchListener() {
+            public boolean onTouch(View w, MotionEvent e) {
+                if (e.getActionMasked() != MotionEvent.ACTION_OUTSIDE) return false;
+                Activity act = Overlay.activity();
+                if (act == null) return false;
+                final float x = e.getRawX() / screenW(act), y = e.getRawY() / screenH(act);
+                Native.ok(new Runnable() { public void run() { Native.tap(x, y); } });
+                return false;
+            }
+        });
+        WindowManager.LayoutParams lp = Overlay.params(1, 1, WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+            | WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL | WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH);
+        lp.gravity = Gravity.TOP | Gravity.START;
+        watcher = v;
+        Overlay.add(v, lp);
     }
 
     // ---- overhead icons ----------------------------------------------------------------------------------------

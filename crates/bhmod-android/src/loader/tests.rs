@@ -73,6 +73,9 @@ impl Platform for Fake {
     fn camera(&self) -> Option<Camera> {
         self.camera.get()
     }
+    fn local_player(&self) -> Option<String> {
+        Some("me".into())
+    }
 }
 
 impl Fake {
@@ -529,8 +532,16 @@ fn bridge_answers() {
     b.ui("m", &UiCommand::OpenSettings { mod_id: "other".into() }).unwrap();
     assert_eq!(b.hud.borrow().open_settings, vec!["other".to_string()]);
     assert!(b.voice().is_none());
-    b.slot.set(Some(Rc::new(crate::voice::link::fake::FakeLink::default())));
+    let link = Rc::new(crate::voice::link::fake::FakeLink::default());
+    link.names.borrow_mut().push(("p1".into(), "ALICE".into()));
+    b.slot.set(Some(link));
     assert!(b.voice().is_some());
+    assert_eq!(b.online_players(), ["p1"]);
+    assert_eq!(b.player_alias("p1").as_deref(), Some("ALICE"));
+    assert_eq!(b.player_alias("x"), None);
+    assert_eq!(b.local_player().as_deref(), Some("me"));
+    assert_eq!(b.platform(), "android-armv7");
+    assert!(b.has_touch());
     let bind = InputCommand::Bind { action: "talk".into(), default_key: "v".into() };
     assert_eq!(b.input("m", &bind), Ok(()));
     assert_eq!(b.input_key("m", "talk", "v"), Some("v".into()));
@@ -764,6 +775,7 @@ function mod.on_enable()
         bh.log.info("key " .. ev.payload.action .. " " .. tostring(ev.payload.pressed))
     end)
     bh.events.on_custom("voice:mic", function(ev) bh.log.info("mic " .. ev.payload.state) end)
+    bh.events.on_custom("voice:mode", function(ev) bh.log.info("mode " .. ev.payload.mode) end)
     bh.events.on_custom("voice:state", function(ev)
         local p = bh.players.get(ev.payload.player)
         if p then
@@ -772,6 +784,7 @@ function mod.on_enable()
         end
     end)
     bh.events.on_custom("vtest:settings-changed", function(_ev) bh.log.info("settings changed") end)
+    bh.events.on_custom("vtest:ui-pick", function(ev) bh.log.info("picked " .. ev.payload.player) end)
 end
 return mod
 "#;
@@ -903,6 +916,7 @@ fn voice_flows_through_the_pipeline_and_the_mods() {
     assert_eq!(ui_of(&r, "voice-modes")[0]["modes"], serde_json::json!(["proximity", "channel"]));
     assert_eq!(link.messages.borrow().len(), 3);
     // a state event: the mod puts an icon over p1 and asks for its settings screen
+    link.names.borrow_mut().push(("p1".into(), "ALICE".into()));
     link.events.borrow_mut().push(VoiceEvent::State { player: "p1".into(), state: CoreState::Talking });
     r.p.now.set(100);
     r.l.on_frame();
@@ -919,6 +933,15 @@ fn voice_flows_through_the_pipeline_and_the_mods() {
     r.l.on_frame();
     let heads = ui_of(&r, "overhead");
     assert_eq!(heads.last().unwrap()["items"][0]["icons"][0], "speaking", "{heads:?}");
+    // a tap on p1's blockhead picks it for the mods; a tap elsewhere or without a camera picks nobody
+    let at = heads.last().unwrap()["items"][0].clone();
+    let (hx, hy) = (at["x"].as_f64().unwrap() as f32, at["y"].as_f64().unwrap() as f32);
+    r.l.on_ui(UiEvent::Tap(hx, hy + 0.05));
+    assert!(r.p.logged("picked p1"), "{:?}", r.p.logs.borrow());
+    r.l.on_ui(UiEvent::Tap(0.0, 0.0));
+    r.p.camera.set(None);
+    r.l.on_ui(UiEvent::Tap(hx, hy + 0.05));
+    r.p.camera.set(Some(Camera { projection: p, modelview: id, viewport: [0, 0, 100, 50] }));
     // the admin hides "speaking": the icon goes, and the tracking stops once no icon is left
     link.icons.set(Some(Icons { speaking: false, ..Default::default() }));
     r.p.now.set(300);
@@ -928,6 +951,8 @@ fn voice_flows_through_the_pipeline_and_the_mods() {
     r.l.on_ui(UiEvent::VoiceMode("global".into()));
     r.l.on_ui(UiEvent::VoiceMode("shout".into()));
     assert_eq!(link.default_mode.get(), Some(Mode::Global));
+    r.l.on_frame();
+    assert!(r.p.logged("mode global"), "the picker fires voice:mode");
     r.l.on_ui(UiEvent::Ptt(false));
     assert_eq!(link.talks.borrow().last(), Some(&(None, false)));
     // a dropped button is remembered on the device
@@ -969,6 +994,7 @@ fn the_settings_screen_sets_client_keys_voice_and_server_values() {
     assert_eq!(screen["client"]["fields"][0]["key"], "ring");
     assert_eq!(screen["keys"][0]["key"], "v");
     assert_eq!(screen["voice"]["master"], 0);
+    assert!(screen["voice"]["players"].as_array().unwrap().is_empty());
     assert!(screen["server"].is_null());
     // client scope: stored on the device, the mod hears about it
     let set = |r: &mut Rig, scope: &str, key: &str, json: &str| {
@@ -1001,6 +1027,15 @@ fn the_settings_screen_sets_client_keys_voice_and_server_values() {
     set(&mut r, "voice", "master", "250");
     set(&mut r, "voice", "master", "\"x\"");
     assert_eq!(last_result(&r)["ok"], false);
+    link.speaking.borrow_mut().extend(["p1".to_string(), "p2".to_string()]);
+    link.names.borrow_mut().push(("p1".into(), "ALICE".into()));
+    set(&mut r, "voice", "player:p1", "40");
+    set(&mut r, "voice", "mute:p2", "true");
+    let players = ui_of(&r, "settings").last().unwrap()["voice"]["players"].clone();
+    assert_eq!((players[0]["name"].as_str(), players[0]["volume"].as_u64()), (Some("ALICE"), Some(40)));
+    assert_eq!((players[1]["name"].as_str(), players[1]["muted"].as_bool()), (Some("p2"), Some(true)));
+    set(&mut r, "voice", "mute:p2", "3");
+    assert_eq!(last_result(&r)["ok"], false);
     set(&mut r, "other", "x", "1");
     assert_eq!(last_result(&r)["message"], "unknown section");
     // server scope: the admin gets the form; a change goes out as SETTINGS_SET; the answer comes back
@@ -1021,10 +1056,19 @@ fn the_settings_screen_sets_client_keys_voice_and_server_values() {
     r.p.sent.borrow_mut().clear();
     set(&mut r, "server", "radius", "64");
     assert!(matches!(&r.p.msgs()[..], [Message::SettingsSet(s)] if s.key == "radius"));
-    r.l.handle(vec![Output::SettingsResult(bhmod_proto::SettingsResult { outcome: Ok(()) })]);
-    assert_eq!(last_result(&r)["ok"], true);
+    r.l.handle(vec![Output::SettingsResult(bhmod_proto::SettingsResult {
+        outcome: Ok(()),
+        mod_id: Some("vtest".into()),
+        key: Some("radius".into()),
+    })]);
+    assert_eq!((last_result(&r)["ok"].as_bool(), last_result(&r)["key"].as_str()), (Some(true), Some("radius")));
     let refused = SettingsFailure { code: 1, message: None };
-    r.l.handle(vec![Output::SettingsResult(bhmod_proto::SettingsResult { outcome: Err(refused) })]);
+    r.l.handle(vec![Output::SettingsResult(bhmod_proto::SettingsResult {
+        outcome: Err(refused),
+        mod_id: None,
+        key: None,
+    })]);
+    assert_eq!(last_result(&r)["mod"], "vtest", "an old server: the open screen's mod");
     assert_eq!(last_result(&r)["message"], "refused (code 1)");
     // after leaving the world: nothing runs, the server is gone
     r.l.on_world(None);
@@ -1035,7 +1079,7 @@ fn the_settings_screen_sets_client_keys_voice_and_server_values() {
     r.l.on_ui(UiEvent::Button { mod_id: "vtest".into(), id: "ptt".into(), action: "press".into() });
     r.l.on_ui(UiEvent::Key("v".into(), true));
     r.l.on_ui(UiEvent::MicPermission(true));
-    r.l.handle(vec![Output::SettingsResult(bhmod_proto::SettingsResult { outcome: Ok(()) })]);
+    r.l.handle(vec![Output::SettingsResult(bhmod_proto::SettingsResult { outcome: Ok(()), mod_id: None, key: None })]);
     // the unsaved device: a button position and prefs that cannot be written are logged
     std::fs::remove_dir_all(&r.dirs.device).unwrap();
     std::fs::write(&r.dirs.device, b"file").unwrap();
@@ -1110,4 +1154,20 @@ fn denial_failures_udp_trouble_and_disconnect() {
     assert!(r.p.logged("preferences not saved"));
     assert!(r.l.slot.get().is_none());
     r.l.on_frame();
+}
+
+#[test]
+fn skipped_optional_mods_are_told_to_the_player() {
+    let mut r = rig();
+    r.l.on_contact("h:1");
+    let m = bhmod_client::session::SkippedMod {
+        id: "voice".into(),
+        version: "1.0.0".into(),
+        name: Default::default(),
+        refusal: bhmod_client::Refusal::NeedsNewerApi("^0.4".into()),
+    };
+    r.l.handle(vec![Output::Skipped(vec![m])]);
+    assert!(r.p.logged("cannot run: [\"voice\"]"));
+    let s = ui_of(&r, "skipped");
+    assert_eq!((s[0]["server"].as_str(), s[0]["mods"][0]["id"].as_str()), (Some("h:1"), Some("voice")));
 }

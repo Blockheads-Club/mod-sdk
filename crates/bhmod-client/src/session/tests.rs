@@ -429,7 +429,13 @@ fn refusals_decline_and_load_failure() {
     wo.client_required = false;
     let mut r = cache_ready(vec![demo.clone(), wo], true);
     let out = r.s.decide(true, 0);
-    assert!(matches!(&out[..], [Output::Load(v)] if v.len() == 1));
+    assert!(
+        matches!(&out[..], [Output::Load(v), Output::Skipped(s)] if v.len() == 1 && s[0].id == "wasmmod"),
+        "{out:?}"
+    );
+    let Output::Skipped(s) = &out[1] else { panic!() };
+    assert_eq!((s[0].version.as_str(), s[0].refusal.code()), ("1.0.0", s[0].refusal.code()));
+    assert_eq!(s[0].name, w.name);
     assert!(matches!(&r.s.loaded(Err("boom".into()))[..], [Output::Failed(Failure::LoadFailed(_))]));
     // a cached package that cannot be read
     let mut r = cache_ready(vec![demo.clone()], true);

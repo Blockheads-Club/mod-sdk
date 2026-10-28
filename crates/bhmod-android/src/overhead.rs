@@ -22,6 +22,9 @@ pub const HEAD_TILES: f32 = 2.4;
 /// A blockhead not updated for this long is gone (milliseconds).
 pub const STALE_MS: u64 = 1000;
 
+/// A tap this close to a blockhead's body (fraction of the screen height) picks it.
+pub const PICK_RADIUS: f32 = 0.08;
+
 /// Positions are posted at most this often (milliseconds), and only when something moved.
 pub const POST_MS: u64 = 33;
 
@@ -279,6 +282,22 @@ impl Tracker {
         self.len() == 0
     }
 
+    /// The player whose blockhead (updated within [`STALE_MS`]) is nearest to the tap at screen fractions `(x, y)`,
+    /// within [`PICK_RADIUS`] of its body centre (one tile above `renderPos`).
+    pub fn pick(&self, now: u64, cam: &Camera, x: f32, y: f32) -> Option<String> {
+        let s = self.lock();
+        let (w, h) = (cam.viewport[2].max(1) as f32, cam.viewport[3].max(1) as f32);
+        let mut best: Option<(f32, &str)> = None;
+        for e in s.values().filter(|e| now.saturating_sub(e.at) <= STALE_MS) {
+            let Some((fx, fy)) = cam.project(e.render.0, e.render.1 + unit(e.render.1, e.tile.1)) else { continue };
+            let d = ((fx - x) * w).hypot((fy - y) * h) / h;
+            if d <= PICK_RADIUS && best.is_none_or(|(bd, _)| d < bd) {
+                best = Some((d, &e.player));
+            }
+        }
+        best.map(|(_, p)| p.to_string())
+    }
+
     /// Screen positions of the heads of `players`' blockheads updated within [`STALE_MS`] (older ones are dropped),
     /// sorted by player then position.
     pub fn heads(&self, now: u64, players: &BTreeSet<&str>, cam: &Camera) -> Vec<(String, f32, f32)> {
@@ -421,6 +440,22 @@ mod tests {
         t.set_active(false);
         assert!(!t.active() && t.is_empty());
         t.set_active(false);
+    }
+
+    #[test]
+    fn taps_pick_the_nearest_blockhead() {
+        let t = Tracker::new();
+        let c = cam(); // 100 x 50 world units on an 800 x 400 viewport
+        t.report(1, "near", (50.0, 24.0), (0, 0), 0); // body centre (50, 25): the middle of the screen
+        t.report(2, "far", (53.0, 24.0), (0, 0), 0); // 3 units right: 0.06 of the height away
+        t.report(3, "off", (500.0, 24.0), (0, 0), 0);
+        t.report(4, "old", (49.5, 24.0), (0, 0), 0);
+        assert_eq!(t.pick(500, &c, 0.5, 0.5).as_deref(), Some("near"));
+        assert_eq!(t.pick(500, &c, 0.53, 0.5).as_deref(), Some("far"));
+        assert_eq!(t.pick(500, &c, 0.9, 0.1), None);
+        assert_eq!(t.pick(500, &c, 0.49, 0.5).as_deref(), Some("old"));
+        t.report(1, "near", (50.0, 24.0), (0, 0), 2000);
+        assert_eq!(t.pick(2000, &c, 0.49, 0.5).as_deref(), Some("near"), "only fresh blockheads");
     }
 
     #[test]

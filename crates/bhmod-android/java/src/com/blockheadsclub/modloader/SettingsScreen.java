@@ -86,6 +86,21 @@ final class SettingsScreen {
             } catch (org.json.JSONException ignored) {
             }
             body.addView(row(a, "voice", f, voice.opt("master")), Kit.fill());
+            JSONArray ps = voice.optJSONArray("players");
+            for (int i = 0; ps != null && i < ps.length(); i++) {
+                JSONObject p = ps.optJSONObject(i);
+                if (p == null) continue;
+                String id = p.optString("id");
+                try {
+                    JSONObject vol = new JSONObject().put("key", "player:" + id).put("type", "int").put("min", 0).put("max", 200)
+                        .put("step", 5).put("label", p.optString("name", id) + " %");
+                    body.addView(row(a, "voice", vol, p.opt("volume")), Kit.fill());
+                    JSONObject mute = new JSONObject().put("key", "mute:" + id).put("type", "bool")
+                        .put("label", Strings.t("settings_mute", "name", p.optString("name", id)));
+                    body.addView(row(a, "voice", mute, p.opt("muted")), Kit.fill());
+                } catch (org.json.JSONException ignored) {
+                }
+            }
             any = true;
         }
         JSONArray keys = c.optJSONArray("keys");
