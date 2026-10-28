@@ -12,11 +12,24 @@ pub fn package(id: &str, version: &str, perms: &str, entry: &str, src: &str) -> 
 
 /// Like [`package`] with extra files (`path`, bytes).
 pub fn package_files(id: &str, version: &str, perms: &str, entry: &str, src: &str, files: &[(&str, &[u8])]) -> Vec<u8> {
+    package_api(id, version, "^0.2", perms, entry, src, files)
+}
+
+/// Like [`package_files`] for API `api` (`perms` may go on with more tables after the permissions).
+pub fn package_api(
+    id: &str,
+    version: &str,
+    api: &str,
+    perms: &str,
+    entry: &str,
+    src: &str,
+    files: &[(&str, &[u8])],
+) -> Vec<u8> {
     let t = tempfile::tempdir().unwrap();
     let rt = if entry.ends_with(".wasm") { "wasm" } else { "lua" };
     let toml = format!(
         "schema = 1\nid = \"{id}\"\nversion = \"{version}\"\nname = {{ en = \"Demo {id}\" }}\nauthors = [\"t\"]\n\
-         license = \"MIT\"\napi = \"^0.2\"\n\n[sides]\nclient = true\nserver = true\n\n[entry]\n\
+         license = \"MIT\"\napi = \"{api}\"\n\n[sides]\nclient = true\nserver = true\n\n[entry]\n\
          client = {{ runtime = \"{rt}\", path = \"{entry}\" }}\nserver = {{ runtime = \"lua\", path = \"server/main.luau\" }}\n\n\
          [permissions]\nchannels = true\n{perms}"
     );

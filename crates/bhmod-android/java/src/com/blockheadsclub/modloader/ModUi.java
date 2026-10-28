@@ -259,5 +259,6 @@ final class ModUi {
             if (key.startsWith(mod + "/")) remove(key);
         }
         if (mod.equals(dialogMod)) closeDialog(false);
+        VoiceUi.clearMod(mod);
     }
 }

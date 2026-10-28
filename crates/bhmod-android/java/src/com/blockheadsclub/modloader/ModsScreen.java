@@ -138,9 +138,22 @@ final class ModsScreen {
                     content.addView(row, Kit.margins(Kit.fill(), 0, 0, 0, Kit.u(a, 2)));
                 }
                 content.addView(Kit.small(a, Strings.t("apply_note")), Kit.fill());
+                settingsButtons(a);
                 jvmSwitch(a);
             }
         });
+    }
+
+    /** In a world: a Settings button for every running mod that has a settings screen (server mods too). */
+    static void settingsButtons(Activity a) {
+        JSONArray ids = Overlay.running;
+        if (!Overlay.inWorld || ids == null || ids.length() == 0) return;
+        for (int i = 0; i < ids.length(); i++) {
+            final String id = ids.optString(i);
+            content.addView(Kit.button(a, Strings.t("settings") + ": " + id, Kit.Kind.SEC, new View.OnClickListener() {
+                public void onClick(View v) { Native.ok(new Runnable() { public void run() { Native.openSettings(id); } }); }
+            }), Kit.margins(Kit.fill(), 0, Kit.u(a, 2), 0, 0));
+        }
     }
 
     /** The flag file the native loader reads at start; present = JVM mods (unsandboxed) are on. Off by default. */
@@ -415,6 +428,7 @@ final class ModsScreen {
             o.put("players", p.optJSONArray("players") == null ? new JSONArray() : p.optJSONArray("players"));
             o.put("netHttp", p.optJSONArray("net-http") == null ? new JSONArray() : p.optJSONArray("net-http"));
             o.put("channels", p.optBoolean("channels"));
+            o.put("voice", p.optBoolean("voice"));
             o.put("native", p.optBoolean("native"));
         } catch (Exception ignored) {
         }
