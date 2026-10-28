@@ -126,7 +126,7 @@ impl SettingType {
 /// Where a setting belongs.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum Scope {
-    /// Set by the server admin (host app, `/mod set`, the in-game admin screen). The default.
+    /// Set by the server admin (host app, `/mods set`, the in-game admin screen). The default.
     #[default]
     Server,
     /// Set by each player for themselves (the loader's settings screen), stored on the client.
@@ -804,7 +804,7 @@ fn check(f: &Field, v: &Json, path: &str) -> Result<Json, SettingsError> {
     }
 }
 
-/// Parses what an admin typed (`/mod set <id> <key> <value>`) for `field` and validates it: `bool` takes
+/// Parses what an admin typed (`/mods set <id> <key> <value>`) for `field` and validates it: `bool` takes
 /// `true/false/on/off/yes/no/1/0`, `int` and `float` a number, `enum` and `string` the text as it is, `roles` a
 /// comma-separated list or a JSON list, `matrix` and `list` JSON.
 pub fn parse_input(field: &Field, text: &str) -> Result<Json, SettingsError> {

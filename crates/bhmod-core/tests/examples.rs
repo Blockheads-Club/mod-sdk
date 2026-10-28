@@ -396,11 +396,11 @@ fn settings_lua() {
     );
     h.fire(Event::PlayerJoin { player: "p2".into() });
     assert_eq!(b.take_chats().len(), 3, "staff see the staff rule too");
-    let set = h.command(player("p2"), "/mod set settings-lua greeting Hi {name}, again");
+    let set = h.settings_command(true, &["set", "settings-lua", "greeting", "Hi", "{name},", "again"]);
     assert_eq!(set, Some(vec!["settings-lua: greeting = \"Hi {name}, again\".".to_string()]));
     assert!(b.has_log("settings changed: greeting"));
     assert_eq!(
-        h.command(player("p2"), "/mod set settings-lua repeat 2"),
+        h.settings_command(true, &["set", "settings-lua", "repeat", "2"]),
         Some(vec!["settings-lua: repeat = 2.".into()])
     );
     assert_eq!(h.command(player("p1"), "/greetme"), Some(vec![]));
@@ -410,7 +410,7 @@ fn settings_lua() {
     );
     assert_eq!(
         h.command(player("p2"), "/quiet"),
-        Some(vec!["Greetings are off. /mod set settings-lua enabled true turns them on.".to_string()])
+        Some(vec!["Greetings are off. /mods set settings-lua enabled true turns them on.".to_string()])
     );
     assert_eq!(h.command(player("p1"), "/greetme"), Some(vec![]));
     assert!(b.take_chats().is_empty());

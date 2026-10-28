@@ -2,7 +2,7 @@
 
 A mod declares the settings its admin can change in `mod.toml`. The host stores the values in `mods.toml`, checks
 them against the declaration, gives them to the mod (`bh.settings`, the WIT `settings` interface) and tells the mod
-when they change. The same declaration drives every editor: `/mod set` in chat or on the console, the Settings tab of
+when they change. The same declaration drives every editor: `/mods set` in chat or on the console, the Settings tab of
 the Blockheads Server app and (later) the in-game admin screen.
 
 ## Declaring settings
@@ -92,18 +92,24 @@ talk = { proximity = { admin = true, everyone = true }, global = { admin = true,
 - Edits of `mods.toml` while the game runs are picked up within a second. A file that does not parse changes nothing
   (an error is logged and the old values stay). `enabled`, `grant` and `client-required` still need `/mods reload`
   or a restart.
-- Changes made through the host (`/mod set`, the host app, `bh.settings.set`) are written back to `mods.toml`, touching
+- Changes made through the host (`/mods set`, the host app, `bh.settings.set`) are written back to `mods.toml`, touching
   only that one key: comments, the order and the other mods stay. A value set back to its default is removed.
 
 ## Changing settings
 
 - **Chat or console** (admins and the console only):
-  - `/mod settings <mod>` lists the values.
-  - `/mod set <mod> <key> <value>`: `bool` takes `true/false/on/off/yes/no/1/0`, `int` and `float` a number, `enum`
+  - `/mods settings <mod>` lists the values.
+  - `/mods set <mod> <key> <value>`: `bool` takes `true/false/on/off/yes/no/1/0`, `int` and `float` a number, `enum`
     and `string` the rest of the line, `roles` `owner, admin` or a JSON list, `matrix` and `list` JSON
-    (`/mod set voice talk {"proximity": {"admin": true, "everyone": false}, "global": {"admin": true, "everyone": false}}`).
+    (`/mods set voice talk {"proximity": {"admin": true, "everyone": false}, "global": {"admin": true, "everyone": false}}`).
 - **The mod itself**: `bh.settings.set(key, value)` (WIT `settings.set`), its own keys only.
+  These are subcommands of the server's own `/mods` command (next to `/mods reload|list|timings`); the vanilla
+  `/mod <player>` (add a moderator) stays the game's. A host program routes them with
+  `ModHost::settings_command(is_admin, &args)` (`None` for other subcommands).
 - **Host programs**: `ModHost::set_setting(id, key, &json)` (or `set_setting_cbor` with a canonical CBOR value).
+- **In-game admin screen** (API 0.3.4): 0xBC `SETTINGS_SCHEMA` / `SETTINGS_SET` / `SETTINGS_RESULT`, served by
+  `bhmod_core::netsettings::SettingsNet` on the server. Client-scope settings (`scope = "client"`) are stored on the
+  player's device instead (see [voice.md](voice.md)).
 
 Every change that alters a value fires the custom event `<mod-id>:settings-changed` with the payload
 `{"keys": [...]}`; other mods can subscribe to it too.

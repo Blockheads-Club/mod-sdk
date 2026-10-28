@@ -1,4 +1,4 @@
-//! Mod settings (API 0.3.3): values in `mods.toml`, `bh.settings`, `settings-changed`, `/mod settings` and `/mod set`,
+//! Mod settings (API 0.3.3): values in `mods.toml`, `bh.settings`, `settings-changed`, `/mods settings` and `/mods set`,
 //! hot reload of `mods.toml` edits and the `client-required` override.
 
 mod common;
@@ -172,14 +172,23 @@ fn mods_read_and_change_their_settings() {
     assert_eq!(seen, ["radius;channels;gain;radius"]);
 }
 
+/// The server's `/mods ...` line routed to `ModHost::settings_command`.
+fn mods(h: &mut ModHost, admin: bool, line: &str) -> Vec<String> {
+    let args: Vec<&str> = line.trim_start_matches("/mods").split_whitespace().collect();
+    h.settings_command(admin, &args).unwrap()
+}
+
 #[test]
 fn admin_commands() {
     let s = setup("");
     let mut h = s.host();
     s.bridge.join("p1", "ADMIN", Role::Admin);
     s.bridge.join("p2", "BOB", Role::Moderator);
-    assert!(h.owns_command("/mod settings cfg") && h.owns_command("/MOD"));
-    let out = console(&mut h, "/mod settings cfg");
+    assert!(!h.owns_command("/mod settings cfg"), "the vanilla /mod <player> stays the game's");
+    assert_eq!(h.command(CommandSender::Console, "/mod p1"), None);
+    assert_eq!(h.settings_command(true, &["reload"]), None, "the server's own /mods subcommands");
+    assert_eq!(h.settings_command(true, &[] as &[&str]), None);
+    let out = mods(&mut h, true, "/mods settings cfg");
     assert_eq!(
         out,
         [
@@ -191,23 +200,22 @@ fn admin_commands() {
             "channels = []"
         ]
     );
-    assert_eq!(console(&mut h, "/mod settings watcher"), ["watcher has no settings."]);
-    assert_eq!(console(&mut h, "/mod settings nope"), ["No mod nope is loaded."]);
-    assert_eq!(console(&mut h, "/mod set nope a 1"), ["No mod nope is loaded."]);
-    assert_eq!(console(&mut h, "/mod set cfg nope 1"), ["cfg has no setting nope (see /mod settings cfg)."]);
-    assert_eq!(console(&mut h, "/mod set cfg radius 100"), ["cfg: radius = 100."]);
-    assert_eq!(console(&mut h, "/mod set cfg gain 1.5"), ["cfg: gain = 1.5. It takes effect after a restart."]);
-    assert_eq!(console(&mut h, "/mod set cfg who owner, admin"), ["cfg: who = [\"owner\",\"admin\"]."]);
-    let talk = r#"/mod set cfg talk {"global": {"admin": false, "everyone": true}}"#;
-    assert_eq!(console(&mut h, talk), ["cfg: talk = {\"global\":{\"admin\":false,\"everyone\":true}}."]);
-    assert_eq!(console(&mut h, "/mod set cfg radius 1"), ["Not changed: radius: must be at least 4"]);
-    for usage in ["/mod", "/mod set cfg radius", "/mod list", "/mod settings"] {
-        assert_eq!(console(&mut h, usage), ["Usage: /mod settings <mod> | /mod set <mod> <key> <value>"]);
+    assert_eq!(mods(&mut h, true, "/mods settings watcher"), ["watcher has no settings."]);
+    assert_eq!(mods(&mut h, true, "/mods settings nope"), ["No mod nope is loaded."]);
+    assert_eq!(mods(&mut h, true, "/mods set nope a 1"), ["No mod nope is loaded."]);
+    assert_eq!(mods(&mut h, true, "/mods set cfg nope 1"), ["cfg has no setting nope (see /mods settings cfg)."]);
+    assert_eq!(mods(&mut h, true, "/mods set cfg radius 100"), ["cfg: radius = 100."]);
+    assert_eq!(mods(&mut h, true, "/mods set cfg gain 1.5"), ["cfg: gain = 1.5. It takes effect after a restart."]);
+    assert_eq!(mods(&mut h, true, "/mods set cfg who owner, admin"), ["cfg: who = [\"owner\",\"admin\"]."]);
+    let talk = r#"/mods set cfg talk {"global": {"admin": false, "everyone": true}}"#;
+    assert_eq!(mods(&mut h, true, talk), ["cfg: talk = {\"global\":{\"admin\":false,\"everyone\":true}}."]);
+    assert_eq!(mods(&mut h, true, "/mods set cfg radius 1"), ["Not changed: radius: must be at least 4"]);
+    for usage in ["/mods set cfg radius", "/mods settings", "/mods set"] {
+        assert_eq!(mods(&mut h, true, usage), ["Usage: /mods settings <mod> | /mods set <mod> <key> <value>"]);
     }
-    let admin = h.command(CommandSender::Player("p1".into()), "/mod set cfg radius 8").unwrap();
-    assert_eq!(admin, ["cfg: radius = 8."]);
-    let modr = h.command(CommandSender::Player("p2".into()), "/mod set cfg radius 9").unwrap();
-    assert_eq!(modr, ["You do not have permission to use /mod."]);
+    assert_eq!(mods(&mut h, true, "/mods set cfg radius 8"), ["cfg: radius = 8."]);
+    let modr = mods(&mut h, false, "/mods set cfg radius 9");
+    assert_eq!(modr, ["You do not have permission to change mod settings."]);
     assert_eq!(h.settings_values("cfg").unwrap()["radius"], json!(8));
     let text = read(&s.mods);
     assert!(
@@ -228,20 +236,20 @@ fn admin_commands() {
 }
 
 #[test]
-fn mods_cannot_take_the_mod_command() {
+fn mods_may_register_mod_and_the_host_owns_nothing_cold() {
     let s = setup("");
     lua_mod(
         &s.mods,
         "thief",
         "",
-        "local m = {}\nfunction m.on_enable()\n assert(not pcall(bh.commands.register, { name = \"x\", aliases = { \"mod\" }, usage = \"\" }, function() end))\nend\nreturn m\n",
+        "local m = {}\nfunction m.on_enable()\n assert(pcall(bh.commands.register, { name = \"x\", aliases = { \"mod\" }, usage = \"\" }, function() end))\nend\nreturn m\n",
     );
     let h = s.host();
     assert!(!s.bridge.has_log("on-enable failed"), "{}", s.bridge.log_text());
     assert_eq!(h.mods().len(), 3);
     // Before the world is loaded the host owns nothing.
     let cold = ModHost::load(HostOptions::new(&s.mods, Side::Server), s.bridge.clone());
-    assert!(!cold.owns_command("/mod settings cfg"));
+    assert!(!cold.owns_command("/x"));
 }
 
 #[test]
