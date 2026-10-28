@@ -126,8 +126,12 @@ pub fn json_to_toml_value(v: &Json) -> Option<toml::Value> {
 /// Writes one stored setting of mod `id` into `mods.toml` in `dir` (`None` removes it, so the default applies),
 /// keeping everything else in the file (comments, other mods, order). An invalid file is not touched.
 pub fn write_setting(dir: &Path, id: &str, key: &str, value: Option<&Json>) -> Result<(), String> {
-    let path = dir.join(FILE_NAME);
-    let text = match std::fs::read_to_string(&path) {
+    write_setting_at(&dir.join(FILE_NAME), id, key, value)
+}
+
+/// [`write_setting`] for a file at `path` with the `mods.toml` layout (the clients' device settings file).
+pub fn write_setting_at(path: &Path, id: &str, key: &str, value: Option<&Json>) -> Result<(), String> {
+    let text = match std::fs::read_to_string(path) {
         Ok(t) => t,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
         Err(e) => return Err(format!("cannot read {}: {e}", path.display())),
@@ -160,7 +164,7 @@ pub fn write_setting(dir: &Path, id: &str, key: &str, value: Option<&Json>) -> R
     if table.is_empty() {
         doc.remove(id);
     }
-    std::fs::write(&path, doc.to_string()).map_err(|e| format!("cannot write {}: {e}", path.display()))
+    std::fs::write(path, doc.to_string()).map_err(|e| format!("cannot write {}: {e}", path.display()))
 }
 
 /// The whole file: mod id -> settings.
@@ -206,6 +210,9 @@ pub fn required_permissions(p: &Permissions) -> Vec<String> {
     out.extend(p.net_http.iter().map(|h| format!("net-http:{h}")));
     if p.channels {
         out.push("channels".to_string());
+    }
+    if p.voice {
+        out.push("voice".to_string());
     }
     if p.native {
         out.push("native".to_string());
@@ -349,6 +356,7 @@ client = { runtime = \"lua\", path = \"client/a.luau\" }\n";
             ],
             net_http: vec!["api.example.com".into()],
             channels: true,
+            voice: true,
             native: true,
         };
         let req = required_permissions(&all);
@@ -364,6 +372,7 @@ client = { runtime = \"lua\", path = \"client/a.luau\" }\n";
                 "players:health",
                 "net-http:api.example.com",
                 "channels",
+                "voice",
                 "native"
             ]
         );

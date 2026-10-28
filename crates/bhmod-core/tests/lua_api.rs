@@ -28,7 +28,7 @@ local seen = {}
 
 function mod.on_enable()
     assert(util.double(2) == 4)
-    assert(bh.host.api_version() == "0.3.3")
+    assert(bh.host.api_version() == "0.3.4")
     assert(bh.host.mod_id() == "api")
     assert(bh.host.mod_version() == "1.0.0")
     assert(bh.host.current_side() == "server")

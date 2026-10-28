@@ -28,6 +28,12 @@ import club.blockheads.api.services.Services;
 import club.blockheads.api.services.ServicesImpl;
 import club.blockheads.api.settings.Settings;
 import club.blockheads.api.settings.SettingsImpl;
+import club.blockheads.api.input.Input;
+import club.blockheads.api.input.InputImpl;
+import club.blockheads.api.terrain.Terrain;
+import club.blockheads.api.terrain.TerrainImpl;
+import club.blockheads.api.voice.Voice;
+import club.blockheads.api.voice.VoiceImpl;
 import club.blockheads.api.storage.Storage;
 import club.blockheads.api.storage.StorageImpl;
 import club.blockheads.api.types.Priority;
@@ -59,6 +65,9 @@ public final class Api implements EventHandlers {
     private final Channels channels;
     private final Ui ui;
     private final Settings settings;
+    private final Voice voice;
+    private final Terrain terrain;
+    private final Input input;
 
     final Map<Long, Handler<Object>> handlers = new HashMap<Long, Handler<Object>>();
     final Map<Long, CommandHandler> commandHandlers = new HashMap<Long, CommandHandler>();
@@ -82,6 +91,9 @@ public final class Api implements EventHandlers {
         channels = new ChannelsImpl(b);
         ui = new UiImpl(b);
         settings = new SettingsImpl(b);
+        voice = new VoiceImpl(b);
+        terrain = new TerrainImpl(b);
+        input = new InputImpl(b);
     }
 
     /**
@@ -141,6 +153,24 @@ public final class Api implements EventHandlers {
      */
     public Settings settings() {
         return settings;
+    }
+
+    /**
+     * (0.3.4) Voice chat policy and controls (permission {@code voice}); the host fires {@code voice:talk-start},
+     * {@code voice:talk-stop}, {@code voice:state} and {@code voice:mic} custom events. See docs/voice.md.
+     */
+    public Voice voice() {
+        return voice;
+    }
+
+    /** (0.3.4) Terrain queries ({@code solid-count} for muffling voice through walls; servers only). */
+    public Terrain terrain() {
+        return terrain;
+    }
+
+    /** (0.3.4) Key bindings of client mods; presses arrive as the custom event {@code <mod-id>:input}. */
+    public Input input() {
+        return input;
     }
 
     // -- logging -----------------------------------------------------------------------------------------------

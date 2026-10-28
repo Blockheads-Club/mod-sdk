@@ -291,6 +291,8 @@ pub struct ModPermissions {
     pub channels: bool,
     /// Native / unsandboxed code.
     pub native: bool,
+    /// Voice chat (API 0.3.4); omitted on the wire when false.
+    pub voice: bool,
 }
 
 /// One entry of `MOD_LIST`.
@@ -487,9 +489,17 @@ pub struct VoiceState {
     pub players: BTreeMap<String, String>,
     /// Vanilla `playerID` -> speaker id of the `VOICE_FRAME`s (omitted on the wire when empty).
     pub speakers: BTreeMap<String, u16>,
-    /// Which icons the admin shows: `speaking`, `no_voice`, `self_mute`, `admin_mute` -> visible (omitted when
-    /// empty).
+    /// Which icons the admin shows: `speaking`, `no_voice`, `self_mute`, `deafen`, `admin_mute` -> visible (omitted
+    /// when empty).
     pub icons: BTreeMap<String, bool>,
+    /// (API 0.3.4) The talk modes the receiving player may use: bit 0 proximity, 1 global, 2 channel, 3 broadcast
+    /// (omitted when `None`).
+    pub modes: Option<u8>,
+    /// (API 0.3.4) The activations the receiving player may use: bit 0 push-to-talk, 1 voice activation, 2 toggle
+    /// (omitted when `None`).
+    pub activations: Option<u8>,
+    /// (API 0.3.4) The encoder bitrate in bits per second (omitted when `None`).
+    pub bitrate: Option<u32>,
 }
 
 /// `VOICE_CTRL` (C->S): the player's own mute switches.
@@ -784,6 +794,15 @@ impl Message {
                 if !v.icons.is_empty() {
                     e.push(("icons", Value::Map(v.icons.iter().map(|(k, b)| (text(k), Value::Bool(*b))).collect())));
                 }
+                for (k, n) in [
+                    ("modes", v.modes.map(u32::from)),
+                    ("activations", v.activations.map(u32::from)),
+                    ("bitrate", v.bitrate),
+                ] {
+                    if let Some(n) = n {
+                        e.push((k, Value::Uint(u64::from(n))));
+                    }
+                }
                 map(e)
             }
             Message::VoiceCtrl(c) => {
@@ -965,6 +984,9 @@ fn decode_cbor(op: Op, f: &Fields) -> Result<Message, Error> {
                         "icons",
                     )
                 })?,
+                modes: f.opt_u8("modes")?,
+                activations: f.opt_u8("activations")?,
+                bitrate: f.opt_u32("bitrate")?,
             })
         }
         Op::VoiceCtrl => Message::VoiceCtrl(VoiceCtrl { self_mute: f.bool("selfMute")?, deafen: f.bool("deafen")? }),
@@ -1014,7 +1036,10 @@ fn mod_info(m: &ModInfo) -> Value {
                 ("netHttp", texts(&p.net_http)),
                 ("channels", Value::Bool(p.channels)),
                 ("native", Value::Bool(p.native)),
-            ]),
+            ]
+            .into_iter()
+            .chain(p.voice.then_some(("voice", Value::Bool(true))))
+            .collect()),
         ),
         ("indexListed", Value::Bool(m.index_listed)),
     ];
@@ -1136,6 +1161,18 @@ impl Fields {
         self.texts(key)
     }
 
+    fn opt_bool(&self, key: &'static str) -> Result<Option<bool>, Error> {
+        self.get(key).map(|_| self.bool(key)).transpose()
+    }
+
+    fn opt_u32(&self, key: &'static str) -> Result<Option<u32>, Error> {
+        self.get(key).map(|_| self.u32(key)).transpose()
+    }
+
+    fn opt_u8(&self, key: &'static str) -> Result<Option<u8>, Error> {
+        self.get(key).map(|v| u8::try_from(as_uint(v, key)?).map_err(|_| Error::Type(key))).transpose()
+    }
+
     fn opt_u16(&self, key: &'static str) -> Result<Option<u16>, Error> {
         self.get(key).map(|v| as_u16(v, key)).transpose()
     }
@@ -1209,6 +1246,7 @@ impl Fields {
                 net_http: p.texts("netHttp")?,
                 channels: p.bool("channels")?,
                 native: p.bool("native")?,
+                voice: p.opt_bool("voice")?.unwrap_or(false),
             },
             source_url: self.opt_text("sourceUrl")?,
             index_listed: self.bool("indexListed")?,

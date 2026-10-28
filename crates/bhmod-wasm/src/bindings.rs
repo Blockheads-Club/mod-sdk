@@ -579,6 +579,189 @@ pub mod v03 {
         fn close_dialog(&mut self, id: u32) -> R<bool> {
             Ok(self.api()?.ui_close_dialog(id))
         }
+        fn set_overhead(&mut self, p: Resource<PlayerRes>, icon: ui::OverheadIcon) -> R<Result<(), types::ApiError>> {
+            let id = self.player_id(&p)?;
+            Ok(self.api()?.ui_set_overhead(&id, overhead_from(icon)).map_err(api_error))
+        }
+        fn clear_overhead(&mut self, p: Resource<PlayerRes>) -> R<bool> {
+            let id = self.player_id(&p)?;
+            Ok(self.api()?.ui_clear_overhead(&id))
+        }
+        fn set_button(&mut self, id: String, b: ui::Button) -> R<Result<(), types::ApiError>> {
+            let b = core_ui::Button { icon: b.icon, label: b.label, x: b.x, y: b.y, size: b.size, opacity: b.opacity };
+            Ok(self.api()?.ui_set_button(&id, b).map_err(api_error))
+        }
+        fn remove_button(&mut self, id: String) -> R<bool> {
+            Ok(self.api()?.ui_remove_button(&id))
+        }
+        fn open_settings(&mut self, mod_id: String) -> R<Result<(), types::ApiError>> {
+            Ok(self.api()?.ui_open_settings(&mod_id).map_err(api_error))
+        }
+    }
+
+    enum_fn!(overhead_from: ui::OverheadIcon => core_ui::OverheadIcon { Speaking, NoVoice, SelfMute, Deafen, AdminMute });
+
+    use crate::wit::blockheads::api::{input, terrain, voice};
+    use bhmod_core::voice as cv;
+
+    enum_fn!(mode_from: voice::Mode => cv::Mode { Proximity, Global, Channel, Broadcast });
+    enum_fn!(activation_from: voice::Activation => cv::Activation { Ptt, Vad, Toggle });
+    enum_fn!(transport_from: voice::Transport => cv::Transport { Auto, Inband, Udp });
+    enum_fn!(state_to: cv::VoiceState => voice::VoiceState { None, Ready, Talking, SelfMuted, Deafened, AdminMuted });
+
+    fn icons_from(i: voice::IconVisibility) -> cv::Icons {
+        cv::Icons {
+            speaking: i.speaking,
+            no_voice: i.no_voice,
+            self_mute: i.self_mute,
+            deafen: i.deafen,
+            admin_mute: i.admin_mute,
+        }
+    }
+
+    impl State {
+        /// Runs one `voice` call.
+        fn voice_call(&mut self, call: cv::VoiceCall) -> R<Result<cv::VoiceReply, types::ApiError>> {
+            Ok(self.api()?.voice(call).map_err(api_error))
+        }
+        fn voice_unit(&mut self, call: cv::VoiceCall) -> R<Result<(), types::ApiError>> {
+            Ok(self.voice_call(call)?.map(drop))
+        }
+    }
+
+    impl voice::Host for State {
+        fn state(&mut self, p: Resource<PlayerRes>) -> R<Result<voice::VoiceState, types::ApiError>> {
+            let id = self.player_id(&p)?;
+            Ok(self.voice_call(cv::VoiceCall::State(id))?.map(|r| state_to(r.as_state())))
+        }
+        fn icons(&mut self) -> R<Result<voice::IconVisibility, types::ApiError>> {
+            Ok(self.voice_call(cv::VoiceCall::Icons)?.map(|r| {
+                let i = r.as_icons();
+                voice::IconVisibility {
+                    speaking: i.speaking,
+                    no_voice: i.no_voice,
+                    self_mute: i.self_mute,
+                    deafen: i.deafen,
+                    admin_mute: i.admin_mute,
+                }
+            }))
+        }
+        fn set_routes(&mut self, p: Resource<PlayerRes>, routes: Vec<voice::Route>) -> R<Result<(), types::ApiError>> {
+            let id = self.player_id(&p)?;
+            let mut out = Vec::with_capacity(routes.len());
+            for r in routes {
+                out.push(cv::Route {
+                    listener: self.player_id(&r.listener)?,
+                    modes: r.modes.into_iter().fold(0, |m, x| m | mode_from(x).bit()),
+                    gain: r.gain,
+                    pan: r.pan,
+                    muffle: r.muffle,
+                });
+            }
+            self.voice_unit(cv::VoiceCall::SetRoutes(id, out))
+        }
+        fn mute(&mut self, p: Resource<PlayerRes>, until_ms: Option<u64>) -> R<Result<(), types::ApiError>> {
+            let id = self.player_id(&p)?;
+            self.voice_unit(cv::VoiceCall::Mute(id, until_ms))
+        }
+        fn unmute(&mut self, p: Resource<PlayerRes>) -> R<Result<bool, types::ApiError>> {
+            let id = self.player_id(&p)?;
+            Ok(self.voice_call(cv::VoiceCall::Unmute(id))?.map(cv::VoiceReply::as_bool))
+        }
+        fn set_speaker_gain(&mut self, p: Resource<PlayerRes>, percent: u16) -> R<Result<(), types::ApiError>> {
+            let id = self.player_id(&p)?;
+            self.voice_unit(cv::VoiceCall::SetSpeakerGain(id, percent))
+        }
+        fn set_caps(&mut self, c: voice::Caps) -> R<Result<(), types::ApiError>> {
+            let caps = cv::Caps {
+                max_bitrate: c.max_bitrate,
+                max_speakers: c.max_speakers,
+                max_frames_per_sec: c.max_frames_per_sec,
+            };
+            self.voice_unit(cv::VoiceCall::SetCaps(caps))
+        }
+        fn set_transport(&mut self, c: voice::TransportConfig) -> R<Result<(), types::ApiError>> {
+            let t = cv::TransportConfig { mode: transport_from(c.mode), udp_port: c.udp_port };
+            self.voice_unit(cv::VoiceCall::SetTransport(t))
+        }
+        fn set_allowed(
+            &mut self,
+            p: Resource<PlayerRes>,
+            modes: Vec<voice::Mode>,
+            activations: Vec<voice::Activation>,
+        ) -> R<Result<(), types::ApiError>> {
+            let id = self.player_id(&p)?;
+            let m = modes.into_iter().fold(0, |m, x| m | mode_from(x).bit());
+            let a = activations.into_iter().fold(0, |m, x| m | activation_from(x).bit());
+            self.voice_unit(cv::VoiceCall::SetAllowed(id, m, a))
+        }
+        fn set_icons(&mut self, i: voice::IconVisibility) -> R<Result<(), types::ApiError>> {
+            self.voice_unit(cv::VoiceCall::SetIcons(icons_from(i)))
+        }
+        fn set_broadcast_overrides_deafen(&mut self, on: bool) -> R<Result<(), types::ApiError>> {
+            self.voice_unit(cv::VoiceCall::SetBroadcastOverridesDeafen(on))
+        }
+        fn set_default_mode(&mut self, m: voice::Mode) -> R<Result<(), types::ApiError>> {
+            self.voice_unit(cv::VoiceCall::SetDefaultMode(mode_from(m)))
+        }
+        fn set_activation(&mut self, a: voice::Activation) -> R<Result<(), types::ApiError>> {
+            self.voice_unit(cv::VoiceCall::SetActivation(activation_from(a)))
+        }
+        fn talk(&mut self, m: Option<voice::Mode>, pressed: bool) -> R<Result<(), types::ApiError>> {
+            self.voice_unit(cv::VoiceCall::Talk(m.map(mode_from), pressed))
+        }
+        fn set_mic(&mut self, on: bool) -> R<Result<(), types::ApiError>> {
+            self.voice_unit(cv::VoiceCall::SetMic(on))
+        }
+        fn set_self_mute(&mut self, on: bool) -> R<Result<(), types::ApiError>> {
+            self.voice_unit(cv::VoiceCall::SetSelfMute(on))
+        }
+        fn set_deafen(&mut self, on: bool) -> R<Result<(), types::ApiError>> {
+            self.voice_unit(cv::VoiceCall::SetDeafen(on))
+        }
+        fn set_vad_threshold(&mut self, db: f32) -> R<Result<(), types::ApiError>> {
+            self.voice_unit(cv::VoiceCall::SetVadThreshold(db))
+        }
+        fn set_master(&mut self, percent: u16) -> R<Result<(), types::ApiError>> {
+            self.voice_unit(cv::VoiceCall::SetMaster(percent))
+        }
+        fn master(&mut self) -> R<Result<u16, types::ApiError>> {
+            Ok(self.voice_call(cv::VoiceCall::Master)?.map(cv::VoiceReply::as_percent))
+        }
+        fn set_player_volume(&mut self, p: Resource<PlayerRes>, percent: u16) -> R<Result<(), types::ApiError>> {
+            let id = self.player_id(&p)?;
+            self.voice_unit(cv::VoiceCall::SetPlayerVolume(id, percent))
+        }
+        fn player_volume(&mut self, p: Resource<PlayerRes>) -> R<Result<u16, types::ApiError>> {
+            let id = self.player_id(&p)?;
+            Ok(self.voice_call(cv::VoiceCall::PlayerVolume(id))?.map(cv::VoiceReply::as_percent))
+        }
+        fn mute_player(&mut self, p: Resource<PlayerRes>, muted: bool) -> R<Result<(), types::ApiError>> {
+            let id = self.player_id(&p)?;
+            self.voice_unit(cv::VoiceCall::MutePlayer(id, muted))
+        }
+        fn player_muted(&mut self, p: Resource<PlayerRes>) -> R<Result<bool, types::ApiError>> {
+            let id = self.player_id(&p)?;
+            Ok(self.voice_call(cv::VoiceCall::PlayerMuted(id))?.map(cv::VoiceReply::as_bool))
+        }
+    }
+
+    impl terrain::Host for State {
+        fn solid_count(&mut self, x1: i32, y1: i32, x2: i32, y2: i32) -> R<Result<u32, types::ApiError>> {
+            Ok(self.api()?.terrain_solid_count(x1, y1, x2, y2).map_err(api_error))
+        }
+    }
+
+    impl input::Host for State {
+        fn bind(&mut self, action: String, default_key: String) -> R<Result<(), types::ApiError>> {
+            Ok(self.api()?.input_bind(&action, &default_key).map_err(api_error))
+        }
+        fn unbind(&mut self, action: String) -> R<bool> {
+            Ok(self.api()?.input_unbind(&action))
+        }
+        fn key_of(&mut self, action: String) -> R<Option<String>> {
+            Ok(self.api()?.input_key_of(&action))
+        }
     }
 
     use crate::wit::blockheads::api::content;

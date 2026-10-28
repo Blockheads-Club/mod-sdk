@@ -70,6 +70,7 @@ fn landclaim() -> ModInfo {
             net_http: vec![],
             channels: true,
             native: false,
+            voice: false,
         },
         source_url: Some("https://github.com/someone/landclaim/releases/download/v1.4.0/landclaim-1.4.0.bhmod".into()),
         index_listed: true,
@@ -218,6 +219,22 @@ fn valid() -> Vec<(&'static str, &'static str, &'static str, Message)> {
                     ("cosmetics".into(), BTreeMap::from([("hats:crown".into(), 1), ("hats:ember-hair".into(), 2)])),
                     ("items".into(), BTreeMap::from([("hats:crown-token".into(), 1107)])),
                 ]),
+            }),
+        ),
+        (
+            "03-mod-list-voice",
+            "S->C",
+            "API 0.3.4: a client-optional mod with the `voice` permission (`permissions.voice` is sent only when true).",
+            Message::ModList(ModList {
+                mods: vec![ModInfo {
+                    id: "voice".into(),
+                    sides: vec!["server".into(), "client".into()],
+                    client_required: false,
+                    permissions: ModPermissions { world: "read".into(), voice: true, ..Default::default() },
+                    ..hello_lua()
+                }],
+                channels: vec![],
+                registry: BTreeMap::new(),
             }),
         ),
         ("03-mod-list-empty", "S->C", "No mods, channels or registry.", Message::ModList(ModList::default())),
@@ -411,6 +428,21 @@ fn valid() -> Vec<(&'static str, &'static str, &'static str, Message)> {
                 players: BTreeMap::from([("player-a".into(), "talking".into()), ("player-b".into(), "none".into())]),
                 speakers: BTreeMap::from([("player-a".into(), 1)]),
                 icons: BTreeMap::from([("no_voice".into(), true), ("speaking".into(), true)]),
+                ..Default::default()
+            }),
+        ),
+        (
+            "17-voice-state-allowed",
+            "S->C",
+            "API 0.3.4: delta for the receiving player: may use proximity and channel, push-to-talk only, 24 kbps; deafen icon hidden.",
+            Message::VoiceState(VoiceState {
+                full: false,
+                players: BTreeMap::from([("player-a".into(), "ready".into())]),
+                icons: BTreeMap::from([("deafen".into(), false)]),
+                modes: Some(0b0101),
+                activations: Some(0b001),
+                bitrate: Some(24_000),
+                ..Default::default()
             }),
         ),
         (
@@ -658,6 +690,30 @@ fn invalid() -> Vec<(&'static str, String, &'static str)> {
                     (Value::text("full"), Value::Bool(true)),
                     (Value::text("players"), Value::Map(vec![])),
                     (Value::text("icons"), Value::Map(vec![(Value::text("speaking"), Value::Uint(1))])),
+                ]))
+            ),
+            "type",
+        ),
+        (
+            "voice-state-modes-too-big",
+            format!(
+                "bc17{}",
+                cbor_hex(Value::Map(vec![
+                    (Value::text("full"), Value::Bool(true)),
+                    (Value::text("players"), Value::Map(vec![])),
+                    (Value::text("modes"), Value::Uint(256)),
+                ]))
+            ),
+            "type",
+        ),
+        (
+            "voice-state-bitrate-text",
+            format!(
+                "bc17{}",
+                cbor_hex(Value::Map(vec![
+                    (Value::text("full"), Value::Bool(true)),
+                    (Value::text("players"), Value::Map(vec![])),
+                    (Value::text("bitrate"), Value::text("24k")),
                 ]))
             ),
             "type",

@@ -19,7 +19,7 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
-use bhmod_manifest::settings::{Settings, SettingsError};
+use bhmod_manifest::settings::{Scope, Settings, SettingsError};
 use semver::VersionReq;
 use serde_json::{Map, Value as Json};
 
@@ -31,6 +31,7 @@ use crate::commands::CommandRegistry;
 use crate::config::{required_permissions, ModsConfig, FILE_NAME};
 use crate::discover::{discover, Package};
 use crate::handles::Handles;
+use crate::input::{InputCommand, InputState};
 use crate::remote::{self, Remote, RemoteCall, RemoteCaller, RemoteError, RemoteLimits, RemoteTarget};
 use crate::resolve::resolve;
 use crate::runtime::{CallError, CommandId, HostApi, Instance, InstanceLimits, Runtime, SubscriptionId, TaskId};
@@ -43,8 +44,9 @@ use crate::types::{
     ApiError, ChannelSource, ChannelTarget, CommandOutcome, CommandSender, CommandSpec, ContentKind, CosmeticInfo,
     Event, EventKind, LogLevel, Pos, Priority, Role, SavePhase, ServiceError, Side,
 };
-use crate::ui::{Dialog, NoticeLevel, UiCommand, UiState, Widget};
+use crate::ui::{Button, ButtonAction, Dialog, NoticeLevel, OverheadIcon, UiCommand, UiState, Widget};
 use crate::value::Value;
+use crate::voice::{VoiceCall, VoiceEvent, VoiceReply};
 use crate::API_VERSION;
 
 /// Longest log message in bytes.
@@ -70,6 +72,10 @@ pub struct HostOptions {
     pub clock: Box<dyn Clock>,
     /// Rate and count limits of cross-side service calls.
     pub remote: RemoteLimits,
+    /// (API 0.3.4, clients) The device's file for `scope = "client"` settings (same layout as `mods.toml`:
+    /// `[<mod-id>.settings]`). When set on a client host, settings are read from and written to it (valid on every
+    /// server) and only client-scope keys can be changed; `None` keeps them in `mods.toml`.
+    pub client_settings: Option<PathBuf>,
 }
 
 impl HostOptions {
@@ -83,6 +89,7 @@ impl HostOptions {
             storage: Box::new(MemoryStorage::new()),
             clock: Box::new(SystemClock),
             remote: RemoteLimits::default(),
+            client_settings: None,
         }
     }
 }
@@ -154,6 +161,7 @@ pub struct ModHost {
     channels: Channels,
     handles: Handles,
     ui: UiState,
+    input: InputState,
     remote: Remote,
     /// Mods whose code is running, outermost first, with the deadline of each call.
     stack: Vec<(usize, Instant)>,
@@ -177,6 +185,11 @@ pub struct ModHost {
     config_stamp: u64,
     /// When `poll` looks at `mods.toml` again.
     config_check: Option<Instant>,
+    /// The device's client settings (API 0.3.4), when this is a client host with a settings file.
+    client_config: ModsConfig,
+    client_settings: Option<PathBuf>,
+    /// Mods whose settings changed since [`ModHost::take_changed_settings`].
+    changed_settings: Vec<String>,
 }
 
 /// What a reload did to one mod.
@@ -249,7 +262,8 @@ impl ModHost {
     /// Discovers, resolves and instantiates the mods in `options.mods_dir`. Problems are logged through the bridge;
     /// a mods directory that does not exist gives an empty host and logs nothing.
     pub fn load(options: HostOptions, bridge: Rc<dyn GameBridge>) -> ModHost {
-        let HostOptions { mods_dir, side, budgets, runtimes, storage, clock, remote } = options;
+        let HostOptions { mods_dir, side, budgets, runtimes, storage, clock, remote, client_settings } = options;
+        let client_settings = client_settings.filter(|_| side == Side::Client);
         let mut host = ModHost {
             slots: Vec::new(),
             bus: EventBus::default(),
@@ -259,6 +273,7 @@ impl ModHost {
             channels: Channels::default(),
             handles: Handles::default(),
             ui: UiState::default(),
+            input: InputState::default(),
             remote: Remote::new(remote),
             stack: Vec::new(),
             deferred: Vec::new(),
@@ -276,7 +291,13 @@ impl ModHost {
             config: ModsConfig::default(),
             config_stamp: 0,
             config_check: None,
+            client_config: ModsConfig::default(),
+            client_settings,
+            changed_settings: Vec::new(),
         };
+        if let Some(p) = host.client_settings.clone() {
+            host.client_config = host.read_config_file(&p, "client settings are not read").unwrap_or_default();
+        }
         let (ordered, problems, skipped) = host.scan();
         for p in problems {
             host.log(LogLevel::Error, &p);
@@ -331,8 +352,7 @@ impl ModHost {
     /// A slot in state `Loaded` for a package and its instance.
     fn make_slot(&self, pkg: &Package, instance: Box<dyn Instance>, generation: u32) -> Slot {
         let id = &pkg.manifest.id;
-        let mod_config = self.config.get(id);
-        let values = self.resolve_settings(id, &pkg.manifest.settings, &mod_config);
+        let values = self.resolve_settings(id, &pkg.manifest.settings);
         Slot {
             info: ModInfo {
                 id: pkg.manifest.id.clone(),
@@ -363,13 +383,22 @@ impl ModHost {
             fingerprint: fingerprint(pkg),
             settings: Rc::new(pkg.manifest.settings.clone()),
             values,
-            client_required: crate::config::client_required(&pkg.manifest, &mod_config),
+            client_required: crate::config::client_required(&pkg.manifest, &self.config.get(id)),
         }
     }
 
     /// The values of `settings` from the stored ones; ignored stored values are logged.
-    fn resolve_settings(&self, id: &str, settings: &Settings, c: &crate::config::ModConfig) -> Map<String, Json> {
-        let (values, problems) = settings.resolve(&c.settings_json());
+    fn resolve_settings(&self, id: &str, settings: &Settings) -> Map<String, Json> {
+        let stored = match &self.client_settings {
+            // A client reads only its own (client-scope) keys from the device; server keys keep their default.
+            Some(_) => {
+                let mut m = self.client_config.get(id).settings_json();
+                m.retain(|k, _| settings.get(k).is_none_or(|f| f.scope == Scope::Client));
+                m
+            }
+            None => self.config.get(id).settings_json(),
+        };
+        let (values, problems) = settings.resolve(&stored);
         for p in problems {
             let msg = match p {
                 SettingsError::UnknownKey(k) => format!("{FILE_NAME}: ignoring unknown setting `{k}`"),
@@ -390,8 +419,11 @@ impl ModHost {
 
     /// Reads `mods.toml` (a missing file is empty); `None` (logged) when it does not parse.
     fn read_config(&self, dir: &Path) -> Option<ModsConfig> {
-        let path = dir.join(FILE_NAME);
-        let parsed = match std::fs::read_to_string(&path) {
+        self.read_config_file(&dir.join(FILE_NAME), "no permissions are granted (settings stay)")
+    }
+
+    fn read_config_file(&self, path: &Path, consequence: &str) -> Option<ModsConfig> {
+        let parsed = match std::fs::read_to_string(path) {
             Ok(text) => ModsConfig::parse(&text),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Some(ModsConfig::default()),
             Err(e) => Err(e.to_string()),
@@ -400,7 +432,7 @@ impl ModHost {
             Ok(c) => Some(c),
             Err(e) => {
                 let p = path.display();
-                self.log(LogLevel::Error, &format!("{p} is invalid, no permissions are granted (settings stay): {e}"));
+                self.log(LogLevel::Error, &format!("{p} is invalid, {consequence}: {e}"));
                 None
             }
         }
@@ -524,6 +556,10 @@ impl ModHost {
             let id = self.slots[owner].info.id.clone();
             // The loader drops the mod's widgets and dialogs; a bridge without UI has nothing to drop.
             let _ = self.bridge.ui(&id, &UiCommand::ClearMod);
+        }
+        if self.input.clear_owner(owner) {
+            let id = self.slots[owner].info.id.clone();
+            let _ = self.bridge.input(&id, &InputCommand::ClearMod);
         }
         let slot = &mut self.slots[owner];
         slot.instance = None;
@@ -658,7 +694,7 @@ impl ModHost {
     fn start_slot(&mut self, i: usize) -> Option<ReloadOutcome> {
         let (world_name, world_id) = self.world.clone()?;
         self.enable_slot(i);
-        self.fire_filtered(Event::WorldLoaded { world_name, world_id }, Some(i));
+        self.fire_filtered(Event::WorldLoaded { world_name, world_id }, Some(&[i]));
         match &self.slots[i].info.state {
             ModState::Disabled(why) => Some(ReloadOutcome::Failed(format!("the new version is disabled: {why}"))),
             _ => None,
@@ -710,6 +746,28 @@ impl ModHost {
         Some(s.settings.to_json(&s.values))
     }
 
+    /// The settings form of mod `id` restricted to one scope (API 0.3.4): `({"fields": [...]}, {key: value})`, the
+    /// `schema` and `values` of 0xBC `SETTINGS_SCHEMA` for `Scope::Server`, the loader's own form for
+    /// `Scope::Client`. `None` when the mod is not loaded or declares no setting of that scope.
+    pub fn settings_form(&self, id: &str, scope: Scope) -> Option<(Json, Json)> {
+        let s = &self.slots[self.slot_of(id)?];
+        let mut only = (*s.settings).clone();
+        only.fields.retain(|f| f.scope == scope);
+        if only.fields.is_empty() {
+            return None;
+        }
+        let mut form = only.to_json(&s.values);
+        let values = form.as_object_mut().and_then(|o| o.remove("values")).unwrap_or_default();
+        Some((form, values))
+    }
+
+    /// The ids of the mods whose setting values changed since the last call (any source: `/mod set`, the host app,
+    /// a mod, `mods.toml` edits, 0xBC `SETTINGS_SET`), in order, without repeats. The server uses it to send admins
+    /// fresh `SETTINGS_SCHEMA`s ([`crate::netsettings`]).
+    pub fn take_changed_settings(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.changed_settings)
+    }
+
     /// [`ModHost::settings_schema`] as canonical CBOR (the `schema` byte string of 0xBC `SETTINGS_SCHEMA`).
     pub fn settings_schema_cbor(&self, id: &str) -> Option<Vec<u8>> {
         self.settings_schema(id).map(|j| cfg::to_cbor(&j))
@@ -751,14 +809,26 @@ impl ModHost {
     fn set_in_slot(&mut self, i: usize, key: &str, value: &Json) -> Result<Json, SettingsError> {
         let slot = &self.slots[i];
         let field = slot.settings.get(key).ok_or_else(|| SettingsError::UnknownKey(key.to_string()))?;
+        if self.client_settings.is_some() && field.scope != Scope::Client {
+            return Err(SettingsError::Invalid {
+                path: key.to_string(),
+                rule: "scope",
+                message: "a server setting: only the server admin changes it".into(),
+                expected: Some("client".into()),
+                got: Some("server".into()),
+            });
+        }
         let v = bhmod_manifest::settings::validate_value(field, value)?;
         let stored = (v != field.default).then_some(&v);
         let id = slot.info.id.clone();
-        if let Err(e) = crate::config::write_setting(&self.mods_dir, &id, key, stored) {
+        let (file, config) = match &self.client_settings {
+            Some(p) => (p.clone(), &mut self.client_config),
+            None => (self.mods_dir.join(FILE_NAME), &mut self.config),
+        };
+        if let Err(e) = crate::config::write_setting_at(&file, &id, key, stored) {
             self.bridge.log(Some(&id), LogLevel::Error, &format!("setting {key} not saved: {e}"));
         }
-        self.config_stamp = cfg::stamp(&self.mods_dir);
-        let entry = self.config.mods.entry(id).or_default();
+        let entry = config.mods.entry(id).or_default();
         match stored.and_then(crate::config::json_to_toml_value) {
             Some(t) => {
                 entry.settings.insert(key.to_string(), t);
@@ -767,6 +837,7 @@ impl ModHost {
                 entry.settings.remove(key);
             }
         }
+        self.config_stamp = cfg::stamp(&self.mods_dir);
         let old = self.slots[i].values.insert(key.to_string(), v.clone());
         if old.as_ref() != Some(&v) {
             self.settings_changed(i, vec![key.to_string()]);
@@ -777,10 +848,13 @@ impl ModHost {
     /// Fires `<mod-id>:settings-changed` (to every mod subscribed to that name; the owner on the stack gets it once
     /// its call returned).
     fn settings_changed(&mut self, i: usize, keys: Vec<String>) {
-        if !self.enabled || keys.is_empty() {
+        let source = self.slots[i].info.id.clone();
+        if !self.changed_settings.contains(&source) {
+            self.changed_settings.push(source.clone());
+        }
+        if !self.enabled {
             return;
         }
-        let source = self.slots[i].info.id.clone();
         let name = format!("{source}:settings-changed");
         self.fire(Event::Custom { name, source, payload: cfg::changed_payload(&keys), cancelled: false });
     }
@@ -798,7 +872,7 @@ impl ModHost {
         for i in 0..self.slots.len() {
             let id = self.slots[i].info.id.clone();
             let settings = self.slots[i].settings.clone();
-            let values = self.resolve_settings(&id, &settings, &self.config.get(&id));
+            let values = self.resolve_settings(&id, &settings);
             let keys: Vec<String> = values
                 .iter()
                 .filter(|(k, v)| self.slots[i].values.get(*k) != Some(*v))
@@ -883,14 +957,14 @@ impl ModHost {
     }
 
     /// [`ModHost::fire`] for the handlers of one mod (`only`: its slot index) instead of every subscriber.
-    fn fire_filtered(&mut self, mut ev: Event, only: Option<usize>) -> Event {
+    fn fire_filtered(&mut self, mut ev: Event, only: Option<&[usize]>) -> Event {
         let kind = ev.kind();
         let custom = match &ev {
             Event::Custom { name, .. } => Some(name.clone()),
             _ => None,
         };
         for sub in self.bus.plan(kind, custom.as_deref()) {
-            if only.is_some_and(|o| o != sub.owner) {
+            if only.is_some_and(|o| !o.contains(&sub.owner)) {
                 continue;
             }
             if self.slots[sub.owner].info.state != ModState::Enabled || (sub.ignore_cancelled && ev.cancelled()) {
@@ -928,7 +1002,7 @@ impl ModHost {
         let source = self.slots[owner].info.id.clone();
         let payload = remote::result_payload(id, &outcome).encode();
         let ev = Event::Custom { name: format!("{source}:service-result"), source, payload, cancelled: false };
-        self.fire_filtered(ev, Some(owner));
+        self.fire_filtered(ev, Some(&[owner]));
     }
 
     /// Fails the calls that time out now with `timeout`.
@@ -1040,7 +1114,50 @@ impl ModHost {
         ]);
         let ev =
             Event::Custom { name: format!("{id}:ui-action"), source: id, payload: payload.encode(), cancelled: false };
-        self.fire_filtered(ev, Some(owner));
+        self.fire_filtered(ev, Some(&[owner]));
+        true
+    }
+
+    /// Something the voice host reports (API 0.3.4): fired as the custom event `voice:talk-start`, `voice:talk-stop`,
+    /// `voice:state` or `voice:mic` to the mods holding the `voice` permission.
+    pub fn voice_event(&mut self, event: &VoiceEvent) {
+        let (name, payload) = event.custom();
+        let to: Vec<usize> =
+            (0..self.slots.len()).filter(|i| self.slots[*i].permissions.iter().any(|p| p == "voice")).collect();
+        let source = crate::voice::EVENT_PREFIX.to_string();
+        self.fire_filtered(Event::Custom { name, source, payload, cancelled: false }, Some(&to));
+    }
+
+    /// The player used an on-screen button of mod `mod_id` (API 0.3.4): the custom event `<mod-id>:ui-button`
+    /// `{"id", "action"}` to that mod only. False when the mod has no such button.
+    pub fn ui_button(&mut self, mod_id: &str, id: &str, action: ButtonAction) -> bool {
+        let Some(owner) = self.slot_of(mod_id).filter(|o| self.ui.has_button(*o, id)) else { return false };
+        let payload = Value::Map(vec![("id".into(), Value::text(id)), ("action".into(), Value::text(action.name()))]);
+        let ev = Event::Custom {
+            name: format!("{mod_id}:ui-button"),
+            source: mod_id.to_string(),
+            payload: payload.encode(),
+            cancelled: false,
+        };
+        self.fire_filtered(ev, Some(&[owner]));
+        true
+    }
+
+    /// A bound key of mod `mod_id` went down or up (API 0.3.4): the custom event `<mod-id>:input`
+    /// `{"action", "pressed"}` to that mod only. False when the mod has no such action.
+    pub fn input_event(&mut self, mod_id: &str, action: &str, pressed: bool) -> bool {
+        let Some(owner) = self.slot_of(mod_id).filter(|o| self.input.default_key(*o, action).is_some()) else {
+            return false;
+        };
+        let payload =
+            Value::Map(vec![("action".into(), Value::text(action)), ("pressed".into(), Value::Bool(pressed))]);
+        let ev = Event::Custom {
+            name: format!("{mod_id}:input"),
+            source: mod_id.to_string(),
+            payload: payload.encode(),
+            cancelled: false,
+        };
+        self.fire_filtered(ev, Some(&[owner]));
         true
     }
 
@@ -1689,5 +1806,85 @@ impl HostApi for Ctx<'_> {
         let mod_id = self.slot().info.id.clone();
         let _ = self.host.bridge.ui(&mod_id, &UiCommand::CloseDialog { id });
         true
+    }
+    fn ui_set_overhead(&mut self, player: &str, icon: OverheadIcon) -> Result<(), ApiError> {
+        self.host.bridge.player_alias(player).ok_or(ApiError::StaleHandle)?;
+        let mod_id = self.slot().info.id.clone();
+        self.host.bridge.ui(&mod_id, &UiCommand::SetOverhead { player: player.to_string(), icon })?;
+        self.host.ui.overhead_set(self.owner, player);
+        Ok(())
+    }
+    fn ui_clear_overhead(&mut self, player: &str) -> bool {
+        if !self.host.ui.overhead_cleared(self.owner, player) {
+            return false;
+        }
+        let mod_id = self.slot().info.id.clone();
+        let _ = self.host.bridge.ui(&mod_id, &UiCommand::ClearOverhead { player: player.to_string() });
+        true
+    }
+    fn ui_set_button(&mut self, id: &str, button: Button) -> Result<(), ApiError> {
+        self.host.ui.check_button(self.owner, id, &button)?;
+        let mod_id = self.slot().info.id.clone();
+        self.host.bridge.ui(&mod_id, &UiCommand::SetButton { id: id.to_string(), button })?;
+        self.host.ui.button_added(self.owner, id);
+        Ok(())
+    }
+    fn ui_remove_button(&mut self, id: &str) -> bool {
+        if !self.host.ui.button_removed(self.owner, id) {
+            return false;
+        }
+        let mod_id = self.slot().info.id.clone();
+        let _ = self.host.bridge.ui(&mod_id, &UiCommand::RemoveButton { id: id.to_string() });
+        true
+    }
+    fn ui_open_settings(&mut self, mod_id: &str) -> Result<(), ApiError> {
+        if self.host.slot_of(mod_id).is_none() {
+            return Err(ApiError::InvalidArgument(format!("no loaded mod {mod_id:?}")));
+        }
+        let own = self.slot().info.id.clone();
+        self.host.bridge.ui(&own, &UiCommand::OpenSettings { mod_id: mod_id.to_string() })
+    }
+
+    fn voice(&mut self, call: VoiceCall) -> Result<VoiceReply, ApiError> {
+        self.require("voice")?;
+        if call.side().is_some_and(|s| s != self.host.side) {
+            return Err(ApiError::Unsupported);
+        }
+        call.check()?;
+        for p in call.players() {
+            self.host.bridge.player_alias(p).ok_or(ApiError::StaleHandle)?;
+        }
+        let voice = self.host.bridge.voice().ok_or(ApiError::Unsupported)?;
+        call.run(voice)
+    }
+
+    fn terrain_solid_count(&mut self, x1: i32, y1: i32, x2: i32, y2: i32) -> Result<u32, ApiError> {
+        self.require_content_side()?;
+        let bridge = &self.host.bridge;
+        Ok(crate::voice::solid_count((x1, y1), (x2, y2), bridge.world_width(), |x, y| bridge.tile_solid(x, y)))
+    }
+
+    fn input_bind(&mut self, action: &str, default_key: &str) -> Result<(), ApiError> {
+        if self.host.side != Side::Client {
+            return Err(ApiError::Unsupported);
+        }
+        self.host.input.check_bind(self.owner, action, default_key)?;
+        let mod_id = self.slot().info.id.clone();
+        let cmd = InputCommand::Bind { action: action.to_string(), default_key: default_key.to_string() };
+        self.host.bridge.input(&mod_id, &cmd)?;
+        self.host.input.bound(self.owner, action, default_key);
+        Ok(())
+    }
+    fn input_unbind(&mut self, action: &str) -> bool {
+        if !self.host.input.unbound(self.owner, action) {
+            return false;
+        }
+        let mod_id = self.slot().info.id.clone();
+        let _ = self.host.bridge.input(&mod_id, &InputCommand::Unbind { action: action.to_string() });
+        true
+    }
+    fn input_key_of(&mut self, action: &str) -> Option<String> {
+        let default = self.host.input.default_key(self.owner, action)?.to_string();
+        self.host.bridge.input_key(&self.slot().info.id, action, &default)
     }
 }

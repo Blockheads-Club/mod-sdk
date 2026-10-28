@@ -61,7 +61,7 @@ pub use wit::types::{ApiError, Pos, Priority, Side};
 pub mod prelude {
     pub use crate::commands::{self, Command, Reply, Sender};
     pub use crate::events::{self, EventCtx, EventKind};
-    pub use crate::{channels, content, host, log, players, scheduler, services, settings, storage, ui};
+    pub use crate::{channels, content, host, input, log, players, scheduler, services, settings, storage, terrain, ui, voice};
     pub use crate::{ApiError, Mod, Player, Priority, Role, Side};
 }
 
@@ -368,14 +368,32 @@ pub mod settings {
     }
 }
 
+/// Voice chat (API 0.3.4, permission `voice`): the raw WIT functions and types. The host fires the custom events
+/// `voice:talk-start`, `voice:talk-stop`, `voice:state` (`{"player", "mode"|"state"}`) and `voice:mic`
+/// (`{"state"}`) to mods holding the permission. See `docs/voice.md`.
+pub mod voice {
+    pub use crate::wit::voice::*;
+}
+
+/// Terrain queries (API 0.3.4): `solid_count` for muffling voice through walls (server only).
+pub mod terrain {
+    pub use crate::wit::terrain::solid_count;
+}
+
+/// Key bindings of client mods (API 0.3.4); presses arrive as `<mod-id>:input {"action", "pressed"}`.
+pub mod input {
+    pub use crate::wit::input::{bind, key_of, unbind};
+}
+
 /// HUD widgets, toasts, notices and dialogs on the client (API 0.3). A host without UI (the server) answers every call
 /// with `ApiError::Unsupported`.
 pub mod ui {
     use crate::{events, ApiError};
 
     pub use crate::wit::ui::{
-        close_dialog, notice, remove_widget, set_widget, show_dialog, toast, ButtonKind, Dialog, DialogButton, Field,
-        NoticeLevel, Slot, Widget, WidgetKind,
+        clear_overhead, close_dialog, notice, open_settings, remove_button, remove_widget, set_button, set_overhead,
+        set_widget, show_dialog, toast, Button, ButtonKind, Dialog, DialogButton, Field, NoticeLevel, OverheadIcon, Slot,
+        Widget, WidgetKind,
     };
 
     /// The `button` of an answer when the dialog went away without one (back, leaving the world).
