@@ -548,26 +548,73 @@ pub fn toml_to_json(v: &toml::Value) -> Option<Json> {
 pub enum SettingsError {
     /// The mod has no setting with this key.
     UnknownKey(String),
-    /// The value does not fit: where (`key`, `key.row.col`, `key[2].name`) and why.
+    /// The value does not fit: where (`key`, `key.row.col`, `key[2].name`), which rule and why.
     Invalid {
         /// Path of the bad part of the value.
         path: String,
-        /// What is wrong.
+        /// The rule it breaks: `type`, `number`, `integer`, `min`, `max`, `choice`, `length`, `items`, `unknown` or
+        /// `role` (what the host app translates).
+        rule: &'static str,
+        /// What is wrong, in English.
         message: String,
+        /// What the rule wants (a type name, a bound, the choices, a length), when it says.
+        expected: Option<String>,
+        /// What was given (a type name, the value, a length), when it says.
+        got: Option<String>,
     },
 }
 
 impl SettingsError {
-    fn invalid(path: &str, message: impl Into<String>) -> SettingsError {
-        SettingsError::Invalid { path: path.to_string(), message: message.into() }
+    fn invalid(path: &str, rule: &'static str, message: impl Into<String>) -> SettingsError {
+        SettingsError::Invalid { path: path.to_string(), rule, message: message.into(), expected: None, got: None }
     }
 
-    /// A stable code: `unknown-key` or `invalid-value` (what `SETTINGS_RESULT` and the host app show).
+    fn with(mut self, want: impl ToString, have: impl ToString) -> SettingsError {
+        if let SettingsError::Invalid { expected, got, .. } = &mut self {
+            *expected = Some(want.to_string());
+            *got = Some(have.to_string());
+        }
+        self
+    }
+
+    /// A stable code: `settingKey` (no such setting) or `setting` (the value breaks a rule, see [`Self::rule`]); the
+    /// codes of the host app and `SETTINGS_RESULT`.
     pub fn code(&self) -> &'static str {
         match self {
-            SettingsError::UnknownKey(_) => "unknown-key",
-            SettingsError::Invalid { .. } => "invalid-value",
+            SettingsError::UnknownKey(_) => "settingKey",
+            SettingsError::Invalid { .. } => "setting",
         }
+    }
+
+    /// The rule an invalid value breaks (`None` for an unknown key).
+    pub fn rule(&self) -> Option<&'static str> {
+        match self {
+            SettingsError::UnknownKey(_) => None,
+            SettingsError::Invalid { rule, .. } => Some(rule),
+        }
+    }
+
+    /// `{ "code", "detail"?, "key", "message", "expected"?, "got"? }`: the error as the host app reads it (`detail`
+    /// is the rule, `key` the path of the bad part).
+    pub fn to_json(&self) -> Json {
+        let mut o = Map::new();
+        o.insert("code".into(), Json::String(self.code().into()));
+        o.insert("message".into(), Json::String(self.to_string()));
+        match self {
+            SettingsError::UnknownKey(k) => {
+                o.insert("key".into(), Json::String(k.clone()));
+            }
+            SettingsError::Invalid { path, rule, expected, got, .. } => {
+                o.insert("detail".into(), Json::String((*rule).into()));
+                o.insert("key".into(), Json::String(path.clone()));
+                for (name, v) in [("expected", expected), ("got", got)] {
+                    if let Some(v) = v {
+                        o.insert(name.into(), Json::String(v.clone()));
+                    }
+                }
+            }
+        }
+        Json::Object(o)
     }
 }
 
@@ -575,7 +622,7 @@ impl fmt::Display for SettingsError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             SettingsError::UnknownKey(k) => write!(f, "no setting `{k}`"),
-            SettingsError::Invalid { path, message } => write!(f, "{path}: {message}"),
+            SettingsError::Invalid { path, message, .. } => write!(f, "{path}: {message}"),
         }
     }
 }
@@ -598,35 +645,53 @@ fn type_name(v: &Json) -> &'static str {
     }
 }
 
-fn expected(path: &str, what: &str, v: &Json) -> SettingsError {
-    SettingsError::invalid(path, format!("expected {what}, got {}", type_name(v)))
+/// The short JSON kind of a value for `got`.
+fn kind(v: &Json) -> &'static str {
+    match v {
+        Json::Null => "null",
+        Json::Bool(_) => "bool",
+        Json::Number(_) => "number",
+        Json::String(_) => "string",
+        Json::Array(_) => "list",
+        Json::Object(_) => "table",
+    }
+}
+
+/// A value of the wrong kind: `rule` is `type` (or `number`/`integer` for numbers), `want` the expected kind.
+fn expected(path: &str, rule: &'static str, want: &str, what: &str, v: &Json) -> SettingsError {
+    SettingsError::invalid(path, rule, format!("expected {what}, got {}", type_name(v))).with(want, kind(v))
 }
 
 fn in_range(f: &Field, path: &str, n: f64) -> Result<(), SettingsError> {
     let fmt = |x: f64| if f.ty == SettingType::Int { format!("{}", x as i64) } else { format!("{x}") };
     if let Some(min) = f.min.filter(|&m| n < m) {
-        return Err(SettingsError::invalid(path, format!("must be at least {}", fmt(min))));
+        return Err(
+            SettingsError::invalid(path, "min", format!("must be at least {}", fmt(min))).with(fmt(min), fmt(n))
+        );
     }
     if let Some(max) = f.max.filter(|&m| n > m) {
-        return Err(SettingsError::invalid(path, format!("must be at most {}", fmt(max))));
+        return Err(SettingsError::invalid(path, "max", format!("must be at most {}", fmt(max))).with(fmt(max), fmt(n)));
     }
     Ok(())
 }
 
 fn roles(path: &str, v: &Json) -> Result<Json, SettingsError> {
-    let Json::Array(items) = v else { return Err(expected(path, "a list of role names", v)) };
+    let Json::Array(items) = v else { return Err(expected(path, "type", "list", "a list of role names", v)) };
     if items.len() > MAX_ENTRIES {
-        return Err(SettingsError::invalid(path, format!("at most {MAX_ENTRIES} roles")));
+        let msg = format!("at most {MAX_ENTRIES} roles");
+        return Err(SettingsError::invalid(path, "items", msg).with(MAX_ENTRIES, items.len()));
     }
     let mut seen = BTreeSet::new();
     for (i, r) in items.iter().enumerate() {
         let at = format!("{path}[{i}]");
-        let Json::String(s) = r else { return Err(expected(&at, "a role name", r)) };
+        let Json::String(s) = r else { return Err(expected(&at, "type", "string", "a role name", r)) };
         if !is_role(s) {
-            return Err(SettingsError::invalid(&at, "a role name matches [a-z0-9_-]{1,40}"));
+            return Err(
+                SettingsError::invalid(&at, "role", "a role name matches [a-z0-9_-]{1,40}").with("[a-z0-9_-]{1,40}", s)
+            );
         }
         if !seen.insert(s) {
-            return Err(SettingsError::invalid(&at, format!("`{s}` is listed twice")));
+            return Err(SettingsError::invalid(&at, "role", format!("`{s}` is listed twice")).with("distinct roles", s));
         }
     }
     Ok(v.clone())
@@ -634,19 +699,21 @@ fn roles(path: &str, v: &Json) -> Result<Json, SettingsError> {
 
 /// The entries of a table that must have exactly `keys`.
 fn exact<'a>(path: &str, v: &'a Json, keys: &[String]) -> Result<&'a Map<String, Json>, SettingsError> {
-    let Json::Object(m) = v else { return Err(expected(path, "a table", v)) };
+    let Json::Object(m) = v else { return Err(expected(path, "type", "table", "a table", v)) };
     if let Some(k) = m.keys().find(|k| !keys.contains(k)) {
-        return Err(SettingsError::invalid(path, format!("unknown entry `{k}`")));
+        return Err(SettingsError::invalid(path, "unknown", format!("unknown entry `{k}`")).with(keys.join(","), k));
     }
     if let Some(k) = keys.iter().find(|k| !m.contains_key(*k)) {
-        return Err(SettingsError::invalid(path, format!("missing entry `{k}`")));
+        return Err(SettingsError::invalid(path, "items", format!("missing entry `{k}`")).with(k, "nothing"));
     }
     Ok(m)
 }
 
 fn check(f: &Field, v: &Json, path: &str) -> Result<Json, SettingsError> {
     match f.ty {
-        SettingType::Bool => v.as_bool().map(Json::Bool).ok_or_else(|| expected(path, "true or false", v)),
+        SettingType::Bool => {
+            v.as_bool().map(Json::Bool).ok_or_else(|| expected(path, "type", "bool", "true or false", v))
+        }
         SettingType::Int => {
             let n = match v {
                 Json::Number(n) => n.as_i64().or_else(|| {
@@ -655,23 +722,33 @@ fn check(f: &Field, v: &Json, path: &str) -> Result<Json, SettingsError> {
                 _ => None,
             }
             .filter(|n| n.abs() <= MAX_SAFE_INT)
-            .ok_or_else(|| expected(path, "an integer", v))?;
+            .ok_or_else(|| {
+                let rule = if v.is_number() { "integer" } else { "number" };
+                expected(path, rule, "integer", "an integer", v)
+            })?;
             in_range(f, path, n as f64)?;
             Ok(Json::from(n))
         }
         SettingType::Float => {
-            let n = v.as_f64().ok_or_else(|| expected(path, "a number", v))?;
+            let n = v.as_f64().ok_or_else(|| expected(path, "number", "number", "a number", v))?;
             in_range(f, path, n)?;
             Ok(Json::from(n))
         }
         SettingType::Enum => match v {
             Json::String(s) if f.values.contains(s) => Ok(v.clone()),
-            _ => Err(SettingsError::invalid(path, format!("must be one of {}", f.values.join(", ")))),
+            _ => {
+                let got = v.as_str().map_or_else(|| v.to_string(), str::to_string);
+                let msg = format!("must be one of {}", f.values.join(", "));
+                Err(SettingsError::invalid(path, "choice", msg).with(f.values.join(","), got))
+            }
         },
         SettingType::String => match v {
             Json::String(s) if s.chars().count() as u64 <= f.max_length => Ok(v.clone()),
-            Json::String(_) => Err(SettingsError::invalid(path, format!("at most {} characters", f.max_length))),
-            _ => Err(expected(path, "a text", v)),
+            Json::String(s) => {
+                let msg = format!("at most {} characters", f.max_length);
+                Err(SettingsError::invalid(path, "length", msg).with(f.max_length, s.chars().count()))
+            }
+            _ => Err(expected(path, "type", "string", "a text", v)),
         },
         SettingType::Roles => roles(path, v),
         SettingType::Matrix => {
@@ -685,7 +762,10 @@ fn check(f: &Field, v: &Json, path: &str) -> Result<Json, SettingsError> {
                     let at = format!("{at}.{col}");
                     let c = &cells[col];
                     let c = match f.cell {
-                        Cell::Bool => c.as_bool().map(Json::Bool).ok_or_else(|| expected(&at, "true or false", c))?,
+                        Cell::Bool => c
+                            .as_bool()
+                            .map(Json::Bool)
+                            .ok_or_else(|| expected(&at, "type", "bool", "true or false", c))?,
                         Cell::Roles => roles(&at, c)?,
                     };
                     r.insert(col.clone(), c);
@@ -695,16 +775,19 @@ fn check(f: &Field, v: &Json, path: &str) -> Result<Json, SettingsError> {
             Ok(Json::Object(out))
         }
         SettingType::List => {
-            let Json::Array(items) = v else { return Err(expected(path, "a list", v)) };
+            let Json::Array(items) = v else { return Err(expected(path, "type", "list", "a list", v)) };
             if items.len() as u64 > f.max_items {
-                return Err(SettingsError::invalid(path, format!("at most {} entries", f.max_items)));
+                let msg = format!("at most {} entries", f.max_items);
+                return Err(SettingsError::invalid(path, "items", msg).with(f.max_items, items.len()));
             }
             let mut out = Vec::with_capacity(items.len());
             for (i, item) in items.iter().enumerate() {
                 let at = format!("{path}[{i}]");
-                let Json::Object(m) = item else { return Err(expected(&at, "a table", item)) };
+                let Json::Object(m) = item else { return Err(expected(&at, "type", "table", "a table", item)) };
                 if let Some(k) = m.keys().find(|k| !f.item.iter().any(|x| &x.key == *k)) {
-                    return Err(SettingsError::invalid(&at, format!("unknown field `{k}`")));
+                    let fields: Vec<_> = f.item.iter().map(|x| x.key.as_str()).collect();
+                    return Err(SettingsError::invalid(&at, "unknown", format!("unknown field `{k}`"))
+                        .with(fields.join(","), k));
                 }
                 let mut rec = Map::new();
                 for sub in &f.item {
@@ -726,7 +809,13 @@ fn check(f: &Field, v: &Json, path: &str) -> Result<Json, SettingsError> {
 /// comma-separated list or a JSON list, `matrix` and `list` JSON.
 pub fn parse_input(field: &Field, text: &str) -> Result<Json, SettingsError> {
     let t = text.trim();
-    let bad = |what: &str| SettingsError::invalid(&field.key, format!("expected {what}"));
+    let rule = match field.ty {
+        SettingType::Int => "integer",
+        SettingType::Float => "number",
+        _ => "type",
+    };
+    let bad =
+        |what: &str| SettingsError::invalid(&field.key, rule, format!("expected {what}")).with(field.ty.name(), "text");
     let value = match field.ty {
         SettingType::Bool => match t.to_ascii_lowercase().as_str() {
             "true" | "on" | "yes" | "1" => Json::Bool(true),

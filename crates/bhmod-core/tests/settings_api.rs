@@ -215,10 +215,16 @@ fn admin_commands() {
     );
     // The host API used by the host app.
     assert_eq!(h.set_setting("cfg", "radius", &json!(16.0)), Ok(json!(16)));
-    assert_eq!(h.set_setting("cfg", "ghost", &json!(1)).unwrap_err().code(), "unknown-key");
-    assert_eq!(h.set_setting("nope", "radius", &json!(1)).unwrap_err().code(), "unknown-key");
-    assert_eq!(h.set_setting("cfg", "radius", &json!("x")).unwrap_err().code(), "invalid-value");
-    assert_eq!(console(&mut h, "/watched"), ["6"]);
+    assert_eq!(h.set_setting("cfg", "ghost", &json!(1)).unwrap_err().code(), "settingKey");
+    assert_eq!(h.set_setting("nope", "radius", &json!(1)).unwrap_err().code(), "settingKey");
+    assert_eq!(h.set_setting("cfg", "radius", &json!("x")).unwrap_err().code(), "setting");
+    let cbor = h.settings_schema_cbor("cfg").unwrap();
+    let back = bhmod_core::settings::from_cbor(&cbor).unwrap();
+    assert_eq!(back, h.settings_schema("cfg").unwrap());
+    assert!(h.settings_schema_cbor("nope").is_none());
+    assert_eq!(h.set_setting_cbor("cfg", "radius", &bhmod_core::settings::to_cbor(&json!(20))), Ok(json!(20)));
+    assert_eq!(h.set_setting_cbor("cfg", "radius", &[0xff]).unwrap_err().rule(), Some("type"));
+    assert_eq!(console(&mut h, "/watched"), ["7"]);
 }
 
 #[test]

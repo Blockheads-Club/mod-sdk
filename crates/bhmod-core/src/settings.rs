@@ -62,6 +62,18 @@ pub fn from_value(v: &Value) -> Result<Json, ApiError> {
     })
 }
 
+/// A JSON value (a setting value, the schema of [`crate::ModHost::settings_schema`]) as canonical CBOR, the form the
+/// 0xBC `SETTINGS_SCHEMA` / `SETTINGS_SET` byte strings carry (floats and negative integers allowed).
+pub fn to_cbor(j: &Json) -> Vec<u8> {
+    to_value(j).encode()
+}
+
+/// Canonical CBOR (a `SETTINGS_SET` value) as JSON for validation.
+pub fn from_cbor(bytes: &[u8]) -> Result<Json, ApiError> {
+    let v = Value::decode(bytes).map_err(|e| ApiError::InvalidArgument(format!("value: {e}")))?;
+    from_value(&v)
+}
+
 /// The payload of `<mod-id>:settings-changed`.
 pub fn changed_payload(keys: &[String]) -> Vec<u8> {
     Value::Map(vec![("keys".into(), Value::List(keys.iter().map(|k| Value::text(k)).collect()))]).encode()
@@ -87,6 +99,9 @@ mod tests {
         let v = to_value(&j);
         assert_eq!(from_value(&v).unwrap(), j);
         assert!(from_value(&Value::Bytes(vec![1])).is_err());
+        assert_eq!(from_cbor(&to_cbor(&j)).unwrap(), j);
+        assert_eq!(to_cbor(&json!(-1.5)), vec![0xf9, 0xbe, 0x00]);
+        assert!(from_cbor(&[0xff]).is_err());
         assert!(from_value(&Value::List(vec![Value::Float(f64::NAN)])).is_err());
         assert!(from_value(&Value::Map(vec![("k".into(), Value::Float(f64::INFINITY))])).is_err());
         let p = Value::decode(&changed_payload(&["a".into()])).unwrap();

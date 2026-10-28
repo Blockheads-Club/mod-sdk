@@ -215,9 +215,62 @@ fn values_are_validated_and_normalised() {
     assert!(err("channels", json!([{ "x": 1 }])).contains("unknown field `x`"));
     assert!(err("channels", json!([{ "name": "much too long" }])).contains("channels[0].name"));
     let e = validate_value(f("channels"), &json!(5)).unwrap_err();
-    assert_eq!(e.code(), "invalid-value");
-    assert_eq!(SettingsError::UnknownKey("k".into()).code(), "unknown-key");
+    assert_eq!(e.code(), "setting");
+    assert_eq!(SettingsError::UnknownKey("k".into()).code(), "settingKey");
+    assert_eq!(SettingsError::UnknownKey("k".into()).rule(), None);
+    assert_eq!(
+        SettingsError::UnknownKey("k".into()).to_json(),
+        json!({ "code": "settingKey", "key": "k", "message": "no setting `k`" })
+    );
     assert_eq!(SettingsError::UnknownKey("k".into()).to_string(), "no setting `k`");
+}
+
+#[test]
+fn error_rules() {
+    let fs = fields(ALL);
+    let f = |k: &str| fs.iter().find(|f| f.key == k).unwrap();
+    let rule = |k: &str, v: Json| {
+        let e = validate_value(f(k), &v).unwrap_err();
+        let j = e.to_json();
+        (e.rule().unwrap(), j["expected"].as_str().map(str::to_string), j["got"].as_str().map(str::to_string))
+    };
+    let some = |a: &str, b: &str| (Some(a.to_string()), Some(b.to_string()));
+    let r = |k: &str, v: Json| {
+        let (rule, e, g) = rule(k, v);
+        (rule, e, g)
+    };
+    assert_eq!(r("zeta", json!(1)), ("type", some("bool", "number").0, some("bool", "number").1));
+    assert_eq!(r("radius", json!(1.5)).0, "integer");
+    assert_eq!(r("radius", json!("x")), ("number", Some("integer".into()), Some("string".into())));
+    assert_eq!(r("radius", json!(1)), ("min", Some("4".into()), Some("1".into())));
+    assert_eq!(r("radius", json!(200)), ("max", Some("128".into()), Some("200".into())));
+    assert_eq!(r("gain", json!(true)).0, "number");
+    assert_eq!(r("curve", json!("x")), ("choice", Some("lin,log".into()), Some("x".into())));
+    assert_eq!(r("curve", json!(2)).2, Some("2".into()));
+    assert_eq!(r("motd", json!("x".repeat(11))), ("length", Some("10".into()), Some("11".into())));
+    assert_eq!(r("who", json!(["A"])).0, "role");
+    assert_eq!(r("who", json!(["a", "a"])).0, "role");
+    let many: Vec<_> = (0..65).map(|i| format!("r{i}")).collect();
+    assert_eq!(r("who", json!(many)), ("items", Some("64".into()), Some("65".into())));
+    assert_eq!(r("talk", json!({ "x": {} })).0, "unknown");
+    assert_eq!(r("talk", json!({})), ("items", Some("global".into()), Some("nothing".into())));
+    assert_eq!(r("channels", json!([{ "x": 1 }])), ("unknown", Some("name,open".into()), Some("x".into())));
+    assert_eq!(r("channels", json!([{}, {}, {}, {}])).0, "items");
+    let e = validate_value(f("radius"), &json!(1)).unwrap_err();
+    assert_eq!(
+        e.to_json(),
+        json!({ "code": "setting", "detail": "min", "key": "radius", "message": "radius: must be at least 4",
+            "expected": "4", "got": "1" })
+    );
+    let e = parse_input(f("gain"), "x").unwrap_err();
+    assert_eq!((e.rule(), e.to_json()["expected"].clone()), (Some("number"), json!("float")));
+    assert_eq!(parse_input(f("zeta"), "x").unwrap_err().rule(), Some("type"));
+    assert_eq!(parse_input(f("radius"), "x").unwrap_err().rule(), Some("integer"));
+    let mut bare = SettingsError::UnknownKey("k".into());
+    bare = bare.with("a", "b");
+    assert_eq!(bare, SettingsError::UnknownKey("k".into()));
+    let plain = SettingsError::invalid("p", "type", "m");
+    assert_eq!(plain.to_json(), json!({ "code": "setting", "detail": "type", "key": "p", "message": "p: m" }));
 }
 
 #[test]

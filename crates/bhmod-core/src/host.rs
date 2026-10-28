@@ -710,6 +710,24 @@ impl ModHost {
         Some(s.settings.to_json(&s.values))
     }
 
+    /// [`ModHost::settings_schema`] as canonical CBOR (the `schema` byte string of 0xBC `SETTINGS_SCHEMA`).
+    pub fn settings_schema_cbor(&self, id: &str) -> Option<Vec<u8>> {
+        self.settings_schema(id).map(|j| cfg::to_cbor(&j))
+    }
+
+    /// [`ModHost::set_setting`] with the value as canonical CBOR (the `value` byte string of 0xBC `SETTINGS_SET`;
+    /// bytes that do not decode break the `type` rule). The sender's rights are the host program's job.
+    pub fn set_setting_cbor(&mut self, id: &str, key: &str, value: &[u8]) -> Result<Json, SettingsError> {
+        let j = cfg::from_cbor(value).map_err(|e| SettingsError::Invalid {
+            path: key.to_string(),
+            rule: "type",
+            message: e.to_string(),
+            expected: None,
+            got: None,
+        })?;
+        self.set_setting(id, key, &j)
+    }
+
     /// The current setting values of mod `id` (every key). `None` for a mod that is not loaded.
     pub fn settings_values(&self, id: &str) -> Option<Map<String, Json>> {
         self.slot_of(id).map(|i| self.slots[i].values.clone())
@@ -1588,8 +1606,7 @@ impl HostApi for Ctx<'_> {
         Value::Map(fields.iter().map(|f| (f.key.clone(), cfg::to_value(&values[&f.key]))).collect()).encode()
     }
     fn settings_set(&mut self, key: &str, value: &[u8]) -> Result<(), ApiError> {
-        let v = Value::decode(value).map_err(|e| ApiError::InvalidArgument(format!("value: {e}")))?;
-        let j = cfg::from_value(&v)?;
+        let j = cfg::from_cbor(value)?;
         self.host.set_in_slot(self.owner, key, &j).map(|_| ()).map_err(|e| ApiError::InvalidArgument(e.to_string()))
     }
 
