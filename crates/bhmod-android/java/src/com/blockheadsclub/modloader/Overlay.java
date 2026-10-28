@@ -188,6 +188,7 @@ final class Overlay {
             case "world":
                 inWorld = c.optBoolean("open");
                 running = c.optJSONArray("settings");
+                if (inWorld) VoiceUi.watchTaps(true);
                 if (!inWorld) {
                     VoiceUi.clearAll();
                     if (SettingsScreen.open) SettingsScreen.close();

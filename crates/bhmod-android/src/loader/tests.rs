@@ -784,6 +784,7 @@ function mod.on_enable()
         end
     end)
     bh.events.on_custom("vtest:settings-changed", function(_ev) bh.log.info("settings changed") end)
+    bh.events.on_custom("vtest:ui-pick", function(ev) bh.log.info("picked " .. ev.payload.player) end)
 end
 return mod
 "#;
@@ -932,6 +933,15 @@ fn voice_flows_through_the_pipeline_and_the_mods() {
     r.l.on_frame();
     let heads = ui_of(&r, "overhead");
     assert_eq!(heads.last().unwrap()["items"][0]["icons"][0], "speaking", "{heads:?}");
+    // a tap on p1's blockhead picks it for the mods; a tap elsewhere or without a camera picks nobody
+    let at = heads.last().unwrap()["items"][0].clone();
+    let (hx, hy) = (at["x"].as_f64().unwrap() as f32, at["y"].as_f64().unwrap() as f32);
+    r.l.on_ui(UiEvent::Tap(hx, hy + 0.05));
+    assert!(r.p.logged("picked p1"), "{:?}", r.p.logs.borrow());
+    r.l.on_ui(UiEvent::Tap(0.0, 0.0));
+    r.p.camera.set(None);
+    r.l.on_ui(UiEvent::Tap(hx, hy + 0.05));
+    r.p.camera.set(Some(Camera { projection: p, modelview: id, viewport: [0, 0, 100, 50] }));
     // the admin hides "speaking": the icon goes, and the tracking stops once no icon is left
     link.icons.set(Some(Icons { speaking: false, ..Default::default() }));
     r.p.now.set(300);

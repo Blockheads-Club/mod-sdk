@@ -186,7 +186,8 @@ impl<P: Platform + 'static> Loader<P> {
             admin_mute: icons.admin_mute,
         });
         let active = hud.board.active();
-        self.tracker.set_active(active);
+        // Blockheads are tracked for the icons and, while mods run, for taps on them (`ui-pick`).
+        self.tracker.set_active(active || self.host.is_some());
         if active {
             let players: BTreeSet<&str> = hud.board.players().into_iter().collect();
             let heads = self.p.camera().map(|c| self.tracker.heads(now, &players, &c)).unwrap_or_default();
@@ -198,6 +199,15 @@ impl<P: Platform + 'static> Loader<P> {
             self.overhead_shown = false;
             hud.board.reset_post();
             self.p.ui(serde_json::json!({"t": "overhead", "items": []}).to_string());
+        }
+    }
+
+    /// A tap on the game: the blockhead under it, if any, is picked for the mods.
+    pub(super) fn on_tap(&mut self, x: f32, y: f32) {
+        let Some(cam) = self.p.camera() else { return };
+        let Some(player) = self.tracker.pick(self.p.now_ms(), &cam, x, y) else { return };
+        if let Some(h) = self.host.as_mut() {
+            h.ui_pick(&player);
         }
     }
 

@@ -170,6 +170,8 @@ pub enum UiEvent {
     MicPermission(bool),
     /// The host's push-to-talk seam (`Native.ptt`): talk in the default mode.
     Ptt(bool),
+    /// A tap on the game at screen fractions `x`, `y` (a blockhead there is picked: `<mod-id>:ui-pick`).
+    Tap(f32, f32),
 }
 
 /// Builds the runtimes for a new host.
@@ -506,6 +508,7 @@ impl<P: Platform + 'static> Loader<P> {
             UiEvent::Ptt(down) => {
                 let _ = self.slot.talk(None, down);
             }
+            UiEvent::Tap(x, y) => self.on_tap(x, y),
         }
         self.flush_outbox();
     }
