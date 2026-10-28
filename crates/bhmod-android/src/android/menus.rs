@@ -268,6 +268,11 @@ extern "C" fn hook_render(
         // `setFrame:` builds the title texture, so it runs once (on the GL thread, in the first frame) and then
         // only when the layout moved.
         if !e.drawn || want != e.placed {
+            if !e.drawn && e.menu == Menu::Main {
+                // The main menu shows (no connection, no world loading): the Java side may offer the microphone
+                // (first launch).
+                java_post(r#"{"t":"main-menu"}"#);
+            }
             set_frame(e.button, want);
             e.placed = want;
             e.drawn = true;

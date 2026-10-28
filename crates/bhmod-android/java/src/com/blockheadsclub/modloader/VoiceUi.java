@@ -49,6 +49,7 @@ final class VoiceUi {
             case "overhead": overhead(a, c.optJSONArray("items")); break;
             case "voice-mic": indicator(a, c.optBoolean("on"), c.optString("mode")); break;
             case "voice-denied": Overlay.toast(Strings.t("mic_denied")); break;
+            case "voice-needs-mic": Overlay.toast(Strings.t("mic_from_menu")); break;
             default: break;
         }
     }
@@ -292,36 +293,74 @@ final class VoiceUi {
         }
     }
 
-    // ---- taps on blockheads (ui-pick) --------------------------------------------------------------------------
+    // ---- long presses on blockheads (ui-pick) -----------------------------------------------------------------
 
-    private static View watcher;
+    private static boolean watching;
 
     /**
-     * While a world is open, a 1-pixel window with {@code FLAG_WATCH_OUTSIDE_TOUCH} sees where every touch on the
-     * game starts (same app, so the coordinates are kept) without taking it; the native side picks the blockhead
-     * under it.
+     * While a world is open, a long press (held {@link #LONG_PRESS_MS} without moving) on the game picks the
+     * blockhead under it for the mods (`ui-pick`); plain taps stay the game's. The game draws in its own dialog
+     * (Apportable's {@code com.apportable.ui.Window.sKeyWindowDialog}); its window callback is wrapped once to see the
+     * touches, which all still go to the game.
      */
     static void watchTaps(boolean on) {
-        Activity a = Overlay.activity();
-        if (watcher != null) Overlay.remove(watcher);
-        watcher = null;
-        if (!on || a == null) return;
-        View v = new View(a);
-        v.setOnTouchListener(new View.OnTouchListener() {
-            public boolean onTouch(View w, MotionEvent e) {
-                if (e.getActionMasked() != MotionEvent.ACTION_OUTSIDE) return false;
+        watching = on;
+        if (!on) return;
+        try {
+            java.lang.reflect.Field f = Class.forName("com.apportable.ui.Window").getDeclaredField("sKeyWindowDialog");
+            f.setAccessible(true);
+            android.app.Dialog dialog = (android.app.Dialog) f.get(null);
+            android.view.Window w = dialog == null ? null : dialog.getWindow();
+            if (w == null || w.getCallback() == null || w.getCallback() instanceof LongPress) return;
+            w.setCallback(new LongPress(w.getCallback()));
+        } catch (Throwable t) {
+            android.util.Log.w(Bridge.TAG, "long presses on blockheads unavailable", t);
+        }
+    }
+
+    /** Sees the game's touches and reports a still, single-finger hold of 500 ms. */
+    static final class LongPress extends WindowCallbackWrapper {
+        private float downX, downY;
+        private final Runnable fire = new Runnable() {
+            public void run() {
                 Activity act = Overlay.activity();
-                if (act == null) return false;
-                final float x = e.getRawX() / screenW(act), y = e.getRawY() / screenH(act);
+                if (!watching || act == null) return;
+                final float x = downX / screenW(act), y = downY / screenH(act);
                 Native.ok(new Runnable() { public void run() { Native.tap(x, y); } });
-                return false;
             }
-        });
-        WindowManager.LayoutParams lp = Overlay.params(1, 1, WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
-            | WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL | WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH);
-        lp.gravity = Gravity.TOP | Gravity.START;
-        watcher = v;
-        Overlay.add(v, lp);
+        };
+
+        LongPress(android.view.Window.Callback inner) {
+            super(inner);
+        }
+
+        @Override public boolean dispatchTouchEvent(MotionEvent e) {
+            try {
+                switch (e.getActionMasked()) {
+                    case MotionEvent.ACTION_DOWN:
+                        downX = e.getRawX();
+                        downY = e.getRawY();
+                        Bridge.ui.removeCallbacks(fire);
+                        if (watching) Bridge.ui.postDelayed(fire, LONG_PRESS_MS);
+                        break;
+                    case MotionEvent.ACTION_MOVE: {
+                        Activity act = Overlay.activity();
+                        int slop = act == null ? 24 : ViewConfiguration.get(act).getScaledTouchSlop() * 2;
+                        if (Math.hypot(e.getRawX() - downX, e.getRawY() - downY) > slop) Bridge.ui.removeCallbacks(fire);
+                        break;
+                    }
+                    case MotionEvent.ACTION_POINTER_DOWN:
+                    case MotionEvent.ACTION_UP:
+                    case MotionEvent.ACTION_CANCEL:
+                        Bridge.ui.removeCallbacks(fire);
+                        break;
+                    default:
+                        break;
+                }
+            } catch (Throwable ignored) {
+            }
+            return super.dispatchTouchEvent(e);
+        }
     }
 
     // ---- overhead icons ----------------------------------------------------------------------------------------

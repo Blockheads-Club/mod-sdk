@@ -15,6 +15,7 @@
 pub mod aaudio;
 pub mod cosmetics;
 pub mod items;
+pub mod lifecycle;
 pub mod menus;
 pub mod native;
 pub mod objc;
@@ -485,6 +486,7 @@ fn install_hooks() -> bool {
     let disconnect = objc::swizzle("BHNetClientMatch", "disconnect", hook_disconnect as Imp);
     let ok = [draw_frame, receive, send_info, disconnect].iter().all(|p| !p.is_null());
     menus::install();
+    lifecycle::install();
     let _ = ORIG.set(Originals { draw_frame, receive, send_info, disconnect });
     if !ok {
         log(LogLevel::Error, "a game method was not found; this game version is not supported, mods may not work");

@@ -247,6 +247,35 @@ final class Strings {
             "Sesli sohbet için mikrofon gerekir. Android ayarlarından izin verebilirsin.",
             "Голосовому чату нужен микрофон. Разреши его в настройках Android.",
             "Дауыстық чатқа микрофон керек. Android баптауларында рұқсат бере аласың.");
+        p("mic_from_menu", "Turn on the microphone from the Mods screen in the main menu.",
+            "Mikrofonu ana menüdeki Modlar ekranından aç.",
+            "Включи микрофон на экране «Моды» в главном меню.",
+            "Микрофонды басты мәзірдегі «Модтар» экранынан қос.");
+        p("mic_title", "Microphone for voice chat", "Sesli sohbet için mikrofon", "Микрофон для голосового чата", "Дауыстық чатқа арналған микрофон");
+        p("mic_body", "Lets voice chat mods use the microphone. Nothing is recorded, and voice chat still asks before it turns the microphone on.",
+            "Sesli sohbet modlarının mikrofonu kullanmasına izin verir. Hiçbir şey kaydedilmez; sesli sohbet mikrofonu açmadan önce yine sorar.",
+            "Разрешает модам голосового чата пользоваться микрофоном. Ничего не записывается, и голосовой чат всё равно спрашивает, прежде чем включить микрофон.",
+            "Дауыстық чат модтарына микрофонды қолдануға рұқсат береді. Ештеңе жазылмайды, дауыстық чат микрофонды қоспас бұрын бәрібір сұрайды.");
+        p("mic_no_patch", "This game was patched without the microphone. Patch it again with the record-audio (microphone) patch to talk in voice chat.",
+            "Bu oyun mikrofonsuz yamalanmış. Sesli sohbette konuşmak için oyunu record-audio (mikrofon) yamasıyla yeniden yamala.",
+            "Игра пропатчена без микрофона. Чтобы говорить в голосовом чате, пропатчи её заново с патчем record-audio (микрофон).",
+            "Ойын микрофонсыз патчталған. Дауыстық чатта сөйлеу үшін оны record-audio (микрофон) патчымен қайта патчта.");
+        p("mic_in_world", "Leave the world first: Android's microphone question would end your connection.",
+            "Önce dünyadan çık: Android'in mikrofon sorusu bağlantını keser.",
+            "Сначала выйди из мира: вопрос Android о микрофоне прервёт соединение.",
+            "Алдымен әлемнен шық: Android-тың микрофон туралы сұрағы байланысты үзеді.");
+        p("mic_settings", "Change the microphone in the app's Android settings.",
+            "Mikrofonu uygulamanın Android ayarlarından değiştir.",
+            "Микрофон меняется в настройках приложения Android.",
+            "Микрофонды қолданбаның Android баптауларынан өзгерт.");
+        p("mic_ask_body", "Some servers have voice chat. Allow the microphone now? Nothing turns on until you choose to talk, and you can change this on the Mods screen.",
+            "Bazı sunucularda sesli sohbet var. Mikrofona şimdi izin verilsin mi? Konuşmayı seçene kadar hiçbir şey açılmaz; bunu Modlar ekranından değiştirebilirsin.",
+            "На некоторых серверах есть голосовой чат. Разрешить микрофон сейчас? Ничего не включится, пока ты сам не решишь говорить, а изменить это можно на экране «Моды».",
+            "Кейбір серверлерде дауыстық чат бар. Микрофонға қазір рұқсат бересің бе? Сөйлеуді таңдамайынша ештеңе қосылмайды, мұны «Модтар» экранында өзгертуге болады.");
+        p("mic_allow", "Allow…", "İzin ver…", "Разрешить…", "Рұқсат беру…");
+        p("mic_turn_on", "Allow the microphone", "Mikrofona izin ver", "Разрешить микрофон", "Микрофонға рұқсат беру");
+        p("mic_is_on", "Allowed · Android settings", "İzin verildi · Android ayarları", "Разрешён · настройки Android", "Рұқсат етілген · Android баптаулары");
+        p("not_now", "Not now", "Şimdi değil", "Не сейчас", "Қазір емес");
         p("settings", "Settings", "Ayarlar", "Настройки", "Баптаулар");
         p("settings_title", "{mod} settings", "{mod} ayarları", "Настройки: {mod}", "{mod} баптаулары");
         p("settings_mine", "On this phone", "Bu telefonda", "На этом телефоне", "Осы телефонда");

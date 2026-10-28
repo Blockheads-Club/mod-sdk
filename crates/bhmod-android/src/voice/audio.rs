@@ -215,6 +215,9 @@ pub enum Mic {
     AskPermission,
     /// The system dialog is already up.
     Waiting,
+    /// The permission is missing and may not be asked now: the system dialog would pause the game, which then
+    /// leaves an online world. The player allows the microphone from the Mods screen in the main menu.
+    NeedsPermission,
     /// The player refused the permission.
     Denied,
     /// The backend could not open the microphone.
@@ -225,6 +228,8 @@ pub enum Mic {
 pub struct AudioIo {
     backend: Box<dyn Backend>,
     permission: Permission,
+    /// The system dialog may be shown (see [`Mic::NeedsPermission`]).
+    may_ask: bool,
     want_mic: bool,
     capture: Option<Box<dyn Stream>>,
     playback: Option<Box<dyn Stream>>,
@@ -238,12 +243,19 @@ impl AudioIo {
         AudioIo {
             backend,
             permission,
+            may_ask: true,
             want_mic: false,
             capture: None,
             playback: None,
             frames: Arc::default(),
             output: Arc::default(),
         }
+    }
+
+    /// Whether the system dialog may be shown while this connection runs (default: yes).
+    pub fn asking(mut self, may_ask: bool) -> AudioIo {
+        self.may_ask = may_ask;
+        self
     }
 
     /// The backend in use.
@@ -288,6 +300,7 @@ impl AudioIo {
             return Mic::Open;
         }
         match self.permission {
+            Permission::Unknown if !self.may_ask => Mic::NeedsPermission,
             Permission::Unknown => {
                 self.permission = Permission::Requested;
                 Mic::AskPermission
@@ -461,6 +474,17 @@ mod tests {
         assert_eq!(io.set_mic(false), Mic::Closed);
         assert!(io.frames().is_empty());
         assert_eq!(fake.0.lock().unwrap().closed, 1);
+    }
+
+    #[test]
+    fn without_asking_the_mic_needs_the_permission_from_the_menu() {
+        let fake = FakeBackend::default();
+        let mut io = AudioIo::new(Box::new(fake.clone()), Permission::Unknown).asking(false);
+        assert_eq!(io.set_mic(true), Mic::NeedsPermission);
+        assert_eq!(io.permission(), Permission::Unknown, "nothing was asked");
+        assert_eq!(io.set_mic(true), Mic::NeedsPermission);
+        let mut io = AudioIo::new(Box::new(fake), Permission::Granted).asking(false);
+        assert_eq!(io.set_mic(true), Mic::Open, "a granted permission needs no question");
     }
 
     #[test]

@@ -165,7 +165,8 @@ pub enum UiEvent {
     MicPermission(bool),
     /// The host's push-to-talk seam (`Native.ptt`): talk in the default mode.
     Ptt(bool),
-    /// A tap on the game at screen fractions `x`, `y` (a blockhead there is picked: `<mod-id>:ui-pick`).
+    /// A long press (500 ms, still) on the game at screen fractions `x`, `y` (a blockhead there is picked:
+    /// `<mod-id>:ui-pick`).
     Tap(f32, f32),
 }
 
@@ -315,6 +316,8 @@ pub struct Loader<P: Platform + 'static> {
     settings_open: Option<String>,
     /// Mods granted `voice` in the running host.
     voice_mods: BTreeSet<String>,
+    /// Display names (`mod.toml` `name`) of the mods of the running host.
+    mod_names: BTreeMap<String, BTreeMap<String, String>>,
 }
 
 impl<P: Platform + 'static> Loader<P> {
@@ -351,6 +354,7 @@ impl<P: Platform + 'static> Loader<P> {
             server_forms: BTreeMap::new(),
             settings_open: None,
             voice_mods: BTreeSet::new(),
+            mod_names: BTreeMap::new(),
         }
     }
 
@@ -626,6 +630,7 @@ impl<P: Platform + 'static> Loader<P> {
         self.hud.borrow_mut().clear();
         self.settings_open = None;
         self.voice_mods.clear();
+        self.mod_names.clear();
         *self.content_lock() = Content::new();
         self.last_tick = 0;
     }
@@ -819,13 +824,11 @@ impl<P: Platform + 'static> Loader<P> {
             return Ok(Vec::new());
         }
         let installed = self.installed().list();
-        self.voice_mods = server_mods
-            .iter()
-            .map(|a| &a.manifest)
-            .chain(installed.iter().filter(|m| m.enabled).map(|m| &m.manifest))
-            .filter(|m| m.permissions.voice)
-            .map(|m| m.id.clone())
-            .collect();
+        let manifests = || {
+            server_mods.iter().map(|a| &a.manifest).chain(installed.iter().filter(|m| m.enabled).map(|m| &m.manifest))
+        };
+        self.voice_mods = manifests().filter(|m| m.permissions.voice).map(|m| m.id.clone()).collect();
+        self.mod_names = manifests().map(|m| (m.id.clone(), m.name.clone())).collect();
         let mut opts = HostOptions::new(&self.dirs.run, Side::Client);
         // The host writes the client settings file but does not make its folder.
         let _ = fs::create_dir_all(&self.dirs.device);

@@ -185,6 +185,9 @@ final class Overlay {
             case "open-mods":
                 ModsScreen.open();
                 break;
+            case "main-menu":
+                Voice.mainMenu();
+                break;
             case "world":
                 inWorld = c.optBoolean("open");
                 running = c.optJSONArray("settings");
@@ -245,6 +248,15 @@ final class Overlay {
 
     /** Shows `panel` as the only dialog, in a focusable window over the game: system back runs `onBack`. */
     static void show(final View panel) {
+        show(panel, true);
+    }
+
+    /**
+     * Shows `panel` as the only dialog. A focusable window takes the window focus from the game, which then resigns
+     * active (it shows its PAUSE menu); with `focusable` false the dialog takes touches only (system back goes to the
+     * game) until {@link #focusDialog()}, e.g. when the player starts typing in a field.
+     */
+    static void show(final View panel, boolean focusable) {
         Activity a = activity();
         if (a == null || attachedTo == null) {
             dialog = panel;
@@ -286,12 +298,26 @@ final class Overlay {
         lp.setMargins(0, Kit.u(a, 4), 0, Kit.u(a, 4));
         if (panel.getParent() instanceof ViewGroup) ((ViewGroup) panel.getParent()).removeView(panel);
         scrim.addView(panel, lp);
-        WindowManager.LayoutParams wlp = params(-1, -1, 0);
+        WindowManager.LayoutParams wlp = params(-1, -1, focusable ? 0 : WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE);
         wlp.softInputMode = WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE;
         add(scrim, wlp);
         scrim.requestFocus();
         dialog = scrim;
         updateMark();
+    }
+
+    /** Lets the open dialog take the window focus (keyboard and system back). */
+    static void focusDialog() {
+        View d = dialog;
+        if (d == null || !added.contains(d)) return;
+        WindowManager.LayoutParams lp = (WindowManager.LayoutParams) d.getLayoutParams();
+        if ((lp.flags & WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE) == 0) return;
+        lp.flags &= ~WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE;
+        try {
+            ((WindowManager) d.getContext().getSystemService(Context.WINDOW_SERVICE)).updateViewLayout(d, lp);
+        } catch (RuntimeException ignored) {
+        }
+        d.requestFocus();
     }
 
     static void dismiss() {

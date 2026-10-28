@@ -25,6 +25,8 @@ struct Fake {
     backend: RefCell<Option<crate::voice::audio::fake::FakeBackend>>,
     permission: Cell<crate::voice::audio::Permission>,
     asked: Cell<u32>,
+    /// The phone may not show the RECORD_AUDIO dialog in a connection (no lifecycle guard).
+    no_ask: Cell<bool>,
     camera: Cell<Option<Camera>>,
 }
 
@@ -60,7 +62,7 @@ impl Platform for Fake {
     }
     fn audio(&self) -> Option<AudioIo> {
         let b = self.backend.borrow().clone()?;
-        Some(AudioIo::new(Box::new(b), self.permission.get()))
+        Some(AudioIo::new(Box::new(b), self.permission.get()).asking(!self.no_ask.get()))
     }
     fn ask_mic(&self) {
         self.asked.set(self.asked.get() + 1);
@@ -968,6 +970,20 @@ fn voice_flows_through_the_pipeline_and_the_mods() {
     r.l.on_frame();
     r.l.on_frame();
     assert_eq!(ui_of(&r, "overhead").len(), before + 1);
+}
+
+#[test]
+fn without_the_dialog_in_a_world_the_player_is_sent_to_the_mods_screen() {
+    let (mut r, _link) = voice_rig(&["voice", "settings"], true);
+    r.p.no_ask.set(true);
+    r.l.on_world(Some("w"));
+    r.l.on_ui(UiEvent::Button { mod_id: "vtest".into(), id: "ptt".into(), action: "press".into() });
+    r.p.now.set(10);
+    r.l.on_frame();
+    assert_eq!(r.p.asked.get(), 0, "no system dialog in a connection");
+    assert_eq!(ui_of(&r, "voice-needs-mic").len(), 1);
+    assert!(r.p.logged("mic denied"), "the mod hears denied: {:?}", r.p.logs.borrow());
+    assert!(ui_of(&r, "voice-denied").is_empty());
 }
 
 fn last_result(r: &Rig) -> Value {

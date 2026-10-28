@@ -98,6 +98,10 @@ impl<P: Platform + 'static> Loader<P> {
         for n in notes {
             match n {
                 Notice::AskPermission => self.p.ask_mic(),
+                Notice::NeedsPermission => {
+                    self.p.log(LogLevel::Info, "voice: microphone not allowed; it is allowed from the Mods screen");
+                    self.p.ui(ui::mic_needs_menu());
+                }
                 Notice::Mic(state) => {
                     self.p.log(LogLevel::Info, &format!("voice: microphone {}", state.name()));
                     if state == MicState::Denied {
@@ -176,7 +180,7 @@ impl<P: Platform + 'static> Loader<P> {
             admin_mute: icons.admin_mute,
         });
         let active = hud.board.active();
-        // Blockheads are tracked for the icons and, while mods run, for taps on them (`ui-pick`).
+        // Blockheads are tracked for the icons and, while mods run, for long presses on them (`ui-pick`).
         self.tracker.set_active(active || self.host.is_some());
         if active {
             let players: BTreeSet<&str> = hud.board.players().into_iter().collect();
@@ -258,7 +262,8 @@ impl<P: Platform + 'static> Loader<P> {
         });
         let server = self.server_forms.get(mod_id);
         self.settings_open = Some(mod_id.to_string());
-        self.p.ui(ui::settings_screen(mod_id, client.as_ref(), &keys, voice.as_ref(), server));
+        let name = self.mod_names.get(mod_id);
+        self.p.ui(ui::settings_screen(mod_id, name, client.as_ref(), &keys, voice.as_ref(), server));
     }
 
     fn setting_failed(&self, mod_id: &str, message: &str) {
