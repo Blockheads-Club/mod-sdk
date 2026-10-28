@@ -81,6 +81,7 @@ final class Overlay {
             dialog = null;
             show(d);
         }
+        VoiceUi.reattach();
         maybeWelcome();
     }
 
@@ -95,6 +96,7 @@ final class Overlay {
         remove(hudWin);
         add(markWin, ml);
         add(hudWin, hl);
+        VoiceUi.raise();
         if (dialog != null) {
             WindowManager.LayoutParams dl = (WindowManager.LayoutParams) dialog.getLayoutParams();
             remove(dialog);

@@ -20,6 +20,7 @@ pub mod menus;
 pub mod native;
 pub mod objc;
 pub mod opensles;
+pub mod overhead;
 pub mod voice;
 pub mod weapons;
 
@@ -172,6 +173,24 @@ pub(crate) fn java_bool(name: &str) -> bool {
     }
 }
 
+/// Queues an answer from a Java thread for the loader thread.
+pub(crate) fn push_ui(ev: UiEvent) {
+    EVENTS.lock().unwrap_or_else(|e| e.into_inner()).push(ev);
+}
+
+/// Milliseconds since the library loaded (the loader's clock).
+pub(crate) fn now_ms() -> u64 {
+    START.get_or_init(Instant::now).elapsed().as_millis() as u64
+}
+
+/// The open world (loader thread), null outside one.
+pub(crate) fn world() -> Id {
+    if !INBOX.is_owner() {
+        return std::ptr::null_mut();
+    }
+    WORLD.with(|w| *w.borrow()) as Id
+}
+
 /// True on the loader thread while a world is open.
 pub(crate) fn in_world() -> bool {
     INBOX.is_owner() && WORLD.with(|w| *w.borrow() != 0)
@@ -182,7 +201,7 @@ pub struct AndroidPlatform;
 
 impl Platform for AndroidPlatform {
     fn now_ms(&self) -> u64 {
-        START.get_or_init(Instant::now).elapsed().as_millis() as u64
+        now_ms()
     }
     fn log(&self, level: LogLevel, msg: &str) {
         log(level, msg);
@@ -217,6 +236,18 @@ impl Platform for AndroidPlatform {
     fn unload_native(&self, mod_id: &str) {
         native::unload(mod_id);
     }
+    fn audio(&self) -> Option<crate::voice::audio::AudioIo> {
+        voice::audio()
+    }
+    fn ask_mic(&self) {
+        voice::ask_mic();
+    }
+    fn send_unsequenced(&self, packet: &[u8]) -> bool {
+        voice::send_unsequenced(packet)
+    }
+    fn camera(&self) -> Option<crate::overhead::Camera> {
+        overhead::camera(world())
+    }
 }
 
 /// Runs `f` on the loader (created on first use), then the deferred game calls. `None` off the loader thread.
@@ -229,16 +260,20 @@ fn with_loader<R>(f: impl FnOnce(&mut Loader<AndroidPlatform>) -> R) -> Option<R
         if l.is_none() {
             let dirs = Dirs::under(&data_dir());
             let wasm_cache = data_dir().join("wasm-cache");
+            let unsequenced = voice::unsequenced_available();
             let loader = Loader::new(
                 Rc::new(AndroidPlatform),
                 dirs,
                 crate::caps(),
-                crate::options(),
+                crate::options_with(unsequenced),
                 Box::new(move || crate::runtimes(&wasm_cache)),
             )
-            .with_budgets(crate::budgets());
-            // The blockhead hooks run on the game's other threads: they read the cosmetics through this handle.
+            .with_budgets(crate::budgets())
+            .with_voice(crate::voice::client::factory(unsequenced));
+            // The blockhead hooks run on the game's other threads: they read the cosmetics and report blockheads
+            // (overhead icons) through these handles.
             let _ = cosmetics::SHARED.set(loader.content());
+            let _ = cosmetics::TRACKER.set(loader.tracker());
             *l = Some(loader);
         }
         Some(f(l.as_mut().expect("just set")))
@@ -333,6 +368,9 @@ extern "C" fn hook_draw_frame(this: Id, cmd: Sel) {
             }
             if changed {
                 cosmetics::reset();
+                if let Some(t) = cosmetics::TRACKER.get() {
+                    t.reset();
+                }
                 if world.is_null() {
                     l.on_world(None);
                 } else {
@@ -704,4 +742,88 @@ pub extern "system" fn Java_com_blockheadsclub_modloader_Native_remove(
     } else {
         JNI_FALSE
     }
+}
+
+fn push_str(env: &mut JNIEnv, s: &JString) -> String {
+    jstr(env, s).unwrap_or_default()
+}
+
+/// `Native.uiButton(mod, id, action)`: an on-screen button of a mod was used.
+#[no_mangle]
+pub extern "system" fn Java_com_blockheadsclub_modloader_Native_uiButton(
+    mut env: JNIEnv,
+    _c: JClass,
+    mod_id: JString,
+    id: JString,
+    action: JString,
+) {
+    let ev = UiEvent::Button {
+        mod_id: push_str(&mut env, &mod_id),
+        id: push_str(&mut env, &id),
+        action: push_str(&mut env, &action),
+    };
+    push_ui(ev);
+}
+
+/// `Native.buttonMoved(mod, id, x, y)`: the player dropped a button.
+#[no_mangle]
+pub extern "system" fn Java_com_blockheadsclub_modloader_Native_buttonMoved(
+    mut env: JNIEnv,
+    _c: JClass,
+    mod_id: JString,
+    id: JString,
+    x: jni::sys::jfloat,
+    y: jni::sys::jfloat,
+) {
+    let ev = UiEvent::ButtonMoved { mod_id: push_str(&mut env, &mod_id), id: push_str(&mut env, &id), x, y };
+    push_ui(ev);
+}
+
+/// `Native.voiceMode(mode)`: picked in the long-press picker.
+#[no_mangle]
+pub extern "system" fn Java_com_blockheadsclub_modloader_Native_voiceMode(mut env: JNIEnv, _c: JClass, mode: JString) {
+    let m = push_str(&mut env, &mode);
+    push_ui(UiEvent::VoiceMode(m));
+}
+
+/// `Native.key(name, down)`: a hardware key.
+#[no_mangle]
+pub extern "system" fn Java_com_blockheadsclub_modloader_Native_key(
+    mut env: JNIEnv,
+    _c: JClass,
+    name: JString,
+    down: jboolean,
+) {
+    let n = push_str(&mut env, &name);
+    push_ui(UiEvent::Key(n, down != JNI_FALSE));
+}
+
+/// `Native.openSettings(mod)`: the Mods screen opens a mod's settings.
+#[no_mangle]
+pub extern "system" fn Java_com_blockheadsclub_modloader_Native_openSettings(
+    mut env: JNIEnv,
+    _c: JClass,
+    mod_id: JString,
+) {
+    let m = push_str(&mut env, &mod_id);
+    push_ui(UiEvent::OpenSettings(m));
+}
+
+/// `Native.settingSet(mod, scope, key, json)`: a change in the settings screen.
+#[no_mangle]
+pub extern "system" fn Java_com_blockheadsclub_modloader_Native_settingSet(
+    mut env: JNIEnv,
+    _c: JClass,
+    mod_id: JString,
+    scope: JString,
+    key: JString,
+    json: JString,
+) {
+    let ev = UiEvent::Setting {
+        mod_id: push_str(&mut env, &mod_id),
+        scope: push_str(&mut env, &scope),
+        key: push_str(&mut env, &key),
+        json: push_str(&mut env, &json),
+    };
+    push_ui(ev);
 }

@@ -15,8 +15,11 @@ use bhmod_core::voice::Mode;
 
 use super::audio::{AudioIo, Mic, FRAME};
 
-/// Stereo samples kept queued for the device: 60 ms (the game thread runs at up to 60 Hz and sometimes stalls).
-pub const TARGET: usize = super::audio::SAMPLE_RATE as usize * 6 / 100 * 2;
+/// One mixed 20 ms frame: interleaved stereo samples.
+pub const BLOCK: usize = FRAME * 2;
+/// Stereo samples kept queued for the device: three frames, 60 ms (the game thread runs at up to 60 Hz and sometimes
+/// stalls).
+pub const TARGET: usize = BLOCK * 3;
 
 /// A packet the driver wants sent.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -175,16 +178,16 @@ impl Pipeline {
             }
         }
         let ring = self.io.output();
-        let need = TARGET.saturating_sub(ring.len()) & !1;
-        if need == 0 {
-            return;
+        // The driver mixes one 20 ms frame per call (each call takes the next frame out of every jitter buffer),
+        // so the ring is topped up in whole frames.
+        while ring.len() < TARGET {
+            self.mix.clear();
+            self.mix.resize(BLOCK, 0.0);
+            d.mix(&mut self.mix);
+            self.pcm.clear();
+            self.pcm.extend(self.mix.iter().map(|f| to_i16(*f)));
+            ring.write(&self.pcm);
         }
-        self.mix.clear();
-        self.mix.resize(need, 0.0);
-        d.mix(&mut self.mix);
-        self.pcm.clear();
-        self.pcm.extend(self.mix.iter().map(|f| to_i16(*f)));
-        ring.write(&self.pcm);
     }
 
     /// The connection or the world ended: microphone and playback close, the indicator goes off.
@@ -282,7 +285,7 @@ mod tests {
         assert_eq!(to_i16(2.0), 32767);
         assert_eq!(to_i16(-2.0), -32768);
         assert_eq!(to_i16(0.5), 16383);
-        assert_eq!(TARGET, 5760);
+        assert_eq!((BLOCK, TARGET), (1920, 5760));
     }
 
     #[test]
@@ -325,11 +328,11 @@ mod tests {
         p.frame(1, &mut d, &mut n);
         assert_eq!(d.mixed, TARGET, "full: nothing mixed");
         let mut cb = fake.0.lock().unwrap().playback.take().unwrap();
-        let mut dev = vec![0i16; 101];
+        let mut dev = vec![0i16; 100];
         cb(&mut dev);
         assert_eq!(dev[0], 8191);
         p.frame(2, &mut d, &mut n);
-        assert_eq!(d.mixed, TARGET + 100, "refilled an even count");
+        assert_eq!(d.mixed, TARGET + BLOCK, "topped up by one whole frame");
     }
 
     #[test]

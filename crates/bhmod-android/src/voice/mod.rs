@@ -5,6 +5,7 @@
 //! a voice-enabled server; nothing opens before a mod asks for voice.
 
 pub mod audio;
+pub mod client;
 pub mod link;
 pub mod net;
 pub mod pipeline;

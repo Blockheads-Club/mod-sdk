@@ -86,6 +86,28 @@ final class VoiceUi {
         indicator = null;
     }
 
+    /** The overlay moved to a new activity: the buttons are made again there (their windows belonged to the old one). */
+    static void reattach() {
+        Activity a = Overlay.activity();
+        List<JSONObject> again = new ArrayList<>();
+        for (String k : new ArrayList<>(buttons.keySet())) {
+            Btn b = buttons.get(k);
+            if (b.last != null) again.add(b.last);
+            removeButton(k);
+        }
+        if (a == null) return;
+        for (JSONObject c : again) setButton(a, c);
+    }
+
+    /** Re-adds the button windows above game windows created after them (with the HUD, see Overlay.raise). */
+    static void raise() {
+        for (Btn b : buttons.values()) {
+            if (b.lp == null || !Overlay.added.contains(b.win)) continue;
+            Overlay.remove(b.win);
+            Overlay.add(b.win, b.lp);
+        }
+    }
+
     private static void removeButton(String key) {
         Btn b = buttons.remove(key);
         if (b != null) {
@@ -147,7 +169,10 @@ final class VoiceUi {
             win.setOnTouchListener(this);
         }
 
+        JSONObject last;
+
         void update(Activity a, JSONObject c) {
+            last = c;
             icon = c.optString("icon");
             String label = c.isNull("label") ? "" : c.optString("label");
             px = Math.round(c.optInt("size", 64) * a.getResources().getDisplayMetrics().density);
