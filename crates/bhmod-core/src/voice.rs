@@ -775,7 +775,7 @@ mod tests {
         assert_eq!(VoiceReply::Percent(5).as_percent(), 5);
         assert!(VoiceReply::Bool(true).as_bool());
         assert_eq!(VoiceReply::State(VoiceState::Talking).as_state(), VoiceState::Talking);
-        assert_eq!(VoiceReply::Icons(Icons { deafen: false, ..Icons::default() }).as_icons().deafen, false);
+        assert!(!VoiceReply::Icons(Icons { deafen: false, ..Icons::default() }).as_icons().deafen);
         assert_eq!(VoiceCall::Master.run(&Nothing), Err(ApiError::Unsupported));
     }
 
