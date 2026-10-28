@@ -12,11 +12,15 @@
 //!   then sent with `bhcModLoader` added to a copy of `myPlayerInfo`.
 //! - `-[BHNetClientMatch disconnect]`: the session ends.
 
+pub mod aaudio;
 pub mod cosmetics;
+pub mod enet;
 pub mod items;
 pub mod menus;
 pub mod native;
 pub mod objc;
+pub mod opensles;
+pub mod voice;
 pub mod weapons;
 
 use std::cell::RefCell;
@@ -142,6 +146,35 @@ pub(crate) fn java_post(json: &str) {
         let _ = env.exception_clear();
     }
     let _ = env.delete_local_ref(s);
+}
+
+/// Calls the no-argument `Bridge.<name>()` on the Java side.
+pub(crate) fn java_call(name: &str) {
+    let (Some(vm), Some(cls)) = (VM.get(), BRIDGE_CLASS.get()) else { return };
+    let Ok(mut env) = vm.attach_current_thread_permanently() else { return };
+    let class: &JClass = cls.as_obj().into();
+    if env.call_static_method(class, name, "()V", &[]).is_err() {
+        let _ = env.exception_clear();
+    }
+}
+
+/// `Bridge.<name>()` returning a boolean (false without the Java side).
+pub(crate) fn java_bool(name: &str) -> bool {
+    let (Some(vm), Some(cls)) = (VM.get(), BRIDGE_CLASS.get()) else { return false };
+    let Ok(mut env) = vm.attach_current_thread_permanently() else { return false };
+    let class: &JClass = cls.as_obj().into();
+    match env.call_static_method(class, name, "()Z", &[]).and_then(|v| v.z()) {
+        Ok(b) => b,
+        Err(_) => {
+            let _ = env.exception_clear();
+            false
+        }
+    }
+}
+
+/// True on the loader thread while a world is open.
+pub(crate) fn in_world() -> bool {
+    INBOX.is_owner() && WORLD.with(|w| *w.borrow() != 0)
 }
 
 /// The game, as the loader sees it.
@@ -312,6 +345,7 @@ extern "C" fn hook_draw_frame(this: Id, cmd: Sel) {
         });
         // After the loader ran: mods may have just loaded or unloaded their weapon cosmetics.
         weapons::sync();
+        voice::on_frame(!world.is_null());
     });
     let orig = ORIG.get().expect("hooks").draw_frame;
     unsafe {
@@ -505,11 +539,12 @@ pub extern "system" fn JNI_OnLoad(vm: JavaVM, _reserved: *mut c_void) -> jint {
         log(
             LogLevel::Info,
             &format!(
-                "mod loader {} loaded (hooks {}, data {}, runtimes {:?})",
+                "mod loader {} loaded (hooks {}, data {}, runtimes {:?}, features {:?})",
                 crate::VERSION,
                 if hooks { "on" } else { "off" },
                 data_dir().display(),
-                crate::options().runtimes
+                crate::options().runtimes,
+                crate::features(hooks && voice::unsequenced_available())
             ),
         );
         java_post(&serde_json::json!({"t": "ready", "version": crate::VERSION, "hooks": hooks}).to_string());
