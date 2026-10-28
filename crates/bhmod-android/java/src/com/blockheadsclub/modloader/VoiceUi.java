@@ -14,7 +14,6 @@ import android.view.ViewConfiguration;
 import android.view.ViewGroup;
 import android.view.WindowManager;
 import android.widget.FrameLayout;
-import android.widget.LinearLayout;
 import android.widget.TextView;
 
 import org.json.JSONArray;
@@ -28,9 +27,9 @@ import java.util.Map;
 /**
  * The voice-era HUD. Buttons are round, draggable, each in a small touchable window of its own (the HUD window does
  * not take touches, so the game keeps every touch outside a button). A touch sends `press`; holding 500 ms without
- * moving sends `long-press` and, for a `mic` button while the server allows more than one mode, opens the mode
- * picker (slide onto a mode and lift to choose it); moving starts a drag (`release` first) and the drop position is
- * stored on the device. Overhead icons and the mic-on indicator live in the HUD window and never take touches.
+ * moving also sends `long-press` (the mod decides what it means: a push-to-talk button keeps talking until `release`);
+ * moving starts a drag (`release` first) and the drop position is stored on the device. The loader has no menus of
+ * its own on mod buttons. Overhead icons and the mic-on indicator live in the HUD window and never take touches.
  */
 final class VoiceUi {
     static final long LONG_PRESS_MS = 500;
@@ -49,20 +48,10 @@ final class VoiceUi {
             case "btn-remove": removeButton(c.optString("mod") + "/" + c.optString("id")); break;
             case "overhead": overhead(a, c.optJSONArray("items")); break;
             case "voice-mic": indicator(a, c.optBoolean("on"), c.optString("mode")); break;
-            case "voice-modes": modes = list(c.optJSONArray("modes")); break;
             case "voice-denied": Overlay.toast(Strings.t("mic_denied")); break;
             default: break;
         }
     }
-
-    private static List<String> list(JSONArray a) {
-        List<String> l = new ArrayList<>();
-        for (int i = 0; a != null && i < a.length(); i++) l.add(a.optString(i));
-        return l;
-    }
-
-    /** Modes the server allows this player (for the picker). */
-    static List<String> modes = new ArrayList<>();
 
     static String modeName(String m) {
         return Strings.t("mode_" + m);
@@ -111,10 +100,7 @@ final class VoiceUi {
 
     private static void removeButton(String key) {
         Btn b = buttons.remove(key);
-        if (b != null) {
-            b.closePicker();
-            Overlay.remove(b.win);
-        }
+        if (b != null) Overlay.remove(b.win);
     }
 
     private static void setButton(Activity a, JSONObject c) {
@@ -149,15 +135,11 @@ final class VoiceUi {
         float downX, downY;
         int startX, startY;
         boolean dragging, held, longFired;
-        View picker;
-        final List<TextView> chips = new ArrayList<>();
-        String chosen;
         final Runnable longPress = new Runnable() {
             public void run() {
                 if (!held || dragging) return;
                 longFired = true;
                 send("long-press");
-                if ("mic".equals(icon) && modes.size() > 1) openPicker();
             }
         };
 
@@ -224,10 +206,6 @@ final class VoiceUi {
                     return true;
                 case MotionEvent.ACTION_MOVE: {
                     float dx = e.getRawX() - downX, dy = e.getRawY() - downY;
-                    if (picker != null) {
-                        hover(e.getRawX(), e.getRawY());
-                        return true;
-                    }
                     if (!dragging && !longFired && Math.hypot(dx, dy) > slop) {
                         Bridge.ui.removeCallbacks(longPress);
                         dragging = true;
@@ -246,11 +224,6 @@ final class VoiceUi {
                     Bridge.ui.removeCallbacks(longPress);
                     held = false;
                     face.setPressed(false);
-                    if (picker != null) {
-                        final String m = chosen;
-                        closePicker();
-                        if (m != null) Native.ok(new Runnable() { public void run() { Native.voiceMode(m); } });
-                    }
                     if (dragging) {
                         int w = screenW(a), h = screenH(a);
                         cx = (lp.x + px / 2f) / w;
@@ -265,53 +238,6 @@ final class VoiceUi {
                 default:
                     return true;
             }
-        }
-
-        void openPicker() {
-            Activity a = Overlay.activity();
-            if (a == null) return;
-            LinearLayout row = Kit.column(a);
-            row.setBackground(Kit.panel(a));
-            int p = Kit.u(a, 2);
-            row.setPadding(p, p, p, p);
-            TextView head = Kit.small(a, Strings.t("pick_mode"));
-            row.addView(head, Kit.wrap());
-            chips.clear();
-            for (String m : modes) {
-                TextView chip = Kit.badge(a, modeName(m), Kit.TEXT, Kit.well(a));
-                chip.setTag(m);
-                chip.setTextSize(15);
-                chip.setPadding(Kit.u(a, 4), Kit.u(a, 3), Kit.u(a, 4), Kit.u(a, 3));
-                row.addView(chip, Kit.margins(Kit.fill(), 0, Kit.u(a, 1), 0, 0));
-                chips.add(chip);
-            }
-            WindowManager.LayoutParams plp = Overlay.params(WindowManager.LayoutParams.WRAP_CONTENT, WindowManager.LayoutParams.WRAP_CONTENT,
-                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE | WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE);
-            plp.gravity = Gravity.TOP | Gravity.START;
-            int w = screenW(a);
-            // Beside the button, on the side with more room.
-            plp.x = lp.x > w / 2 ? Math.max(0, lp.x - Kit.u(a, 60)) : lp.x + px + Kit.u(a, 2);
-            plp.y = Math.max(0, lp.y - Kit.u(a, 10));
-            picker = row;
-            chosen = null;
-            Overlay.add(picker, plp);
-        }
-
-        void hover(float rx, float ry) {
-            chosen = null;
-            int[] at = new int[2];
-            for (TextView c : chips) {
-                c.getLocationOnScreen(at);
-                boolean in = rx >= at[0] && rx < at[0] + c.getWidth() && ry >= at[1] && ry < at[1] + c.getHeight();
-                c.setBackground(in ? Kit.button(c.getContext(), Kit.Kind.PRI) : Kit.well(c.getContext()));
-                if (in) chosen = (String) c.getTag();
-            }
-        }
-
-        void closePicker() {
-            if (picker != null) Overlay.remove(picker);
-            picker = null;
-            chips.clear();
         }
     }
 

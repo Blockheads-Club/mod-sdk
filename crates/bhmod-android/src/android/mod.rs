@@ -771,13 +771,6 @@ pub extern "system" fn Java_com_blockheadsclub_modloader_Native_buttonMoved(
     push_ui(ev);
 }
 
-/// `Native.voiceMode(mode)`: picked in the long-press picker.
-#[no_mangle]
-pub extern "system" fn Java_com_blockheadsclub_modloader_Native_voiceMode(mut env: JNIEnv, _c: JClass, mode: JString) {
-    let m = push_str(&mut env, &mode);
-    push_ui(UiEvent::VoiceMode(m));
-}
-
 /// `Native.key(name, down)`: a hardware key.
 #[no_mangle]
 pub extern "system" fn Java_com_blockheadsclub_modloader_Native_key(

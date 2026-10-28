@@ -146,8 +146,6 @@ pub enum UiEvent {
         /// Centre, fraction of the height.
         y: f32,
     },
-    /// The player picked a voice mode in the long-press picker.
-    VoiceMode(String),
     /// A hardware key went down (`true`) or up.
     Key(String, bool),
     /// Open the settings screen of a mod (the Mods screen).
@@ -304,8 +302,6 @@ pub struct Loader<P: Platform + 'static> {
     /// Audio and packets of the voice client, while one runs.
     pipeline: Option<Pipeline>,
     udp: Option<UdpLink>,
-    /// The modes the server allows (`VOICE_STATE.modes`), as last posted to the picker.
-    modes: Option<u8>,
     /// The voice preferences as last saved, and when they were last compared.
     prefs_saved: String,
     prefs_at: u64,
@@ -348,7 +344,6 @@ impl<P: Platform + 'static> Loader<P> {
             voice_factory: None,
             pipeline: None,
             udp: None,
-            modes: None,
             prefs_saved: String::new(),
             prefs_at: 0,
             tracker: Arc::new(Tracker::new()),
@@ -491,11 +486,6 @@ impl<P: Platform + 'static> Loader<P> {
             UiEvent::ButtonMoved { mod_id, id, x, y } => {
                 if let Err(e) = self.device.set_button_pos(&mod_id, &id, x, y) {
                     self.p.log(LogLevel::Warn, &format!("button position not saved: {e}"));
-                }
-            }
-            UiEvent::VoiceMode(m) => {
-                if let Some(mode) = bhmod_core::voice::Mode::parse(&m) {
-                    let _ = self.slot.set_default_mode(mode);
                 }
             }
             UiEvent::Key(name, down) => self.on_key(&name, down),

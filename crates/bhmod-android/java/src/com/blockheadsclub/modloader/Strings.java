@@ -242,7 +242,6 @@ final class Strings {
         p("mode_global", "Everyone", "Herkes", "Все", "Барлығы");
         p("mode_channel", "Channel", "Kanal", "Канал", "Арна");
         p("mode_broadcast", "Broadcast", "Duyuru", "Объявление", "Хабарландыру");
-        p("pick_mode", "Talk to", "Kime konuş", "Говорить", "Кімге сөйлеу");
         p("mic_on", "Mic on: {mode}", "Mikrofon açık: {mode}", "Микрофон включён: {mode}", "Микрофон қосулы: {mode}");
         p("mic_denied", "Voice chat needs the microphone. You can allow it in the Android settings.",
             "Sesli sohbet için mikrofon gerekir. Android ayarlarından izin verebilirsin.",

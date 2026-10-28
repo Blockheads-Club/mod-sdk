@@ -144,11 +144,6 @@ pub fn mic_indicator(mode: Option<Mode>) -> String {
     json!({"t": "voice-mic", "on": mode.is_some(), "mode": mode.map(Mode::name)}).to_string()
 }
 
-/// The modes the server allows this player (the long-press picker of a `mic` button).
-pub fn voice_modes(modes: &[Mode]) -> String {
-    json!({"t": "voice-modes", "modes": modes.iter().map(|m| m.name()).collect::<Vec<_>>()}).to_string()
-}
-
 /// The player refused the microphone.
 pub fn mic_denied() -> String {
     json!({"t": "voice-denied"}).to_string()
@@ -327,7 +322,6 @@ mod tests {
     fn voice_and_settings_shapes() {
         assert_eq!(v(mic_indicator(Some(Mode::Global)))["mode"], "global");
         assert_eq!(v(mic_indicator(None))["on"], false);
-        assert_eq!(v(voice_modes(&[Mode::Proximity, Mode::Channel]))["modes"][1], "channel");
         assert_eq!(v(mic_denied())["t"], "voice-denied");
         let form: Form = (json!({"fields": [{"key": "a"}]}), json!({"a": 1}));
         let keys = [KeyRow { action: "talk".into(), key: None, default_key: "v".into(), is_default: false }];

@@ -26,8 +26,6 @@ final class Native {
     static native void uiButton(String mod, String id, String action);
     /** The player dropped a button at screen fractions `x`, `y` (stored on the device). */
     static native void buttonMoved(String mod, String id, float x, float y);
-    /** The player picked a voice mode in the long-press picker. */
-    static native void voiceMode(String mode);
     /** A touch on the game started at screen fractions `x`, `y` (the blockhead there is picked). */
     static native void tap(float x, float y);
     /** A hardware key went down or up (key name of the `input` interface). */

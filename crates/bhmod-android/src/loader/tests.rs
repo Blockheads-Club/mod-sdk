@@ -895,7 +895,7 @@ fn voice_flows_through_the_pipeline_and_the_mods() {
         std::thread::sleep(std::time::Duration::from_millis(5));
     }
     assert_eq!(*link.udp_in.borrow(), [vec![7]]);
-    // VOICE_STATE: the allowed modes go to the picker once, players become known, the client gets the message
+    // VOICE_STATE: players become known, the client gets the message (mods own their buttons: no host picker)
     let state = |full, players: &[(&str, &str)], modes| {
         Output::Voice(Message::VoiceState(VoiceState {
             full,
@@ -906,8 +906,7 @@ fn voice_flows_through_the_pipeline_and_the_mods() {
     };
     r.l.handle(vec![state(true, &[("p1", "ready")], Some(0b0101)), state(false, &[], Some(0b0101))]);
     r.l.handle(vec![Output::Voice(Message::ListRequest)]);
-    assert_eq!(ui_of(&r, "voice-modes").len(), 1);
-    assert_eq!(ui_of(&r, "voice-modes")[0]["modes"], serde_json::json!(["proximity", "channel"]));
+    assert!(ui_of(&r, "voice-modes").is_empty());
     assert_eq!(link.messages.borrow().len(), 3);
     // a state event: the mod puts an icon over p1 and asks for its settings screen
     link.names.borrow_mut().push(("p1".into(), "ALICE".into()));
@@ -941,12 +940,8 @@ fn voice_flows_through_the_pipeline_and_the_mods() {
     r.p.now.set(300);
     r.l.on_frame();
     assert!(ui_of(&r, "overhead").last().unwrap()["items"].as_array().unwrap().is_empty());
-    // the long-press mode picker sets the default mode; a bad name is ignored; the ptt seam talks directly
-    r.l.on_ui(UiEvent::VoiceMode("global".into()));
-    r.l.on_ui(UiEvent::VoiceMode("shout".into()));
-    assert_eq!(link.default_mode.get(), Some(Mode::Global));
-    r.l.on_frame();
-    assert!(r.p.logged("mode global"), "the picker fires voice:mode");
+    // the mod's own default mode reached it as voice:mode; the ptt seam talks directly
+    assert!(r.p.logged("mode channel"), "set_default_mode fires voice:mode");
     r.l.on_ui(UiEvent::Ptt(false));
     assert_eq!(link.talks.borrow().last(), Some(&(None, false)));
     // a dropped button is remembered on the device

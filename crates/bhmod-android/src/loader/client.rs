@@ -1,7 +1,7 @@
 //! The API 0.3.4 half of the loader: the voice client and its pipeline, overhead icons, on-screen buttons, key
 //! bindings and the settings screen (client settings, key bindings, voice volume, the server's settings for admins).
 
-use bhmod_core::voice::{Mode, VoiceHost};
+use bhmod_core::voice::VoiceHost;
 use bhmod_manifest::settings::Scope;
 use bhmod_proto::{Message, SettingsResult, SettingsSchema};
 use serde_json::Value;
@@ -82,7 +82,6 @@ impl<P: Platform + 'static> Loader<P> {
         self.save_prefs(&*link);
         self.slot.set(None);
         self.udp = None;
-        self.modes = None;
     }
 
     fn save_prefs(&mut self, link: &dyn VoiceLink) {
@@ -154,14 +153,8 @@ impl<P: Platform + 'static> Loader<P> {
         self.voice_events(&*link);
     }
 
-    /// `Output::Voice`: the allowed modes go to the picker, everything to the voice client.
+    /// `Output::Voice`: to the voice client. Mods own their buttons (no host mode picker).
     pub(super) fn on_voice_message(&mut self, m: &Message) {
-        if let Message::VoiceState(s) = m {
-            if let Some(mask) = s.modes.filter(|x| self.modes != Some(*x)) {
-                self.modes = Some(mask);
-                self.p.ui(ui::voice_modes(&Mode::from_mask(mask)));
-            }
-        }
         if let Some(l) = self.slot.get() {
             l.on_message(m);
         }
