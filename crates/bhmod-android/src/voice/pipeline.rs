@@ -10,21 +10,13 @@
 //! the `RECORD_AUDIO` dialog; the answer and every change reach the driver as a [`MicState`] (`voice:mic`). The
 //! mic-on indicator is the host's: [`Notice::Indicator`] whenever the driver starts or stops transmitting.
 
+pub use bhmod_core::voice::MicState;
+use bhmod_core::voice::Mode;
+
 use super::audio::{AudioIo, Mic, FRAME};
 
 /// Stereo samples kept queued for the device: 60 ms (the game thread runs at up to 60 Hz and sometimes stalls).
 pub const TARGET: usize = super::audio::SAMPLE_RATE as usize * 6 / 100 * 2;
-
-/// The microphone as the voice driver (and the mods, `voice:mic`) see it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum MicState {
-    /// Closed.
-    Off,
-    /// Capturing.
-    On,
-    /// The player refused `RECORD_AUDIO`.
-    Denied,
-}
 
 /// A packet the driver wants sent.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -50,7 +42,7 @@ pub trait Driver {
     /// The microphone changed.
     fn mic_state(&mut self, state: MicState);
     /// The mode being transmitted right now (`None`: not transmitting).
-    fn transmitting(&self) -> Option<String>;
+    fn transmitting(&self) -> Option<Mode>;
 }
 
 /// Where packets go.
@@ -71,7 +63,7 @@ pub enum Notice {
     /// The microphone changed (also told to the driver).
     Mic(MicState),
     /// The host-owned mic-on indicator: `Some(mode)` while transmitting.
-    Indicator(Option<String>),
+    Indicator(Option<Mode>),
     /// An audio stream failed (logged; voice keeps going without it).
     Failed(String),
 }
@@ -90,7 +82,7 @@ pub fn to_i16(f: f32) -> i16 {
 pub struct Pipeline {
     io: AudioIo,
     mic_on: bool,
-    indicator: Option<String>,
+    indicator: Option<Mode>,
     playback_failed: bool,
     mix: Vec<f32>,
     pcm: Vec<i16>,
@@ -165,7 +157,7 @@ impl Pipeline {
         self.fill(d, &mut out);
         let t = d.transmitting();
         if t != self.indicator {
-            self.indicator = t.clone();
+            self.indicator = t;
             out.push(Notice::Indicator(t));
         }
         out
@@ -222,7 +214,7 @@ pub(crate) mod fake {
         pub frames: Vec<f32>,
         pub mic: Vec<MicState>,
         pub want: bool,
-        pub talking: Option<String>,
+        pub talking: Option<Mode>,
         pub send: Vec<Outgoing>,
         pub mixed: usize,
         pub level: f32,
@@ -245,8 +237,8 @@ pub(crate) mod fake {
         fn mic_state(&mut self, state: MicState) {
             self.mic.push(state);
         }
-        fn transmitting(&self) -> Option<String> {
-            self.talking.clone()
+        fn transmitting(&self) -> Option<Mode> {
+            self.talking
         }
     }
 
@@ -303,14 +295,19 @@ mod tests {
         d.want = true;
         assert_eq!(p.frame(1, &mut d, &mut n), vec![Notice::AskPermission]);
         assert!(p.frame(2, &mut d, &mut n).is_empty(), "waiting for the answer");
+        d.want = false;
+        assert_eq!(p.frame(2, &mut d, &mut n), vec![Notice::Mic(MicState::Off)]);
+        d.want = true;
+        assert!(p.frame(2, &mut d, &mut n).is_empty(), "the dialog is still up");
+        d.mic.clear();
         assert_eq!(p.on_permission(true, &mut d), vec![Notice::Mic(MicState::On)]);
         assert_eq!(d.mic, vec![MicState::On]);
         let mut cb = fake.0.lock().unwrap().capture.take().unwrap();
         cb(&[16384; FRAME * 2]);
         d.send = vec![Outgoing::Reliable(vec![1]), Outgoing::Unsequenced(vec![2]), Outgoing::Udp(vec![3])];
-        d.talking = Some("proximity".into());
+        d.talking = Some(Mode::Proximity);
         let notes = p.frame(3, &mut d, &mut n);
-        assert_eq!(notes, vec![Notice::Indicator(Some("proximity".into()))]);
+        assert_eq!(notes, vec![Notice::Indicator(Some(Mode::Proximity))]);
         assert_eq!(d.frames, vec![0.5, 0.5]);
         assert_eq!((n.reliable.len(), n.unsequenced.len(), n.udp.len()), (1, 1, 1));
         d.want = false;
@@ -358,7 +355,7 @@ mod tests {
             ]
         );
         assert!(p.frame(1, &mut d, &mut n).is_empty(), "playback is not retried every frame");
-        d.talking = Some("global".into());
+        d.talking = Some(Mode::Global);
         p.frame(2, &mut d, &mut n);
         assert_eq!(p.stop(&mut d), vec![Notice::Mic(MicState::Off), Notice::Indicator(None)]);
     }

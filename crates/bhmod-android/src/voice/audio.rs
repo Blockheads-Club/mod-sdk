@@ -190,9 +190,10 @@ pub trait Backend: Send {
 }
 
 /// The `RECORD_AUDIO` runtime permission as the loader knows it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Permission {
     /// Not asked yet in this process.
+    #[default]
     Unknown,
     /// The system dialog is up.
     Requested,

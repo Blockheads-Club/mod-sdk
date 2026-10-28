@@ -3,7 +3,8 @@
 
 use bhmod_client::session::{Failure, Offer};
 use bhmod_client::Refusal;
-use bhmod_core::ui::UiCommand;
+use bhmod_core::ui::{Button, UiCommand};
+use bhmod_core::voice::Mode;
 use bhmod_proto::{hex, RejectText};
 use serde_json::{json, Value};
 
@@ -105,11 +106,8 @@ pub fn mod_ui(mod_id: &str, c: &UiCommand) -> String {
         // API 0.3.4; the Java side ignores types it does not draw yet.
         UiCommand::SetOverhead { player, icon } => json!({"t": "ui-overhead", "player": player, "icon": icon.name()}),
         UiCommand::ClearOverhead { player } => json!({"t": "ui-overhead", "player": player, "icon": null}),
-        UiCommand::SetButton { id, button: b } => json!({
-            "t": "ui-button", "id": id, "icon": b.icon, "label": b.label, "x": b.x, "y": b.y,
-            "size": b.size, "opacity": b.opacity,
-        }),
-        UiCommand::RemoveButton { id } => json!({"t": "ui-button-remove", "id": id}),
+        UiCommand::SetButton { id, button } => return button_set(mod_id, id, button, None),
+        UiCommand::RemoveButton { id } => json!({"t": "btn-remove", "id": id}),
         UiCommand::OpenSettings { mod_id } => json!({"t": "ui-settings", "target": mod_id}),
         UiCommand::ClearMod => json!({"t": "ui-clear"}),
     };
@@ -117,9 +115,79 @@ pub fn mod_ui(mod_id: &str, c: &UiCommand) -> String {
     v.to_string()
 }
 
-/// A world opened or closed (`mods`: mods running).
-pub fn world(open: bool, mods: usize) -> String {
-    json!({"t": "world", "open": open, "mods": mods}).to_string()
+/// A world opened or closed (`mods`: mods running; `settings`: the mods whose settings screen can open).
+pub fn world(open: bool, mods: usize, settings: &[String]) -> String {
+    json!({"t": "world", "open": open, "mods": mods, "settings": settings}).to_string()
+}
+
+/// An on-screen button (API 0.3.4) with the position the player dropped it at last (`saved`, screen fractions).
+pub fn button_set(mod_id: &str, id: &str, b: &Button, saved: Option<(f32, f32)>) -> String {
+    json!({
+        "t": "btn-set", "mod": mod_id, "id": id, "icon": b.icon, "label": b.label, "x": b.x, "y": b.y,
+        "size": b.size, "opacity": b.opacity, "saved": saved.map(|(x, y)| [x, y]),
+    })
+    .to_string()
+}
+
+/// The host-owned mic-on indicator.
+pub fn mic_indicator(mode: Option<Mode>) -> String {
+    json!({"t": "voice-mic", "on": mode.is_some(), "mode": mode.map(Mode::name)}).to_string()
+}
+
+/// The modes the server allows this player (the long-press picker of a `mic` button).
+pub fn voice_modes(modes: &[Mode]) -> String {
+    json!({"t": "voice-modes", "modes": modes.iter().map(|m| m.name()).collect::<Vec<_>>()}).to_string()
+}
+
+/// The player refused the microphone.
+pub fn mic_denied() -> String {
+    json!({"t": "voice-denied"}).to_string()
+}
+
+/// A key binding row of the settings screen.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KeyRow {
+    /// The action id.
+    pub action: String,
+    /// The key now (`None`: cleared by the player).
+    pub key: Option<String>,
+    /// The mod's default key.
+    pub default_key: String,
+    /// True when the player did not rebind it.
+    pub is_default: bool,
+}
+
+/// A settings form: `({"fields": [...]}, {key: value})`.
+pub type Form = (Value, Value);
+
+fn form(f: &Form) -> Value {
+    json!({"fields": f.0.get("fields").cloned().unwrap_or_else(|| json!([])), "values": f.1})
+}
+
+/// The settings screen of a mod: its client settings, key bindings, the voice master volume (mods holding `voice`)
+/// and, for an admin, the server's settings of it.
+pub fn settings_screen(
+    mod_id: &str,
+    client: Option<&Form>,
+    keys: &[KeyRow],
+    master: Option<u16>,
+    server: Option<&Form>,
+) -> String {
+    let keys: Vec<Value> = keys
+        .iter()
+        .map(|k| json!({"action": k.action, "key": k.key, "default": k.default_key, "isDefault": k.is_default}))
+        .collect();
+    json!({
+        "t": "settings", "mod": mod_id, "name": mod_id,
+        "client": client.map(form), "server": server.map(form), "keys": keys,
+        "voice": master.map(|m| json!({"master": m})),
+    })
+    .to_string()
+}
+
+/// The answer to a setting change (`message` shown when it failed; `restart`: applies after a restart).
+pub fn settings_result(mod_id: &str, ok: bool, message: Option<&str>, restart: bool) -> String {
+    json!({"t": "settings-result", "mod": mod_id, "ok": ok, "message": message, "restart": restart}).to_string()
 }
 
 #[cfg(test)]
@@ -153,7 +221,7 @@ mod tests {
         assert_eq!(v(progress("demo", 0, 1, 5, 10))["done"], 5);
         assert_eq!(v(joined())["t"], "joined");
         assert_eq!(v(closed())["t"], "closed");
-        assert_eq!(v(world(true, 2))["mods"], 2);
+        assert_eq!(v(world(true, 2, &["m".to_string()]))["settings"][0], "m");
         let r = RejectText { reason_code: 3, text: "x".into(), url: Some("https://u".into()) };
         assert_eq!(v(reject("h", &r))["url"], "https://u");
         let f = |f: Failure| v(failed("h", &f, "0.1.0"));
@@ -183,8 +251,14 @@ mod tests {
         assert_eq!(v(mod_ui("m", &UiCommand::SetOverhead { player: p(), icon }))["icon"], "no-voice");
         assert!(v(mod_ui("m", &UiCommand::ClearOverhead { player: p() }))["icon"].is_null());
         let button = bhmod_core::ui::Button { icon: "mic".into(), label: None, x: 0.5, y: 0.5, size: 64, opacity: 80 };
-        assert_eq!(v(mod_ui("m", &UiCommand::SetButton { id: "ptt".into(), button }))["size"], 64);
-        assert_eq!(v(mod_ui("m", &UiCommand::RemoveButton { id: "ptt".into() }))["t"], "ui-button-remove");
+        let set = v(mod_ui("m", &UiCommand::SetButton { id: "ptt".into(), button: button.clone() }));
+        assert_eq!(
+            (set["t"].as_str(), set["size"].as_u64(), set["mod"].as_str()),
+            (Some("btn-set"), Some(64), Some("m"))
+        );
+        assert!(set["saved"].is_null());
+        assert_eq!(v(button_set("m", "ptt", &button, Some((0.25, 0.5))))["saved"][1], 0.5);
+        assert_eq!(v(mod_ui("m", &UiCommand::RemoveButton { id: "ptt".into() }))["t"], "btn-remove");
         assert_eq!(v(mod_ui("m", &UiCommand::OpenSettings { mod_id: "voice".into() }))["target"], "voice");
         let d = Dialog {
             title: "T".into(),
@@ -195,5 +269,26 @@ mod tests {
         let dlg = v(mod_ui("m", &UiCommand::ShowDialog { id: 1, dialog: d }));
         assert!(dlg["field"].is_null());
         assert_eq!(dlg["buttons"][0]["kind"], "danger");
+    }
+
+    #[test]
+    fn voice_and_settings_shapes() {
+        assert_eq!(v(mic_indicator(Some(Mode::Global)))["mode"], "global");
+        assert_eq!(v(mic_indicator(None))["on"], false);
+        assert_eq!(v(voice_modes(&[Mode::Proximity, Mode::Channel]))["modes"][1], "channel");
+        assert_eq!(v(mic_denied())["t"], "voice-denied");
+        let form: Form = (json!({"fields": [{"key": "a"}]}), json!({"a": 1}));
+        let keys = [KeyRow { action: "talk".into(), key: None, default_key: "v".into(), is_default: false }];
+        let s = v(settings_screen("voice", Some(&form), &keys, Some(120), None));
+        assert_eq!(s["client"]["fields"][0]["key"], "a");
+        assert_eq!(s["client"]["values"]["a"], 1);
+        assert!(s["server"].is_null());
+        assert!(s["keys"][0]["key"].is_null());
+        assert_eq!(s["voice"]["master"], 120);
+        let s = v(settings_screen("m", None, &[], None, Some(&(json!({}), json!({})))));
+        assert_eq!(s["server"]["fields"], json!([]));
+        assert!(s["voice"].is_null());
+        let r = v(settings_result("m", false, Some("bad"), false));
+        assert_eq!((r["ok"].as_bool(), r["message"].as_str()), (Some(false), Some("bad")));
     }
 }

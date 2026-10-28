@@ -21,6 +21,12 @@ struct Fake {
     natives: RefCell<Vec<(String, String, bool)>>,
     unloaded: RefCell<Vec<String>>,
     native_fail: RefCell<Vec<String>>,
+    /// Voice: the audio backend (`None`: none on this phone), the permission at start, dialogs asked.
+    backend: RefCell<Option<crate::voice::audio::fake::FakeBackend>>,
+    permission: Cell<crate::voice::audio::Permission>,
+    asked: Cell<u32>,
+    unsequenced: RefCell<Vec<Vec<u8>>>,
+    camera: Cell<Option<Camera>>,
 }
 
 impl Platform for Fake {
@@ -52,6 +58,20 @@ impl Platform for Fake {
     }
     fn unload_native(&self, mod_id: &str) {
         self.unloaded.borrow_mut().push(mod_id.into());
+    }
+    fn audio(&self) -> Option<AudioIo> {
+        let b = self.backend.borrow().clone()?;
+        Some(AudioIo::new(Box::new(b), self.permission.get()))
+    }
+    fn ask_mic(&self) {
+        self.asked.set(self.asked.get() + 1);
+    }
+    fn send_unsequenced(&self, packet: &[u8]) -> bool {
+        self.unsequenced.borrow_mut().push(packet.to_vec());
+        true
+    }
+    fn camera(&self) -> Option<Camera> {
+        self.camera.get()
     }
 }
 
@@ -467,7 +487,15 @@ fn a_server_mod_that_cannot_be_copied_fails_the_start() {
 #[test]
 fn bridge_answers() {
     let p = Rc::new(Fake::default());
-    let b = Bridge { p: p.clone(), outbox: Rc::new(RefCell::new(Vec::new())) };
+    let t = tempfile::tempdir().unwrap();
+    let device = DeviceStore::new(t.path());
+    let b = Bridge {
+        p: p.clone(),
+        outbox: Rc::new(RefCell::new(Vec::new())),
+        hud: Rc::default(),
+        slot: Rc::default(),
+        device: device.clone(),
+    };
     assert_eq!(b.side(), Side::Client);
     assert!(b.host_name().starts_with("bhmod-android "));
     b.log(None, LogLevel::Info, "hi");
@@ -483,6 +511,31 @@ fn bridge_answers() {
     assert_eq!(b.channel_send("m", "m:c", &ChannelTarget::Server, b"x"), Ok(()));
     assert_eq!(b.ui("m", &bhmod_core::ui::UiCommand::Toast { text: "t".into() }), Ok(()));
     assert_eq!(p.ui.borrow()[0]["t"], "ui-toast");
+    // API 0.3.4: overhead icons stay in the loader, buttons get their saved position, settings screens are queued
+    use bhmod_core::ui::{Button, OverheadIcon};
+    let icon = OverheadIcon::Speaking;
+    b.ui("m", &UiCommand::SetOverhead { player: "p1".into(), icon }).unwrap();
+    assert!(b.hud.borrow().board.active());
+    b.ui("m", &UiCommand::ClearOverhead { player: "p1".into() }).unwrap();
+    assert!(!b.hud.borrow().board.active());
+    b.ui("m", &UiCommand::SetOverhead { player: "p1".into(), icon }).unwrap();
+    b.ui("m", &UiCommand::ClearMod).unwrap();
+    assert!(!b.hud.borrow().board.active());
+    device.set_button_pos("m", "ptt", 0.1, 0.2).unwrap();
+    let button = Button { icon: "mic".into(), label: None, x: 0.9, y: 0.7, size: 64, opacity: 80 };
+    b.ui("m", &UiCommand::SetButton { id: "ptt".into(), button }).unwrap();
+    let last = p.ui.borrow().last().cloned().unwrap();
+    assert_eq!((last["t"].as_str(), last["saved"][0].as_f64()), (Some("btn-set"), Some(0.1f32 as f64)));
+    b.ui("m", &UiCommand::OpenSettings { mod_id: "other".into() }).unwrap();
+    assert_eq!(b.hud.borrow().open_settings, vec!["other".to_string()]);
+    assert!(b.voice().is_none());
+    b.slot.set(Some(Rc::new(crate::voice::link::fake::FakeLink::default())));
+    assert!(b.voice().is_some());
+    let bind = InputCommand::Bind { action: "talk".into(), default_key: "v".into() };
+    assert_eq!(b.input("m", &bind), Ok(()));
+    assert_eq!(b.input_key("m", "talk", "v"), Some("v".into()));
+    device.set_binding("m", "talk", Some(None)).unwrap();
+    assert_eq!(b.input_key("m", "talk", "v"), None);
 }
 
 #[test]
@@ -687,4 +740,374 @@ fn a_server_may_list_native_code_only_when_the_player_installed_that_file() {
     r.l.installed().install_with(&pkg, index, true).unwrap();
     flow(&mut r);
     assert_eq!(r.p.natives.borrow().len(), 1, "{:?}", r.p.logs.borrow());
+}
+
+// ---- API 0.3.4: voice, buttons, keys, overhead icons, settings screen -------------------------------------------
+
+use crate::voice::audio::fake::FakeBackend;
+use crate::voice::link::fake::FakeLink;
+use crate::voice::pipeline::Outgoing as VoiceOut;
+use bhmod_core::voice::{Icons, MicState, Mode, VoiceEvent, VoiceState as CoreState};
+use bhmod_proto::{SettingsFailure, SettingsSchema, VoiceState};
+
+const VOICE_CLIENT: &str = r#"
+local mod = {}
+function mod.on_enable()
+    bh.input.bind("talk", "v")
+    bh.ui.set_button("ptt", { icon = "mic", label = "Talk" })
+    bh.events.on_custom("vtest:ui-button", function(ev)
+        bh.log.info("button " .. ev.payload.action)
+        if ev.payload.action == "press" then bh.voice.set_mic(true) end
+        if ev.payload.action ~= "long-press" then bh.voice.talk(nil, ev.payload.action == "press") end
+    end)
+    bh.events.on_custom("vtest:input", function(ev)
+        bh.log.info("key " .. ev.payload.action .. " " .. tostring(ev.payload.pressed))
+    end)
+    bh.events.on_custom("voice:mic", function(ev) bh.log.info("mic " .. ev.payload.state) end)
+    bh.events.on_custom("voice:state", function(ev)
+        local p = bh.players.get(ev.payload.player)
+        if p then
+            bh.ui.set_overhead(p, "speaking")
+            bh.ui.open_settings("vtest")
+        end
+    end)
+    bh.events.on_custom("vtest:settings-changed", function(_ev) bh.log.info("settings changed") end)
+end
+return mod
+"#;
+
+const VOICE_PERMS: &str =
+    "voice = true\n\n[settings.ring]\ntype = \"bool\"\ndefault = false\nlabel = \"Ring\"\nscope = \"client\"\n";
+
+fn hello_with(hash: Hash, count: u64, features: &[&str]) -> Vec<u8> {
+    Message::ServerHello(ServerHello {
+        proto: 1,
+        mods_hash: hash,
+        client_required: true,
+        count,
+        players: None,
+        features: features.iter().map(|f| f.to_string()).collect(),
+        voice_udp_port: None,
+    })
+    .encode()
+}
+
+/// A loader with a voice client and an audio backend, joined to a server listing `features` (no server mods) and
+/// an installed client mod `vtest` holding `voice`.
+fn voice_rig(features: &[&str], audio: bool) -> (Rig, Rc<FakeLink>) {
+    voice_rig_mods(features, audio, true)
+}
+
+fn voice_rig_mods(features: &[&str], audio: bool, with_mod: bool) -> (Rig, Rc<FakeLink>) {
+    let t = tempfile::tempdir().unwrap();
+    let dirs = Dirs::under(t.path());
+    let p = Rc::new(Fake::default());
+    if audio {
+        *p.backend.borrow_mut() = Some(FakeBackend::default());
+    }
+    let link = Rc::new(FakeLink::default());
+    let handle = link.clone();
+    let l =
+        Loader::new(p.clone(), dirs.clone(), crate::caps(), crate::options(), Box::new(bhmod_core::default_runtimes))
+            .with_budgets(crate::budgets())
+            .with_voice(Box::new(move || Some(handle.clone() as Rc<dyn VoiceLink>)));
+    let mut r = Rig { l, p, _t: t, dirs };
+    let pkg =
+        crate::testutil::package_api("vtest", "1.0.0", "^0.3.4", VOICE_PERMS, "client/main.luau", VOICE_CLIENT, &[]);
+    if with_mod {
+        r.l.installed().install(&pkg, None).unwrap();
+    }
+    r.l.on_contact("127.0.0.1:15151");
+    let Message::Hello(h) = &r.p.msgs()[0] else { panic!() };
+    assert_eq!(h.features, ["voice", "settings"]);
+    r.l.on_join_request();
+    r.l.on_packet(&hello_with([0; 32], 0, features));
+    assert_eq!(r.p.joins.borrow().len(), 1);
+    (r, link)
+}
+
+fn ui_of(r: &Rig, t: &str) -> Vec<Value> {
+    r.p.ui.borrow().iter().filter(|v| v["t"] == t).cloned().collect()
+}
+
+#[test]
+fn voice_flows_through_the_pipeline_and_the_mods() {
+    let (mut r, link) = voice_rig(&["voice", "settings"], true);
+    std::fs::create_dir_all(&r.dirs.device).unwrap();
+    std::fs::write(r.dirs.device.join("voice-prefs.txt"), "master=90").unwrap();
+    r.l.on_world(Some("w"));
+    assert!(r.l.running());
+    // VOICE_KEY went out reliably, the prefs were loaded, the button was drawn and the mod's settings can open
+    assert!(r.p.sent.borrow().iter().any(|p| p == &[0xBC, 0x15]));
+    assert_eq!(link.prefs(), "master=90");
+    assert_eq!(ui_of(&r, "btn-set")[0]["icon"], "mic");
+    assert_eq!(ui_of(&r, "world")[0]["settings"][0], "vtest");
+    // the player presses the button: the mod opens the mic (first time: the system dialog), talks
+    r.l.on_ui(UiEvent::Button { mod_id: "vtest".into(), id: "ptt".into(), action: "press".into() });
+    r.l.on_ui(UiEvent::Button { mod_id: "vtest".into(), id: "ptt".into(), action: "bogus".into() });
+    assert!(r.p.logged("button press"));
+    assert_eq!(*link.talks.borrow(), [(None, true)]);
+    r.p.now.set(10);
+    r.l.on_frame();
+    assert_eq!(r.p.asked.get(), 1);
+    r.l.on_ui(UiEvent::MicPermission(true));
+    assert!(r.p.logged("mic on"), "{:?}", r.p.logs.borrow());
+    // captured audio reaches the client, its packets leave on the right paths, the indicator shows
+    let backend = r.p.backend.borrow().clone().unwrap();
+    let mut capture = backend.0.lock().unwrap().capture.take().unwrap();
+    capture(&[0; crate::voice::audio::FRAME]);
+    link.talking.set(Some(Mode::Proximity));
+    link.send.borrow_mut().extend([
+        VoiceOut::Reliable(vec![0xBC, 0x18]),
+        VoiceOut::Unsequenced(vec![0xBC, 0x16, 1]),
+        VoiceOut::Udp(vec![1]),
+    ]);
+    r.p.now.set(20);
+    r.l.on_frame();
+    assert_eq!(link.frames.get(), 1);
+    assert!(r.p.sent.borrow().iter().any(|p| p == &[0xBC, 0x18]));
+    assert_eq!(*r.p.unsequenced.borrow(), [vec![0xBC, 0x16, 1]]);
+    assert_eq!(ui_of(&r, "voice-mic")[0]["mode"], "proximity");
+    // a UDP datagram without a port announced goes nowhere; with one, the socket opens and answers come back
+    let server = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+    link.udp_port.set(Some(server.local_addr().unwrap().port()));
+    link.send.borrow_mut().push(VoiceOut::Udp(vec![2]));
+    r.l.on_frame();
+    let mut buf = [0u8; 8];
+    let (n, from) = server.recv_from(&mut buf).unwrap();
+    assert_eq!(&buf[..n], [2]);
+    link.send.borrow_mut().push(VoiceOut::Udp(vec![3]));
+    r.l.on_frame();
+    assert_eq!(server.recv_from(&mut buf).unwrap().0, 1);
+    server.send_to(&[7], from).unwrap();
+    for _ in 0..100 {
+        r.l.on_frame();
+        if !link.udp_in.borrow().is_empty() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    assert_eq!(*link.udp_in.borrow(), [vec![7]]);
+    // VOICE_STATE: the allowed modes go to the picker once, players become known, the client gets the message
+    let state = |full, players: &[(&str, &str)], modes| {
+        Output::Voice(Message::VoiceState(VoiceState {
+            full,
+            players: players.iter().map(|(a, b)| (a.to_string(), b.to_string())).collect(),
+            modes,
+            ..Default::default()
+        }))
+    };
+    r.l.handle(vec![state(true, &[("p1", "ready")], Some(0b0101)), state(false, &[], Some(0b0101))]);
+    r.l.handle(vec![Output::Voice(Message::ListRequest)]);
+    assert_eq!(ui_of(&r, "voice-modes").len(), 1);
+    assert_eq!(ui_of(&r, "voice-modes")[0]["modes"], serde_json::json!(["proximity", "channel"]));
+    assert_eq!(link.messages.borrow().len(), 3);
+    // a state event: the mod puts an icon over p1 and asks for its settings screen
+    link.events.borrow_mut().push(VoiceEvent::State { player: "p1".into(), state: CoreState::Talking });
+    r.p.now.set(100);
+    r.l.on_frame();
+    assert_eq!(ui_of(&r, "settings").len(), 1, "{:?}", r.p.logs.borrow());
+    // the overhead icon: no camera yet -> an empty list; with the camera and a tracked blockhead -> its position
+    assert!(r.l.tracker().active());
+    let mut p = [0.0f32; 16];
+    (p[0], p[5], p[10], p[15], p[12], p[13]) = (0.02, 0.04, 1.0, 1.0, -1.0, -1.0);
+    let mut id = [0.0f32; 16];
+    (id[0], id[5], id[10], id[15]) = (1.0, 1.0, 1.0, 1.0);
+    r.p.camera.set(Some(Camera { projection: p, modelview: id, viewport: [0, 0, 100, 50] }));
+    r.l.tracker().report(1, "p1", (50.0, 10.0), (0, 0), 150);
+    r.p.now.set(200);
+    r.l.on_frame();
+    let heads = ui_of(&r, "overhead");
+    assert_eq!(heads.last().unwrap()["items"][0]["icons"][0], "speaking", "{heads:?}");
+    // the admin hides "speaking": the icon goes, and the tracking stops once no icon is left
+    link.icons.set(Some(Icons { speaking: false, ..Default::default() }));
+    r.p.now.set(300);
+    r.l.on_frame();
+    assert!(ui_of(&r, "overhead").last().unwrap()["items"].as_array().unwrap().is_empty());
+    // the long-press mode picker sets the default mode; a bad name is ignored; the ptt seam talks directly
+    r.l.on_ui(UiEvent::VoiceMode("global".into()));
+    r.l.on_ui(UiEvent::VoiceMode("shout".into()));
+    assert_eq!(link.default_mode.get(), Some(Mode::Global));
+    r.l.on_ui(UiEvent::Ptt(false));
+    assert_eq!(link.talks.borrow().last(), Some(&(None, false)));
+    // a dropped button is remembered on the device
+    r.l.on_ui(UiEvent::ButtonMoved { mod_id: "vtest".into(), id: "ptt".into(), x: 0.3, y: 0.4 });
+    assert_eq!(DeviceStore::new(&r.dirs.device).button_pos("vtest", "ptt"), Some((0.3, 0.4)));
+    // a hardware key bound by the mod
+    r.l.on_ui(UiEvent::Key("v".into(), true));
+    r.l.on_ui(UiEvent::Key("v".into(), false));
+    assert!(r.p.logged("key talk true") && r.p.logged("key talk false"));
+    // the preferences are saved when they changed (every second, and when voice stops)
+    link.set_master(120).unwrap();
+    r.p.now.set(2000);
+    r.l.on_frame();
+    assert_eq!(DeviceStore::new(&r.dirs.device).voice_prefs(), "master=120");
+    link.set_master(130).unwrap();
+    link.talking.set(None);
+    r.l.on_world(None);
+    assert_eq!(DeviceStore::new(&r.dirs.device).voice_prefs(), "master=130");
+    assert!(r.p.logged("mic off"));
+    assert!(!r.l.running());
+    assert!(ui_of(&r, "world").last().unwrap()["settings"].as_array().unwrap().is_empty());
+    // the icons went with the mods: the overlay is cleared once
+    let before = ui_of(&r, "overhead").len();
+    r.l.on_frame();
+    r.l.on_frame();
+    assert_eq!(ui_of(&r, "overhead").len(), before + 1);
+}
+
+fn last_result(r: &Rig) -> Value {
+    ui_of(r, "settings-result").last().cloned().unwrap()
+}
+
+#[test]
+fn the_settings_screen_sets_client_keys_voice_and_server_values() {
+    let (mut r, link) = voice_rig(&["voice", "settings"], true);
+    r.l.on_world(Some("w"));
+    r.l.on_ui(UiEvent::OpenSettings("vtest".into()));
+    let screen = ui_of(&r, "settings").pop().unwrap();
+    assert_eq!(screen["client"]["fields"][0]["key"], "ring");
+    assert_eq!(screen["keys"][0]["key"], "v");
+    assert_eq!(screen["voice"]["master"], 0);
+    assert!(screen["server"].is_null());
+    // client scope: stored on the device, the mod hears about it
+    let set = |r: &mut Rig, scope: &str, key: &str, json: &str| {
+        r.l.on_ui(UiEvent::Setting { mod_id: "vtest".into(), scope: scope.into(), key: key.into(), json: json.into() })
+    };
+    set(&mut r, "client", "ring", "true");
+    assert_eq!(last_result(&r)["ok"], true);
+    assert_eq!(ui_of(&r, "settings").last().unwrap()["client"]["values"]["ring"], true);
+    assert!(std::fs::read_to_string(r.dirs.device.join("client-settings.toml")).unwrap().contains("ring"));
+    r.p.now.set(300);
+    r.l.on_frame();
+    assert!(r.p.logged("settings changed"), "{:?}", r.p.logs.borrow());
+    set(&mut r, "client", "ring", "3");
+    assert_eq!(last_result(&r)["ok"], false);
+    set(&mut r, "client", "ring", "{");
+    assert_eq!(last_result(&r)["message"], "not a value");
+    // keys: rebind, clear, back to the default, nonsense
+    set(&mut r, "keys", "talk", "\"b\"");
+    assert_eq!(ui_of(&r, "settings").last().unwrap()["keys"][0]["key"], "b");
+    assert_eq!(ui_of(&r, "settings").last().unwrap()["keys"][0]["isDefault"], false);
+    set(&mut r, "keys", "talk", "null");
+    assert!(ui_of(&r, "settings").last().unwrap()["keys"][0]["key"].is_null());
+    set(&mut r, "keys", "talk", "false");
+    assert_eq!(ui_of(&r, "settings").last().unwrap()["keys"][0]["key"], "v");
+    set(&mut r, "keys", "talk", "\"hyper\"");
+    assert_eq!(last_result(&r)["message"], "not a key");
+    // voice master volume
+    set(&mut r, "voice", "master", "150");
+    assert_eq!(link.master.get(), 150);
+    set(&mut r, "voice", "master", "250");
+    set(&mut r, "voice", "master", "\"x\"");
+    assert_eq!(last_result(&r)["ok"], false);
+    set(&mut r, "other", "x", "1");
+    assert_eq!(last_result(&r)["message"], "unknown section");
+    // server scope: the admin gets the form; a change goes out as SETTINGS_SET; the answer comes back
+    let schema = serde_json::json!({"fields": [{"key": "radius", "type": "int", "default": 32, "label": "R", "scope": "server", "restart": false}]});
+    let values = serde_json::json!({"radius": 32});
+    r.l.handle(vec![Output::SettingsSchema(SettingsSchema {
+        mod_id: "vtest".into(),
+        schema: bhmod_core::settings::to_cbor(&schema),
+        values: bhmod_core::settings::to_cbor(&values),
+    })]);
+    assert_eq!(ui_of(&r, "settings").last().unwrap()["server"]["values"]["radius"], 32);
+    r.l.handle(vec![Output::SettingsSchema(SettingsSchema {
+        mod_id: "srvonly".into(),
+        schema: bhmod_core::settings::to_cbor(&schema),
+        values: vec![0xff],
+    })]);
+    assert!(r.p.logged("unreadable form"));
+    r.p.sent.borrow_mut().clear();
+    set(&mut r, "server", "radius", "64");
+    assert!(matches!(&r.p.msgs()[..], [Message::SettingsSet(s)] if s.key == "radius"));
+    r.l.handle(vec![Output::SettingsResult(bhmod_proto::SettingsResult { outcome: Ok(()) })]);
+    assert_eq!(last_result(&r)["ok"], true);
+    let refused = SettingsFailure { code: 1, message: None };
+    r.l.handle(vec![Output::SettingsResult(bhmod_proto::SettingsResult { outcome: Err(refused) })]);
+    assert_eq!(last_result(&r)["message"], "refused (code 1)");
+    // after leaving the world: nothing runs, the server is gone
+    r.l.on_world(None);
+    set(&mut r, "client", "ring", "false");
+    assert_eq!(last_result(&r)["message"], "no mods are running");
+    set(&mut r, "server", "radius", "1");
+    assert_eq!(last_result(&r)["ok"], false);
+    r.l.on_ui(UiEvent::Button { mod_id: "vtest".into(), id: "ptt".into(), action: "press".into() });
+    r.l.on_ui(UiEvent::Key("v".into(), true));
+    r.l.on_ui(UiEvent::MicPermission(true));
+    r.l.handle(vec![Output::SettingsResult(bhmod_proto::SettingsResult { outcome: Ok(()) })]);
+    // the unsaved device: a button position and prefs that cannot be written are logged
+    std::fs::remove_dir_all(&r.dirs.device).unwrap();
+    std::fs::write(&r.dirs.device, b"file").unwrap();
+    r.l.on_ui(UiEvent::ButtonMoved { mod_id: "vtest".into(), id: "ptt".into(), x: 0.3, y: 0.4 });
+    assert!(r.p.logged("button position not saved"));
+    set(&mut r, "keys", "talk", "null");
+    assert_eq!(last_result(&r)["ok"], false);
+}
+
+#[test]
+fn voice_stays_off_when_it_cannot_run() {
+    // the server does not list voice
+    let (mut r, link) = voice_rig(&["settings"], true);
+    r.l.on_world(Some("w"));
+    assert!(!r.p.sent.borrow().iter().any(|p| p == &[0xBC, 0x15]));
+    assert!(link.messages.borrow().is_empty());
+    r.l.handle(vec![Output::Voice(Message::VoiceState(VoiceState::default()))]);
+    assert!(link.messages.borrow().is_empty());
+    // no audio backend on the phone
+    let (mut r, _link) = voice_rig(&["voice"], false);
+    r.l.on_world(Some("w"));
+    assert!(r.p.logged("no audio backend"));
+    // no key could be made
+    let (mut r, link) = voice_rig(&["voice"], true);
+    link.no_key.set(true);
+    r.l.on_world(Some("w"));
+    assert!(r.p.logged("no key could be made"));
+    // without a voice factory nothing starts either
+    let mut r = rig();
+    r.l.on_contact("h:1");
+    r.l.on_join_request();
+    r.l.on_packet(&hello_with([0; 32], 0, &["voice"]));
+    r.l.on_world(Some("w"));
+    r.l.on_world(None);
+}
+
+#[test]
+fn denial_failures_udp_trouble_and_disconnect() {
+    // no mod runs: voice still works for the player (events have nowhere to go)
+    let (mut r, link) = voice_rig_mods(&["voice", "settings"], true, false);
+    r.l.on_world(Some("w"));
+    r.l.on_world(Some("w"));
+    link.want.set(true);
+    r.l.on_frame();
+    assert_eq!(r.p.asked.get(), 1);
+    r.l.on_ui(UiEvent::MicPermission(false));
+    assert_eq!(ui_of(&r, "voice-denied").len(), 1);
+    assert_eq!(*link.mic.borrow(), [MicState::Denied]);
+    // the server's voice port cannot be reached
+    r.l.server = "no such host.invalid:1".into();
+    link.udp_port.set(Some(1));
+    link.send.borrow_mut().push(VoiceOut::Udp(vec![1]));
+    r.l.on_frame();
+    assert!(r.p.logged("unreachable"));
+    // playback that cannot open is logged once
+    let (mut r2, _l2) = voice_rig(&["voice"], true);
+    r2.p.backend.borrow().as_ref().unwrap().0.lock().unwrap().fail = true;
+    r2.l.on_world(Some("w"));
+    r2.l.on_frame();
+    assert!(r2.p.logged("voice: playback"));
+    // unchanged preferences are not written again
+    r.p.now.set(1500);
+    r.l.on_frame();
+    assert!(!r.dirs.device.join("voice-prefs.txt").exists());
+    // preferences that cannot be saved are logged
+    std::fs::create_dir_all(r.dirs.device.parent().unwrap()).unwrap();
+    let _ = std::fs::remove_dir_all(&r.dirs.device);
+    std::fs::write(&r.dirs.device, b"file").unwrap();
+    link.set_master(77).unwrap();
+    // the connection drops: voice stops at once
+    r.l.on_disconnect();
+    assert!(r.p.logged("preferences not saved"));
+    assert!(r.l.slot.get().is_none());
+    r.l.on_frame();
 }

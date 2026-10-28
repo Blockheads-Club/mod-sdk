@@ -25,9 +25,7 @@ pub struct DeviceStore {
 }
 
 fn write_atomic(path: &Path, data: &[u8]) -> io::Result<()> {
-    if let Some(d) = path.parent() {
-        fs::create_dir_all(d)?;
-    }
+    path.parent().map_or(Ok(()), fs::create_dir_all)?;
     let tmp = path.with_extension("tmp");
     fs::write(&tmp, data)?;
     fs::rename(&tmp, path)

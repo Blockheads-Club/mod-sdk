@@ -8,6 +8,7 @@
 //! and posts the list to the Java overlay, which draws the icons there. Nothing runs while no icon is set.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 
 use serde_json::{json, Value};
@@ -123,6 +124,11 @@ impl Board {
         self.icons.keys().map(String::as_str).filter(|p| !self.shown(p).is_empty()).collect()
     }
 
+    /// Forgets what was posted last (the overlay was cleared).
+    pub fn reset_post(&mut self) {
+        self.last = None;
+    }
+
     /// The overlay command for this frame: every visible blockhead (player, screen fractions) with its icons.
     /// `None` when nothing changed since the last post or the last post is younger than [`POST_MS`] (the
     /// overlay keeps showing it).
@@ -214,6 +220,7 @@ struct Seen {
 #[derive(Debug, Default)]
 pub struct Tracker {
     seen: Mutex<HashMap<usize, Seen>>,
+    on: AtomicBool,
 }
 
 impl Tracker {
@@ -224,6 +231,19 @@ impl Tracker {
 
     fn lock(&self) -> std::sync::MutexGuard<'_, HashMap<usize, Seen>> {
         self.seen.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// Turns the reports on (some player has an icon) or off (and forgets every blockhead).
+    pub fn set_active(&self, on: bool) {
+        if !self.on.swap(on, Ordering::Relaxed) || on {
+            return;
+        }
+        self.reset();
+    }
+
+    /// True while the game's update hook should report blockheads.
+    pub fn active(&self) -> bool {
+        self.on.load(Ordering::Relaxed)
     }
 
     /// A blockhead (address `bh`) of `player` was updated at `now`.
@@ -344,7 +364,7 @@ mod tests {
         assert!(!b.clear("voice", "nobody"));
         assert!(b.clear("other", "p1"));
         b.clear_mod("voice");
-        assert!(b.clear("voice", "p3") == false && !b.active());
+        assert!(!b.clear("voice", "p3") && !b.active());
         b.set("voice", "p1", "speaking");
         b.clear_all();
         assert!(!b.active());
@@ -367,6 +387,9 @@ mod tests {
         assert_eq!(b.frame(110, &moved), None, "too soon");
         assert!(b.frame(100 + POST_MS, &moved).is_some());
         assert!(b.frame(1000, &[]).is_some(), "the icon went off screen: an empty list clears the overlay");
+        assert!(b.frame(2000, &[]).is_none());
+        b.reset_post();
+        assert!(b.frame(2000, &[]).is_some());
     }
 
     #[test]
@@ -390,6 +413,14 @@ mod tests {
         assert_eq!(t.len(), 1);
         t.reset();
         assert!(t.is_empty());
+        assert!(!t.active());
+        t.set_active(true);
+        t.set_active(true);
+        t.report(1, "p1", (50.0, 10.0), (0, 0), 0);
+        assert!(t.active());
+        t.set_active(false);
+        assert!(!t.active() && t.is_empty());
+        t.set_active(false);
     }
 
     #[test]
