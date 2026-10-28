@@ -248,6 +248,9 @@ impl Platform for AndroidPlatform {
     fn camera(&self) -> Option<crate::overhead::Camera> {
         overhead::camera(world())
     }
+    fn local_player(&self) -> Option<String> {
+        local_player()
+    }
 }
 
 /// Runs `f` on the loader (created on first use), then the deferred game calls. `None` off the loader thread.

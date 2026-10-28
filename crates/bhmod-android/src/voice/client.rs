@@ -61,6 +61,15 @@ impl VoiceLink for SharedVoiceClient {
     fn load_prefs(&self, text: &str) {
         self.lock().load_prefs(text);
     }
+    fn players(&self) -> Vec<(String, String)> {
+        self.lock().players()
+    }
+    fn alias(&self, player: &str) -> Option<String> {
+        self.lock().alias(player)
+    }
+    fn speakers(&self) -> Vec<String> {
+        self.lock().speakers()
+    }
 }
 
 /// The loader's voice factory: a fresh libopus voice client per voice-enabled connection (`unsequenced`: this
@@ -108,5 +117,7 @@ mod tests {
         let other = factory(false)().unwrap();
         other.load_prefs(&prefs);
         assert_eq!(other.master(), Ok(140));
+        assert!(link.players().is_empty() && link.speakers().is_empty());
+        assert_eq!(link.alias("p"), None);
     }
 }

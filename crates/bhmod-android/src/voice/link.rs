@@ -41,6 +41,12 @@ pub trait VoiceLink: VoiceHost {
     fn prefs(&self) -> String;
     /// Restores [`VoiceLink::prefs`].
     fn load_prefs(&self, text: &str);
+    /// Every player the server listed: `(player id, alias)`.
+    fn players(&self) -> Vec<(String, String)>;
+    /// A listed player's alias.
+    fn alias(&self, player: &str) -> Option<String>;
+    /// The players with a voice session (the per-player volume list).
+    fn speakers(&self) -> Vec<String>;
 }
 
 /// Drives a [`VoiceLink`] from the pipeline.
@@ -170,6 +176,10 @@ pub(crate) mod fake {
         pub icons: Cell<Option<Icons>>,
         pub no_key: Cell<bool>,
         pub volumes: RefCell<BTreeMap<String, u16>>,
+        /// `(id, alias)` of the listed players; the ones in `speaking` have a voice session.
+        pub names: RefCell<Vec<(String, String)>>,
+        pub speaking: RefCell<Vec<String>>,
+        pub muted: RefCell<Vec<String>>,
     }
 
     impl VoiceHost for FakeLink {
@@ -218,11 +228,15 @@ pub(crate) mod fake {
         fn player_volume(&self, player: &str) -> Result<u16, ApiError> {
             Ok(self.volumes.borrow().get(player).copied().unwrap_or(100))
         }
-        fn mute_player(&self, _player: &str, _muted: bool) -> Result<(), ApiError> {
+        fn mute_player(&self, player: &str, muted: bool) -> Result<(), ApiError> {
+            self.muted.borrow_mut().retain(|p| p != player);
+            if muted {
+                self.muted.borrow_mut().push(player.into());
+            }
             Ok(())
         }
-        fn player_muted(&self, _player: &str) -> Result<bool, ApiError> {
-            Ok(false)
+        fn player_muted(&self, player: &str) -> Result<bool, ApiError> {
+            Ok(self.muted.borrow().iter().any(|p| p == player))
         }
     }
 
@@ -267,6 +281,15 @@ pub(crate) mod fake {
         fn load_prefs(&self, text: &str) {
             *self.prefs.borrow_mut() = text.to_string();
         }
+        fn players(&self) -> Vec<(String, String)> {
+            self.names.borrow().clone()
+        }
+        fn alias(&self, player: &str) -> Option<String> {
+            self.names.borrow().iter().find(|(p, _)| p == player).map(|(_, a)| a.clone())
+        }
+        fn speakers(&self) -> Vec<String> {
+            self.speaking.borrow().clone()
+        }
     }
 }
 
@@ -297,6 +320,8 @@ mod tests {
         slot.set_player_volume("p", 50).unwrap();
         assert_eq!(slot.player_volume("p"), Ok(50));
         slot.mute_player("p", true).unwrap();
+        assert_eq!(slot.player_muted("p"), Ok(true));
+        slot.mute_player("p", false).unwrap();
         assert_eq!(slot.player_muted("p"), Ok(false));
         // server functions stay unsupported on a client
         assert_eq!(slot.set_routes("p", &[]), Err(ApiError::Unsupported));

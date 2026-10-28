@@ -75,6 +75,8 @@ pub trait Platform {
     fn send_unsequenced(&self, packet: &[u8]) -> bool;
     /// The game's world-to-screen transform now (overhead icons); `None` outside a world.
     fn camera(&self) -> Option<Camera>;
+    /// This client's own player id while connected to a server.
+    fn local_player(&self) -> Option<String>;
 }
 
 /// Makes the voice client of a new voice-enabled connection.
@@ -202,11 +204,20 @@ impl<P: Platform> GameBridge for Bridge<P> {
         self.p.log(level, &format!("[{}] {message}", mod_id.unwrap_or("loader")));
     }
     fn online_players(&self) -> Vec<String> {
-        self.hud.borrow().players.iter().cloned().collect()
+        // A client knows the other players from the voice state (`VOICE_STATE.names`).
+        self.slot.get().map(|l| l.players().into_iter().map(|(id, _)| id).collect()).unwrap_or_default()
     }
     fn player_alias(&self, id: &str) -> Option<String> {
-        // A client knows the players only by id (from the voice state); the id stands in for the name.
-        self.hud.borrow().players.contains(id).then(|| id.to_string())
+        self.slot.get()?.alias(id)
+    }
+    fn local_player(&self) -> Option<String> {
+        self.p.local_player()
+    }
+    fn platform(&self) -> String {
+        crate::PLATFORM.to_string()
+    }
+    fn has_touch(&self) -> bool {
+        true
     }
     fn player_role(&self, _id: &str) -> Role {
         Role::Player

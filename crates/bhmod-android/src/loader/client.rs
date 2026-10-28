@@ -86,7 +86,6 @@ impl<P: Platform + 'static> Loader<P> {
         self.slot.set(None);
         self.udp = None;
         self.modes = None;
-        self.hud.borrow_mut().players.clear();
     }
 
     fn save_prefs(&mut self, link: &dyn VoiceLink) {
@@ -161,7 +160,6 @@ impl<P: Platform + 'static> Loader<P> {
     /// `Output::Voice`: the allowed modes go to the picker, everything to the voice client.
     pub(super) fn on_voice_message(&mut self, m: &Message) {
         if let Message::VoiceState(s) = m {
-            self.hud.borrow_mut().voice_state(s.full, &s.players);
             if let Some(mask) = s.modes.filter(|x| self.modes != Some(*x)) {
                 self.modes = Some(mask);
                 self.p.ui(ui::voice_modes(&Mode::from_mask(mask)));

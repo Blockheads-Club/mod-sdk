@@ -73,6 +73,9 @@ impl Platform for Fake {
     fn camera(&self) -> Option<Camera> {
         self.camera.get()
     }
+    fn local_player(&self) -> Option<String> {
+        Some("me".into())
+    }
 }
 
 impl Fake {
@@ -529,8 +532,16 @@ fn bridge_answers() {
     b.ui("m", &UiCommand::OpenSettings { mod_id: "other".into() }).unwrap();
     assert_eq!(b.hud.borrow().open_settings, vec!["other".to_string()]);
     assert!(b.voice().is_none());
-    b.slot.set(Some(Rc::new(crate::voice::link::fake::FakeLink::default())));
+    let link = Rc::new(crate::voice::link::fake::FakeLink::default());
+    link.names.borrow_mut().push(("p1".into(), "ALICE".into()));
+    b.slot.set(Some(link));
     assert!(b.voice().is_some());
+    assert_eq!(b.online_players(), ["p1"]);
+    assert_eq!(b.player_alias("p1").as_deref(), Some("ALICE"));
+    assert_eq!(b.player_alias("x"), None);
+    assert_eq!(b.local_player().as_deref(), Some("me"));
+    assert_eq!(b.platform(), "android-armv7");
+    assert!(b.has_touch());
     let bind = InputCommand::Bind { action: "talk".into(), default_key: "v".into() };
     assert_eq!(b.input("m", &bind), Ok(()));
     assert_eq!(b.input_key("m", "talk", "v"), Some("v".into()));
@@ -903,6 +914,7 @@ fn voice_flows_through_the_pipeline_and_the_mods() {
     assert_eq!(ui_of(&r, "voice-modes")[0]["modes"], serde_json::json!(["proximity", "channel"]));
     assert_eq!(link.messages.borrow().len(), 3);
     // a state event: the mod puts an icon over p1 and asks for its settings screen
+    link.names.borrow_mut().push(("p1".into(), "ALICE".into()));
     link.events.borrow_mut().push(VoiceEvent::State { player: "p1".into(), state: CoreState::Talking });
     r.p.now.set(100);
     r.l.on_frame();
