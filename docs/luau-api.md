@@ -235,7 +235,7 @@ snake_case keys, missing optional fields take the defaults.
   `<mod-id>:input { action, pressed }`.
 - `bh.ui.set_overhead(p, icon)`, `clear_overhead(p)`, `set_button(id, { icon, label, x, y, size, opacity })`,
   `remove_button(id)`, `open_settings(mod_id)`, `has_touch()`; button input as `<mod-id>:ui-button { id, action }`,
-  picks of blockheads (a click on PC, a 500 ms long press on Android) as `<mod-id>:ui-pick { player }`. Dialogs take up to four buttons.
+  picks of blockheads (a middle click on PC, a 500 ms long press on Android) as `<mod-id>:ui-pick { player }`. Dialogs take up to four buttons.
 - `bh.host.platform()`, `player:sleeping()`, `player:alive()` (server; events `player:sleep`, `player:wake`,
   `player:respawn` with `{ player }`), `bh.players.local_player()` (client), `bh.players.has_mod(p, mod_id)` (server).
 
