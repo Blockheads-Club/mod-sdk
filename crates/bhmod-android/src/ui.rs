@@ -1,7 +1,7 @@
 //! UI commands for the Java side, as JSON objects with a `t` (type) key. The Java UI renders them with the in-game
 //! kit; texts are translated there from the codes.
 
-use bhmod_client::session::{Failure, Offer};
+use bhmod_client::session::{Failure, Offer, SkippedMod};
 use bhmod_client::Refusal;
 use bhmod_core::ui::{Button, UiCommand};
 use bhmod_core::voice::Mode;
@@ -81,6 +81,15 @@ pub fn failed(server: &str, f: &Failure, loader: &str) -> String {
         v["id"] = json!(id);
     }
     v.to_string()
+}
+
+/// Optional server mods this loader could not run (told once per join): `voice` is named "voice chat" by the UI.
+pub fn skipped(server: &str, mods: &[SkippedMod]) -> String {
+    let list: Vec<Value> = mods
+        .iter()
+        .map(|m| json!({"id": m.id, "version": m.version, "name": m.name, "refusal": m.refusal.code()}))
+        .collect();
+    json!({"t": "skipped", "server": server, "mods": list}).to_string()
 }
 
 /// The server's rejection text.
@@ -271,6 +280,22 @@ mod tests {
         let dlg = v(mod_ui("m", &UiCommand::ShowDialog { id: 1, dialog: d }));
         assert!(dlg["field"].is_null());
         assert_eq!(dlg["buttons"][0]["kind"], "danger");
+    }
+
+    #[test]
+    fn skipped_shape() {
+        let m = SkippedMod {
+            id: "voice".into(),
+            version: "1.0.0".into(),
+            name: [("en".to_string(), "Voice".to_string())].into(),
+            refusal: Refusal::NeedsNewerApi("^0.4".into()),
+        };
+        let x = v(skipped("h:1", &[m]));
+        assert_eq!(
+            (x["mods"][0]["id"].as_str(), x["mods"][0]["refusal"].as_str()),
+            (Some("voice"), Some("needs-newer-api"))
+        );
+        assert_eq!(x["mods"][0]["name"]["en"], "Voice");
     }
 
     #[test]

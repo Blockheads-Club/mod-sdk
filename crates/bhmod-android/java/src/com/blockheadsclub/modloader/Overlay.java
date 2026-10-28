@@ -170,6 +170,18 @@ final class Overlay {
                 maybeWelcome();
                 Bridge.ui.postDelayed(new Runnable() { public void run() { raise(); } }, 5000);
                 break;
+            case "skipped": {
+                org.json.JSONArray mods = c.optJSONArray("mods");
+                StringBuilder names = new StringBuilder();
+                for (int i = 0; mods != null && i < mods.length(); i++) {
+                    JSONObject m = mods.optJSONObject(i);
+                    if (m == null) continue;
+                    if (names.length() > 0) names.append(", ");
+                    names.append("voice".equals(m.optString("id")) ? Strings.t("voice_chat") : Strings.pick(m.optJSONObject("name"), m.optString("id")));
+                }
+                if (names.length() > 0) toast(Strings.t("skipped_mods", "mods", names));
+                break;
+            }
             case "open-mods":
                 ModsScreen.open();
                 break;

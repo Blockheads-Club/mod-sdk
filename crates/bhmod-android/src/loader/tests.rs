@@ -1132,3 +1132,19 @@ fn denial_failures_udp_trouble_and_disconnect() {
     assert!(r.l.slot.get().is_none());
     r.l.on_frame();
 }
+
+#[test]
+fn skipped_optional_mods_are_told_to_the_player() {
+    let mut r = rig();
+    r.l.on_contact("h:1");
+    let m = bhmod_client::session::SkippedMod {
+        id: "voice".into(),
+        version: "1.0.0".into(),
+        name: Default::default(),
+        refusal: bhmod_client::Refusal::NeedsNewerApi("^0.4".into()),
+    };
+    r.l.handle(vec![Output::Skipped(vec![m])]);
+    assert!(r.p.logged("cannot run: [\"voice\"]"));
+    let s = ui_of(&r, "skipped");
+    assert_eq!((s[0]["server"].as_str(), s[0]["mods"][0]["id"].as_str()), (Some("h:1"), Some("voice")));
+}

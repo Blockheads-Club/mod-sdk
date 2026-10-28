@@ -714,6 +714,11 @@ impl<P: Platform + 'static> Loader<P> {
                 Output::Voice(m) => self.on_voice_message(&m),
                 Output::SettingsSchema(s) => self.on_settings_schema(&s),
                 Output::SettingsResult(r) => self.on_settings_result(&r),
+                Output::Skipped(mods) => {
+                    let ids: Vec<&str> = mods.iter().map(|m| m.id.as_str()).collect();
+                    self.p.log(LogLevel::Warn, &format!("optional mods this loader cannot run: {ids:?}"));
+                    self.p.ui(ui::skipped(&self.server, &mods));
+                }
                 Output::Cosmetics(c) => {
                     let changed = self.content_lock().apply(&c);
                     self.p.log(
