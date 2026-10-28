@@ -250,6 +250,7 @@ dependencies = [
 name = "bhmod-opus-sys"
 version = "0.3.1"
 dependencies = [
+ "bhmod-voice",
  "cc",
 ]
 
@@ -265,6 +266,7 @@ dependencies = [
 name = "bhmod-voice"
 version = "0.3.1"
 dependencies = [
+ "bhmod-core",
  "bhmod-proto",
  "chacha20poly1305",
  "getrandom 0.3.4",
