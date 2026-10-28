@@ -22,11 +22,13 @@ for d in "$root"/examples/*/; do
   e="$(basename "$d")"
   if [ -f "$d/Cargo.toml" ]; then
     (cd "$d" && cargo build --locked --release --target wasm32-wasip2 -q)
-    # Place the component where mod.toml's [entry] says (server/mod.wasm or client/mod.wasm), not in both.
-    rel="$(sed -n 's/^\(server\|client\) = { runtime = "wasm", path = "\(.*\)" }.*/\2/p' "$d/mod.toml" | head -1)"
-    [ -n "$rel" ] || { echo "$e: no wasm entry in mod.toml" >&2; exit 1; }
-    mkdir -p "$(dirname "$d/$rel")"
-    cp "$CARGO_TARGET_DIR/wasm32-wasip2/release/$(echo "$e" | tr - _).wasm" "$d/$rel"
+    # Place the component at every wasm path mod.toml's [entry] names (server/mod.wasm and/or client/mod.wasm).
+    rels="$(sed -n 's/^\(server\|client\) = { runtime = "wasm", path = "\(.*\)" }.*/\2/p' "$d/mod.toml")"
+    [ -n "$rels" ] || { echo "$e: no wasm entry in mod.toml" >&2; exit 1; }
+    for rel in $rels; do
+      mkdir -p "$(dirname "$d/$rel")"
+      cp "$CARGO_TARGET_DIR/wasm32-wasip2/release/$(echo "$e" | tr - _).wasm" "$d/$rel"
+    done
   fi
   "$BHMOD" pack "$d" -o "$out/$e.tmp.bhmod" >/dev/null
   id="$(sed -n 's/^id = "\(.*\)"/\1/p' "$d/mod.toml" | head -1)"
