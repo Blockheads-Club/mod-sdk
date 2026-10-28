@@ -70,9 +70,6 @@ pub trait Platform {
     fn audio(&self) -> Option<AudioIo>;
     /// Shows the system `RECORD_AUDIO` dialog; the answer comes back as [`UiEvent::MicPermission`].
     fn ask_mic(&self);
-    /// Sends a whole 0xBC packet unsequenced on ENet channel 0 (loader thread, in a world). False when it could not
-    /// leave.
-    fn send_unsequenced(&self, packet: &[u8]) -> bool;
     /// The game's world-to-screen transform now (overhead icons); `None` outside a world.
     fn camera(&self) -> Option<Camera>;
     /// This client's own player id while connected to a server.

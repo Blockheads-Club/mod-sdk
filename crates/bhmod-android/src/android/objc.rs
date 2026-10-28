@@ -189,14 +189,6 @@ pub fn ivar_ptr(obj: Id, class_name: &str, ivar: &str) -> *mut Id {
     }
 }
 
-/// A symbol exported by `libApplication.so` (null when missing or without the runtime).
-pub fn app_symbol(name: &str) -> *mut c_void {
-    match rt() {
-        Some(r) => unsafe { sym(r.app as *mut c_void, name) },
-        None => std::ptr::null_mut(),
-    }
-}
-
 /// `obj.ivar` as an object (nil when missing).
 pub fn ivar(obj: Id, class_name: &str, ivar: &str) -> Id {
     let p = ivar_ptr(obj, class_name, ivar);

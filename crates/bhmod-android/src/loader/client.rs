@@ -15,7 +15,7 @@ use crate::voice::udp::host_of;
 /// The voice preferences are compared (and saved when changed) at most this often.
 pub const PREFS_MS: u64 = 1000;
 
-/// Where the pipeline's packets go: the session (reliable), the game's ENet (unsequenced), the UDP port.
+/// Where the pipeline's packets go: the session (reliable 0xBC control) or the server's voice UDP port (frames).
 struct LoaderNet<'a, P: Platform> {
     p: &'a P,
     session: Option<&'a Session>,
@@ -29,9 +29,6 @@ impl<P: Platform> Net for LoaderNet<'_, P> {
         if let Some(pkt) = self.session.and_then(|s| s.voice_packet(packet.to_vec())) {
             self.p.send(&pkt);
         }
-    }
-    fn unsequenced(&mut self, packet: &[u8]) -> bool {
-        self.p.send_unsequenced(packet)
     }
     fn udp(&mut self, datagram: &[u8]) -> bool {
         if self.udp.is_none() {

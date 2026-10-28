@@ -1,5 +1,5 @@
-//! The voice UDP fallback (`transport = "udp"`, or `auto` when in-band is too lossy): a non-blocking socket to the
-//! server's voice port, opened when the driver first has a datagram for it and polled every frame.
+//! The voice UDP link, the only path of voice frames: a non-blocking socket to the server's voice port (from
+//! `VOICE_KEY`), opened when the driver first has a datagram for it (`AUTH`) and polled every frame.
 
 use std::io::ErrorKind;
 use std::net::{SocketAddr, ToSocketAddrs, UdpSocket};

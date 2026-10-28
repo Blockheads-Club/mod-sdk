@@ -1,8 +1,7 @@
-//! The voice pipeline of one connection, run once per `drawFrame` on the loader thread (the thread that also
-//! services the game's ENet host, so unsequenced sends may leave from here):
+//! The voice pipeline of one connection, run once per `drawFrame` on the loader thread:
 //!
 //! microphone frames ([`AudioIo::frames`]) → the [`Driver`] (activation, Opus, sealing: `bhmod_voice`'s
-//! `VoiceClient`) → [`Net`] (reliable 0xBC, unsequenced 0xBC, or the server's voice UDP port); and the other way,
+//! `VoiceClient`) → [`Net`] (reliable 0xBC control, or voice frames to the server's voice UDP port); and the other way,
 //! received frames went to the driver through the session, and here the driver mixes them into stereo that keeps
 //! the [`super::audio::PlaybackRing`] [`TARGET`] samples ahead of the device.
 //!
@@ -26,8 +25,6 @@ pub const TARGET: usize = BLOCK * 3;
 pub enum Outgoing {
     /// A whole 0xBC packet, reliable (key exchange, control).
     Reliable(Vec<u8>),
-    /// A whole 0xBC packet, unsequenced (a voice frame in-band).
-    Unsequenced(Vec<u8>),
     /// A datagram for the server's voice UDP port.
     Udp(Vec<u8>),
 }
@@ -52,8 +49,6 @@ pub trait Driver {
 pub trait Net {
     /// Sends a packet reliably (the game's own send path).
     fn reliable(&mut self, packet: &[u8]);
-    /// Sends a packet unsequenced on channel 0; false when it could not leave.
-    fn unsequenced(&mut self, packet: &[u8]) -> bool;
     /// Sends a datagram to the server's voice port; false without one.
     fn udp(&mut self, datagram: &[u8]) -> bool;
 }
@@ -149,9 +144,6 @@ impl Pipeline {
         for o in d.poll_send(now) {
             match o {
                 Outgoing::Reliable(p) => net.reliable(&p),
-                Outgoing::Unsequenced(p) => {
-                    net.unsequenced(&p);
-                }
                 Outgoing::Udp(p) => {
                     net.udp(&p);
                 }
@@ -248,17 +240,12 @@ pub(crate) mod fake {
     #[derive(Default)]
     pub struct FakeNet {
         pub reliable: Vec<Vec<u8>>,
-        pub unsequenced: Vec<Vec<u8>>,
         pub udp: Vec<Vec<u8>>,
     }
 
     impl Net for FakeNet {
         fn reliable(&mut self, packet: &[u8]) {
             self.reliable.push(packet.to_vec());
-        }
-        fn unsequenced(&mut self, packet: &[u8]) -> bool {
-            self.unsequenced.push(packet.to_vec());
-            true
         }
         fn udp(&mut self, datagram: &[u8]) -> bool {
             self.udp.push(datagram.to_vec());
@@ -307,12 +294,12 @@ mod tests {
         assert_eq!(d.mic, vec![MicState::On]);
         let mut cb = fake.0.lock().unwrap().capture.take().unwrap();
         cb(&[16384; FRAME * 2]);
-        d.send = vec![Outgoing::Reliable(vec![1]), Outgoing::Unsequenced(vec![2]), Outgoing::Udp(vec![3])];
+        d.send = vec![Outgoing::Reliable(vec![1]), Outgoing::Udp(vec![3])];
         d.talking = Some(Mode::Proximity);
         let notes = p.frame(3, &mut d, &mut n);
         assert_eq!(notes, vec![Notice::Indicator(Some(Mode::Proximity))]);
         assert_eq!(d.frames, vec![0.5, 0.5]);
-        assert_eq!((n.reliable.len(), n.unsequenced.len(), n.udp.len()), (1, 1, 1));
+        assert_eq!((n.reliable.len(), n.udp.len()), (1, 1));
         d.want = false;
         d.talking = None;
         let notes = p.frame(4, &mut d, &mut n);

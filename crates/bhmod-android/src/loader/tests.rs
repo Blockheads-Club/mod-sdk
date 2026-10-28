@@ -25,7 +25,6 @@ struct Fake {
     backend: RefCell<Option<crate::voice::audio::fake::FakeBackend>>,
     permission: Cell<crate::voice::audio::Permission>,
     asked: Cell<u32>,
-    unsequenced: RefCell<Vec<Vec<u8>>>,
     camera: Cell<Option<Camera>>,
 }
 
@@ -65,10 +64,6 @@ impl Platform for Fake {
     }
     fn ask_mic(&self) {
         self.asked.set(self.asked.get() + 1);
-    }
-    fn send_unsequenced(&self, packet: &[u8]) -> bool {
-        self.unsequenced.borrow_mut().push(packet.to_vec());
-        true
     }
     fn camera(&self) -> Option<Camera> {
         self.camera.get()
@@ -870,16 +865,11 @@ fn voice_flows_through_the_pipeline_and_the_mods() {
     let mut capture = backend.0.lock().unwrap().capture.take().unwrap();
     capture(&[0; crate::voice::audio::FRAME]);
     link.talking.set(Some(Mode::Proximity));
-    link.send.borrow_mut().extend([
-        VoiceOut::Reliable(vec![0xBC, 0x18]),
-        VoiceOut::Unsequenced(vec![0xBC, 0x16, 1]),
-        VoiceOut::Udp(vec![1]),
-    ]);
+    link.send.borrow_mut().extend([VoiceOut::Reliable(vec![0xBC, 0x18]), VoiceOut::Udp(vec![1])]);
     r.p.now.set(20);
     r.l.on_frame();
     assert_eq!(link.frames.get(), 1);
     assert!(r.p.sent.borrow().iter().any(|p| p == &[0xBC, 0x18]));
-    assert_eq!(*r.p.unsequenced.borrow(), [vec![0xBC, 0x16, 1]]);
     assert_eq!(ui_of(&r, "voice-mic")[0]["mode"], "proximity");
     // a UDP datagram without a port announced goes nowhere; with one, the socket opens and answers come back
     let server = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();

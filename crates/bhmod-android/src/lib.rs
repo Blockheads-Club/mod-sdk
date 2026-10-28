@@ -82,16 +82,11 @@ pub fn budgets() -> bhmod_core::budget::Budgets {
     }
 }
 
-/// `HELLO.features` of this client: `voice` and `settings` (both wired in this loader), plus `voice-unsequenced` when
-/// the game's ENet can be reached for unsequenced sends (`android::enet::available`; without it voice frames go only
-/// over the server's voice UDP port).
-pub fn features(unsequenced: bool) -> Vec<&'static str> {
+/// `HELLO.features` of this client: `voice` and `settings` (both wired in this loader; voice frames use the server's
+/// voice UDP port).
+pub fn features() -> Vec<&'static str> {
     use bhmod_proto::feature;
-    let mut v = vec![feature::VOICE, feature::SETTINGS];
-    if unsequenced {
-        v.push(voice::net::FEATURE);
-    }
-    v
+    vec![feature::VOICE, feature::SETTINGS]
 }
 
 /// What this build can run.
@@ -99,14 +94,7 @@ pub fn caps() -> Caps {
     Caps { loader: semver::Version::parse(VERSION).expect("crate version"), runtimes: kinds() }
 }
 
-/// The 0xBC client options of this build (`unsequenced`: see [`features`]).
-pub fn options_with(unsequenced: bool) -> Options {
-    let mut o = options();
-    o.features = features(unsequenced).into_iter().map(String::from).collect();
-    o
-}
-
-/// The 0xBC client options of this build, without unsequenced sends.
+/// The 0xBC client options of this build.
 pub fn options() -> Options {
     let names: Vec<&str> = kinds()
         .iter()
@@ -117,7 +105,7 @@ pub fn options() -> Options {
         })
         .collect();
     let mut o = Options::new(VERSION, PLATFORM, bhmod_core::API_VERSION, &names);
-    o.features = features(false).into_iter().map(String::from).collect();
+    o.features = features().into_iter().map(String::from).collect();
     o
 }
 
@@ -161,9 +149,8 @@ mod tests {
         assert!(super::budgets().hard > bhmod_core::budget::Budgets::default().hard);
         let t = tempfile::tempdir().unwrap();
         assert_eq!(super::runtimes(t.path()).len(), o.runtimes.len());
-        assert_eq!(super::features(true), vec!["voice", "settings", "voice-unsequenced"]);
+        assert_eq!(super::features(), vec!["voice", "settings"]);
         assert_eq!(o.features, vec!["voice", "settings"]);
-        assert_eq!(super::options_with(true).features.len(), 3);
     }
 
     /// The JVM is off until the glue switches it on, then it is advertised and created like the others.

@@ -1,4 +1,4 @@
-//! Voice glue on Android: the audio backend, the `RECORD_AUDIO` prompt, the unsequenced send path and the Java
+//! Voice glue on Android: the audio backend, the `RECORD_AUDIO` prompt and the Java
 //! events (permission answer, push-to-talk seam). The loader ([`crate::loader`]) owns the pipeline; this module only
 //! gives it what [`crate::loader::Platform`] asks for. Nothing opens before a mod turns the microphone on.
 
@@ -8,15 +8,11 @@ use jni::objects::JClass;
 use jni::sys::{jboolean, JNI_FALSE};
 use jni::JNIEnv;
 
-use super::{enet, push_ui, INBOX};
+use super::push_ui;
 use crate::loader::UiEvent;
 use crate::voice::audio::{choose, AudioIo, Backend, BackendKind, Permission};
-use crate::voice::net::{Outbox, Sent};
 
 use super::{aaudio, opensles};
-
-/// Unsequenced packets from other threads, sent at the next frame.
-static OUTBOX: Outbox = Outbox::new();
 
 extern "C" {
     fn __system_property_get(name: *const c_char, value: *mut c_char) -> c_int;
@@ -57,37 +53,6 @@ pub fn audio() -> Option<AudioIo> {
 /// Shows the system `RECORD_AUDIO` dialog (first opt-in); the answer comes back through `Native.micPermission`.
 pub fn ask_mic() {
     super::java_call("requestMic");
-}
-
-/// True when the game's ENet can take unsequenced packets (`HELLO.features`).
-pub fn unsequenced_available() -> bool {
-    enet::available()
-}
-
-/// The ENet peer when unsequenced sends may go out now: loader thread, in a world, connected.
-fn link(in_world: bool) -> Option<enet::Peer> {
-    if !INBOX.is_owner() || !in_world {
-        return None;
-    }
-    enet::Peer::of(super::conn()?.matc)
-}
-
-/// Sends a whole 0xBC packet (`bc 16 ...`, at most 1364 bytes) unsequenced on channel 0. Off the loader thread or
-/// outside a world it waits for the next frame. False when it was refused or can never be sent.
-pub fn send_unsequenced(packet: &[u8]) -> bool {
-    let peer = link(super::in_world());
-    matches!(
-        OUTBOX.send(packet, peer.as_ref().map(|p| p as &dyn crate::voice::net::Enet)),
-        Ok(Sent::Now | Sent::Queued)
-    )
-}
-
-/// Every frame (loader thread): the queued unsequenced packets go out (dropped outside a world).
-pub fn on_frame(in_world: bool) {
-    if !OUTBOX.is_empty() {
-        let peer = link(in_world);
-        OUTBOX.flush(peer.as_ref().map(|p| p as &dyn crate::voice::net::Enet));
-    }
 }
 
 /// `Native.micPermission(granted)`: the answer of the `RECORD_AUDIO` dialog.

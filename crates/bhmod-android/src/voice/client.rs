@@ -16,7 +16,6 @@ use crate::loader::VoiceFactory;
 fn out(o: Out) -> Outgoing {
     match o {
         Out::Reliable(p) => Outgoing::Reliable(p),
-        Out::Unsequenced(p) => Outgoing::Unsequenced(p),
         Out::Udp(p) => Outgoing::Udp(p),
     }
 }
@@ -72,11 +71,10 @@ impl VoiceLink for SharedVoiceClient {
     }
 }
 
-/// The loader's voice factory: a fresh libopus voice client per voice-enabled connection (`unsequenced`: this
-/// loader listed `voice-unsequenced`).
-pub fn factory(unsequenced: bool) -> VoiceFactory {
+/// The loader's voice factory: a fresh libopus voice client per voice-enabled connection.
+pub fn factory() -> VoiceFactory {
     Box::new(move || {
-        let c = VoiceClient::new(Arc::new(OpusCodec), unsequenced);
+        let c = VoiceClient::new(Arc::new(OpusCodec));
         Some(Rc::new(SharedVoiceClient::new(c)) as Rc<dyn VoiceLink>)
     })
 }
@@ -89,13 +87,12 @@ mod tests {
     #[test]
     fn packets_map_one_to_one() {
         assert_eq!(out(Out::Reliable(vec![1])), Outgoing::Reliable(vec![1]));
-        assert_eq!(out(Out::Unsequenced(vec![2])), Outgoing::Unsequenced(vec![2]));
         assert_eq!(out(Out::Udp(vec![3])), Outgoing::Udp(vec![3]));
     }
 
     #[test]
     fn the_real_client_behind_the_link() {
-        let link = factory(true)().unwrap();
+        let link = factory()().unwrap();
         let key = link.start().unwrap();
         assert!(matches!(Message::decode(&key), Ok(Message::VoiceKey(_))));
         link.on_message(&Message::ListRequest);
@@ -114,7 +111,7 @@ mod tests {
         assert!(mixed.iter().all(|x| *x == 0.0));
         link.set_master(140).unwrap();
         let prefs = link.prefs();
-        let other = factory(false)().unwrap();
+        let other = factory()().unwrap();
         other.load_prefs(&prefs);
         assert_eq!(other.master(), Ok(140));
         assert!(link.players().is_empty() && link.speakers().is_empty());

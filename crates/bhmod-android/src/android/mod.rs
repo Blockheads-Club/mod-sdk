@@ -14,7 +14,6 @@
 
 pub mod aaudio;
 pub mod cosmetics;
-pub mod enet;
 pub mod items;
 pub mod menus;
 pub mod native;
@@ -191,11 +190,6 @@ pub(crate) fn world() -> Id {
     WORLD.with(|w| *w.borrow()) as Id
 }
 
-/// True on the loader thread while a world is open.
-pub(crate) fn in_world() -> bool {
-    INBOX.is_owner() && WORLD.with(|w| *w.borrow() != 0)
-}
-
 /// The game, as the loader sees it.
 pub struct AndroidPlatform;
 
@@ -242,9 +236,6 @@ impl Platform for AndroidPlatform {
     fn ask_mic(&self) {
         voice::ask_mic();
     }
-    fn send_unsequenced(&self, packet: &[u8]) -> bool {
-        voice::send_unsequenced(packet)
-    }
     fn camera(&self) -> Option<crate::overhead::Camera> {
         overhead::camera(world())
     }
@@ -263,16 +254,15 @@ fn with_loader<R>(f: impl FnOnce(&mut Loader<AndroidPlatform>) -> R) -> Option<R
         if l.is_none() {
             let dirs = Dirs::under(&data_dir());
             let wasm_cache = data_dir().join("wasm-cache");
-            let unsequenced = voice::unsequenced_available();
             let loader = Loader::new(
                 Rc::new(AndroidPlatform),
                 dirs,
                 crate::caps(),
-                crate::options_with(unsequenced),
+                crate::options(),
                 Box::new(move || crate::runtimes(&wasm_cache)),
             )
             .with_budgets(crate::budgets())
-            .with_voice(crate::voice::client::factory(unsequenced));
+            .with_voice(crate::voice::client::factory());
             // The blockhead hooks run on the game's other threads: they read the cosmetics and report blockheads
             // (overhead icons) through these handles.
             let _ = cosmetics::SHARED.set(loader.content());
@@ -386,7 +376,6 @@ extern "C" fn hook_draw_frame(this: Id, cmd: Sel) {
         });
         // After the loader ran: mods may have just loaded or unloaded their weapon cosmetics.
         weapons::sync();
-        voice::on_frame(!world.is_null());
     });
     let orig = ORIG.get().expect("hooks").draw_frame;
     unsafe {
@@ -585,7 +574,7 @@ pub extern "system" fn JNI_OnLoad(vm: JavaVM, _reserved: *mut c_void) -> jint {
                 if hooks { "on" } else { "off" },
                 data_dir().display(),
                 crate::options().runtimes,
-                crate::features(hooks && voice::unsequenced_available())
+                crate::features()
             ),
         );
         java_post(&serde_json::json!({"t": "ready", "version": crate::VERSION, "hooks": hooks}).to_string());
