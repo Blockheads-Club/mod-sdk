@@ -19,7 +19,9 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
+use bhmod_manifest::settings::{Settings, SettingsError};
 use semver::VersionReq;
+use serde_json::{Map, Value as Json};
 
 use crate::bridge::GameBridge;
 use crate::budget::{Budgets, Clock, Strikes, SystemClock};
@@ -34,6 +36,7 @@ use crate::resolve::resolve;
 use crate::runtime::{CallError, CommandId, HostApi, Instance, InstanceLimits, Runtime, SubscriptionId, TaskId};
 use crate::scheduler::Scheduler;
 use crate::services::ServiceRegistry;
+use crate::settings as cfg;
 use crate::storage::{MemoryStorage, StorageProvider, Store};
 use crate::timings::{HandlerKind, ModTimings, Timings};
 use crate::types::{
@@ -46,6 +49,8 @@ use crate::API_VERSION;
 
 /// Longest log message in bytes.
 pub const MAX_LOG: usize = 4096;
+/// The built-in admin command of the host (`/mod settings`, `/mod set`); mods cannot register it.
+pub const MOD_COMMAND: &str = "mod";
 /// Most deferred event deliveries run after one outermost call.
 pub const MAX_DEFERRED: usize = 1024;
 
@@ -131,6 +136,12 @@ struct Slot {
     generation: u32,
     /// Hash of the package this slot runs (what `reload` compares).
     fingerprint: u64,
+    /// `[settings]` of the manifest.
+    settings: Rc<Settings>,
+    /// The current value of every setting.
+    values: Map<String, Json>,
+    /// Whether players must run the client half (manifest and the admin's `client-required`).
+    client_required: bool,
 }
 
 /// The mod host.
@@ -160,6 +171,12 @@ pub struct ModHost {
     runtimes: Vec<Box<dyn Runtime>>,
     /// `(world name, world id)` once the world is loaded (a reloaded mod gets `world-loaded` with it).
     world: Option<(String, String)>,
+    /// The last `mods.toml` that parsed (settings keep their values when an edit breaks the file).
+    config: ModsConfig,
+    /// What `mods.toml` looked like when it was last read or written (see [`cfg::stamp`]).
+    config_stamp: u64,
+    /// When `poll` looks at `mods.toml` again.
+    config_check: Option<Instant>,
 }
 
 /// What a reload did to one mod.
@@ -256,6 +273,9 @@ impl ModHost {
             mods_dir,
             runtimes,
             world: None,
+            config: ModsConfig::default(),
+            config_stamp: 0,
+            config_check: None,
         };
         let (ordered, problems, skipped) = host.scan();
         for p in problems {
@@ -278,8 +298,15 @@ impl ModHost {
 
     /// Discovers and resolves the packages in the mods directory: the packages in load order, the problems (as log
     /// lines) and the skipped ones.
-    fn scan(&self) -> (Vec<Package>, Vec<String>, Vec<String>) {
-        let config = self.read_config(&self.mods_dir);
+    fn scan(&mut self) -> (Vec<Package>, Vec<String>, Vec<String>) {
+        self.config_stamp = cfg::stamp(&self.mods_dir);
+        let config = match self.read_config(&self.mods_dir) {
+            Some(c) => {
+                self.config = c.clone();
+                c
+            }
+            None => ModsConfig::default(),
+        };
         let (packages, found) = discover(&self.mods_dir);
         let mut problems: Vec<String> =
             found.iter().map(|p| format!("cannot load {}: {}", p.origin.display(), p.message)).collect();
@@ -303,6 +330,9 @@ impl ModHost {
 
     /// A slot in state `Loaded` for a package and its instance.
     fn make_slot(&self, pkg: &Package, instance: Box<dyn Instance>, generation: u32) -> Slot {
+        let id = &pkg.manifest.id;
+        let mod_config = self.config.get(id);
+        let values = self.resolve_settings(id, &pkg.manifest.settings, &mod_config);
         Slot {
             info: ModInfo {
                 id: pkg.manifest.id.clone(),
@@ -331,7 +361,23 @@ impl ModHost {
             timings: Timings::new(self.clock.now()),
             generation,
             fingerprint: fingerprint(pkg),
+            settings: Rc::new(pkg.manifest.settings.clone()),
+            values,
+            client_required: crate::config::client_required(&pkg.manifest, &mod_config),
         }
+    }
+
+    /// The values of `settings` from the stored ones; ignored stored values are logged.
+    fn resolve_settings(&self, id: &str, settings: &Settings, c: &crate::config::ModConfig) -> Map<String, Json> {
+        let (values, problems) = settings.resolve(&c.settings_json());
+        for p in problems {
+            let msg = match p {
+                SettingsError::UnknownKey(k) => format!("{FILE_NAME}: ignoring unknown setting `{k}`"),
+                other => format!("{FILE_NAME}: invalid setting {other}; using the default"),
+            };
+            self.bridge.log(Some(id), LogLevel::Warn, &msg);
+        }
+        values
     }
 
     /// Instantiates a package and appends it as a new slot (state `Loaded`).
@@ -342,13 +388,22 @@ impl ModHost {
         Ok(self.slots.len() - 1)
     }
 
-    fn read_config(&self, dir: &Path) -> ModsConfig {
+    /// Reads `mods.toml` (a missing file is empty); `None` (logged) when it does not parse.
+    fn read_config(&self, dir: &Path) -> Option<ModsConfig> {
         let path = dir.join(FILE_NAME);
-        let Ok(text) = std::fs::read_to_string(&path) else { return ModsConfig::default() };
-        ModsConfig::parse(&text).unwrap_or_else(|e| {
-            self.log(LogLevel::Error, &format!("{} is invalid, no permissions are granted: {e}", path.display()));
-            ModsConfig::default()
-        })
+        let parsed = match std::fs::read_to_string(&path) {
+            Ok(text) => ModsConfig::parse(&text),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Some(ModsConfig::default()),
+            Err(e) => Err(e.to_string()),
+        };
+        match parsed {
+            Ok(c) => Some(c),
+            Err(e) => {
+                let p = path.display();
+                self.log(LogLevel::Error, &format!("{p} is invalid, no permissions are granted (settings stay): {e}"));
+                None
+            }
+        }
     }
 
     fn log(&self, level: LogLevel, msg: &str) {
@@ -644,6 +699,150 @@ impl ModHost {
         found
     }
 
+    fn slot_of(&self, id: &str) -> Option<usize> {
+        self.slots.iter().position(|s| s.info.id == id)
+    }
+
+    /// The settings of mod `id` as canonical JSON `{ "fields": [...], "values": {...} }` (what the host app and
+    /// 0xBC `SETTINGS_SCHEMA` show). `None` for a mod that is not loaded.
+    pub fn settings_schema(&self, id: &str) -> Option<Json> {
+        let s = &self.slots[self.slot_of(id)?];
+        Some(s.settings.to_json(&s.values))
+    }
+
+    /// The current setting values of mod `id` (every key). `None` for a mod that is not loaded.
+    pub fn settings_values(&self, id: &str) -> Option<Map<String, Json>> {
+        self.slot_of(id).map(|i| self.slots[i].values.clone())
+    }
+
+    /// Whether players must run the client half of mod `id`: the manifest, overridden by the admin's
+    /// `client-required` in `mods.toml` (never for mods with `[content]`). `None` for a mod that is not loaded.
+    pub fn client_required(&self, id: &str) -> Option<bool> {
+        self.slot_of(id).map(|i| self.slots[i].client_required)
+    }
+
+    /// The admin changes a setting of mod `id` (host app, `/mod set`, 0xBC `SETTINGS_SET` after the host program
+    /// checked the sender's rights). The value is validated and normalised, stored in memory and in `mods.toml`
+    /// (a write failure is logged; the new value still applies until the next restart), and
+    /// `<mod-id>:settings-changed` fires when it differs from the old one. `UnknownKey` also for an unknown mod.
+    pub fn set_setting(&mut self, id: &str, key: &str, value: &Json) -> Result<Json, SettingsError> {
+        let i = self.slot_of(id).ok_or_else(|| SettingsError::UnknownKey(format!("{id}.{key}")))?;
+        self.set_in_slot(i, key, value)
+    }
+
+    fn set_in_slot(&mut self, i: usize, key: &str, value: &Json) -> Result<Json, SettingsError> {
+        let slot = &self.slots[i];
+        let field = slot.settings.get(key).ok_or_else(|| SettingsError::UnknownKey(key.to_string()))?;
+        let v = bhmod_manifest::settings::validate_value(field, value)?;
+        let stored = (v != field.default).then_some(&v);
+        let id = slot.info.id.clone();
+        if let Err(e) = crate::config::write_setting(&self.mods_dir, &id, key, stored) {
+            self.bridge.log(Some(&id), LogLevel::Error, &format!("setting {key} not saved: {e}"));
+        }
+        self.config_stamp = cfg::stamp(&self.mods_dir);
+        let entry = self.config.mods.entry(id).or_default();
+        match stored.and_then(crate::config::json_to_toml_value) {
+            Some(t) => {
+                entry.settings.insert(key.to_string(), t);
+            }
+            None => {
+                entry.settings.remove(key);
+            }
+        }
+        let old = self.slots[i].values.insert(key.to_string(), v.clone());
+        if old.as_ref() != Some(&v) {
+            self.settings_changed(i, vec![key.to_string()]);
+        }
+        Ok(v)
+    }
+
+    /// Fires `<mod-id>:settings-changed` (to every mod subscribed to that name; the owner on the stack gets it once
+    /// its call returned).
+    fn settings_changed(&mut self, i: usize, keys: Vec<String>) {
+        if !self.enabled || keys.is_empty() {
+            return;
+        }
+        let source = self.slots[i].info.id.clone();
+        let name = format!("{source}:settings-changed");
+        self.fire(Event::Custom { name, source, payload: cfg::changed_payload(&keys), cancelled: false });
+    }
+
+    /// Reads `mods.toml` again and applies the setting values of every loaded mod (`poll` does this by itself
+    /// when the file changed, at most every [`cfg::CHECK_INTERVAL`]). A file that does not parse changes nothing
+    /// (logged); an invalid value falls back to the default (logged). Mods whose values changed get
+    /// `<mod-id>:settings-changed`. `enabled`, `grant` and `client-required` need `/mods reload` (or a restart).
+    /// Returns the ids of the mods whose settings changed.
+    pub fn reload_settings(&mut self) -> Vec<String> {
+        self.config_stamp = cfg::stamp(&self.mods_dir);
+        let Some(config) = self.read_config(&self.mods_dir) else { return Vec::new() };
+        self.config = config;
+        let mut changed = Vec::new();
+        for i in 0..self.slots.len() {
+            let id = self.slots[i].info.id.clone();
+            let settings = self.slots[i].settings.clone();
+            let values = self.resolve_settings(&id, &settings, &self.config.get(&id));
+            let keys: Vec<String> = values
+                .iter()
+                .filter(|(k, v)| self.slots[i].values.get(*k) != Some(*v))
+                .map(|(k, _)| k.clone())
+                .collect();
+            if keys.is_empty() {
+                continue;
+            }
+            self.slots[i].values = values;
+            self.bridge.log(Some(&id), LogLevel::Info, &format!("settings changed: {}", keys.join(", ")));
+            self.settings_changed(i, keys);
+            changed.push(id);
+        }
+        changed
+    }
+
+    /// `/mod settings <id>` and `/mod set <id> <key> <value>` (admins and the console).
+    fn mod_command(&mut self, sender: &CommandSender, args: &[String]) -> Vec<String> {
+        let allowed = match sender {
+            CommandSender::Console => true,
+            CommandSender::Player(p) => self.bridge.player_role(p) >= Role::Admin,
+        };
+        if !allowed {
+            return vec!["You do not have permission to use /mod.".to_string()];
+        }
+        const USAGE: &str = "Usage: /mod settings <mod> | /mod set <mod> <key> <value>";
+        match args {
+            [cmd, id] if cmd == "settings" => {
+                let Some(i) = self.slot_of(id) else { return vec![format!("No mod {id} is loaded.")] };
+                let s = &self.slots[i];
+                if s.settings.fields.is_empty() {
+                    return vec![format!("{id} has no settings.")];
+                }
+                let mut out = vec![format!("{id} settings:")];
+                for f in &s.settings.fields {
+                    let restart = if f.restart { " (restart)" } else { "" };
+                    out.push(format!("{} = {}{restart}", f.key, cfg::show(&s.values[&f.key], 200)));
+                }
+                out
+            }
+            [cmd, id, key, value @ ..] if cmd == "set" && !value.is_empty() => {
+                let Some(i) = self.slot_of(id) else { return vec![format!("No mod {id} is loaded.")] };
+                let Some(field) = self.slots[i].settings.get(key) else {
+                    return vec![format!("{id} has no setting {key} (see /mod settings {id}).")];
+                };
+                let parsed = bhmod_manifest::settings::parse_input(field, &value.join(" "));
+                match parsed.and_then(|v| self.set_in_slot(i, key, &v)) {
+                    Ok(v) => {
+                        let restart = if self.slots[i].settings.get(key).is_some_and(|f| f.restart) {
+                            " It takes effect after a restart."
+                        } else {
+                            ""
+                        };
+                        vec![format!("{id}: {key} = {}.{restart}", cfg::show(&v, 200))]
+                    }
+                    Err(e) => vec![format!("Not changed: {e}")],
+                }
+            }
+            _ => vec![USAGE.to_string()],
+        }
+    }
+
     /// Server stop: `on-disable` for every running mod in reverse load order, storage flushed.
     pub fn disable_all(&mut self) {
         for i in (0..self.slots.len()).rev() {
@@ -853,7 +1052,8 @@ impl ModHost {
     /// True when `line` is `/name ...` and `name` is a mod command (so the host routes it to [`ModHost::command`]
     /// for any player).
     pub fn owns_command(&self, line: &str) -> bool {
-        self.enabled && split_command(line).is_some_and(|(name, _)| self.commands.lookup(&name).is_some())
+        self.enabled
+            && split_command(line).is_some_and(|(name, _)| name == MOD_COMMAND || self.commands.lookup(&name).is_some())
     }
 
     /// Handles a command line. Fires `command` first. Returns `None` when the host should run it as a built-in
@@ -863,6 +1063,9 @@ impl ModHost {
             return None;
         }
         let (name, args) = split_command(line)?;
+        if name == MOD_COMMAND {
+            return Some(self.mod_command(&sender, &args));
+        }
         if self.bus.has_listeners(EventKind::Command) {
             let raw = line.trim_end_matches(['\n', '\r']).to_string();
             let ev = Event::Command {
@@ -938,6 +1141,14 @@ impl ModHost {
     pub fn poll(&mut self) {
         if !self.enabled {
             return;
+        }
+        // The real clock on purpose: looking at a file is not mod time, and the fake clocks of tests stay untouched.
+        let now = Instant::now();
+        if self.config_check.is_none_or(|t| now >= t) {
+            self.config_check = Some(now + cfg::CHECK_INTERVAL);
+            if cfg::stamp(&self.mods_dir) != self.config_stamp {
+                self.reload_settings();
+            }
         }
         if self.scheduler.has_poll() {
             let tasks = self.scheduler.take_poll();
@@ -1127,7 +1338,7 @@ impl HostApi for Ctx<'_> {
     }
     fn register_command(&mut self, spec: CommandSpec) -> Result<CommandId, ApiError> {
         let ModHost { commands, bridge, .. } = &mut *self.host;
-        commands.register(self.owner, spec, &|n| bridge.is_builtin_command(n))
+        commands.register(self.owner, spec, &|n| n == MOD_COMMAND || bridge.is_builtin_command(n))
     }
     fn unregister_command(&mut self, id: CommandId) -> bool {
         self.host.commands.unregister(self.owner, id)
@@ -1366,6 +1577,20 @@ impl HostApi for Ctx<'_> {
     }
     fn remote_caller(&mut self) -> Option<RemoteCaller> {
         self.host.remote.caller.clone()
+    }
+
+    fn settings_get(&mut self, key: &str) -> Option<Vec<u8>> {
+        self.slot().values.get(key).map(|v| cfg::to_value(v).encode())
+    }
+    fn settings_all(&mut self) -> Vec<u8> {
+        let fields = &self.slot().settings.fields;
+        let values = &self.slot().values;
+        Value::Map(fields.iter().map(|f| (f.key.clone(), cfg::to_value(&values[&f.key]))).collect()).encode()
+    }
+    fn settings_set(&mut self, key: &str, value: &[u8]) -> Result<(), ApiError> {
+        let v = Value::decode(value).map_err(|e| ApiError::InvalidArgument(format!("value: {e}")))?;
+        let j = cfg::from_value(&v)?;
+        self.host.set_in_slot(self.owner, key, &j).map(|_| ()).map_err(|e| ApiError::InvalidArgument(e.to_string()))
     }
 
     fn channel_open(&mut self, name: &str) -> Result<ChannelId, ApiError> {

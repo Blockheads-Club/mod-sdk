@@ -406,6 +406,9 @@ fn trait_defaults_for_0_1_code() {
     assert_eq!(api.ui_notice("t", bhmod_core::ui::NoticeLevel::Info), Err(ApiError::Unsupported));
     assert_eq!(api.ui_show_dialog(dialog), Err(ApiError::Unsupported));
     assert!(!api.ui_close_dialog(1));
+    assert_eq!(api.settings_get("k"), None);
+    assert_eq!(api.settings_all(), vec![0xa0]);
+    assert_eq!(api.settings_set("k", &[0xf6]), Err(ApiError::Unsupported));
     let to = bhmod_core::RemoteTarget::Server;
     assert_eq!(api.call_remote(to, "s", "^1", "m", &[0x80], 0), Err(ApiError::Unsupported));
     assert!(!api.cancel_remote(1));

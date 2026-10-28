@@ -809,13 +809,20 @@ pub fn field_json(f: &Field, nested: bool) -> Json {
 /// The canonical JSON of a mod's settings: `{ "fields": [...], "values": {...} }`, fields in declaration order,
 /// `values` with every key (the given value, else the default; values are not validated here).
 pub fn schema_json(m: &Manifest, values: &Map<String, Json>) -> Json {
-    let fields = m.settings.fields.iter().map(|f| field_json(f, false)).collect();
-    let values =
-        m.settings.fields.iter().map(|f| (f.key.clone(), values.get(&f.key).unwrap_or(&f.default).clone())).collect();
-    let mut o = Map::new();
-    o.insert("fields".into(), Json::Array(fields));
-    o.insert("values".into(), Json::Object(values));
-    Json::Object(o)
+    m.settings.to_json(values)
+}
+
+impl Settings {
+    /// [`schema_json`] of these settings.
+    pub fn to_json(&self, values: &Map<String, Json>) -> Json {
+        let fields = self.fields.iter().map(|f| field_json(f, false)).collect();
+        let values =
+            self.fields.iter().map(|f| (f.key.clone(), values.get(&f.key).unwrap_or(&f.default).clone())).collect();
+        let mut o = Map::new();
+        o.insert("fields".into(), Json::Array(fields));
+        o.insert("values".into(), Json::Object(values));
+        Json::Object(o)
+    }
 }
 
 #[cfg(test)]

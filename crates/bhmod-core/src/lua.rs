@@ -1028,6 +1028,24 @@ impl LuaInstance {
         });
         bh.set("services", services)?;
 
+        let settings = lua.create_table()?;
+        let s = sh.clone();
+        b.func(&settings, "get", move |lua, key: String| match with_host(&s, |h| h.settings_get(&key))? {
+            Some(bytes) => decode_cbor(lua, &s, &bytes),
+            None => Ok(Value::Nil),
+        });
+        let s = sh.clone();
+        b.func(&settings, "all", move |lua, ()| {
+            let bytes = with_host(&s, |h| h.settings_all())?;
+            decode_cbor(lua, &s, &bytes)
+        });
+        let s = sh.clone();
+        b.func(&settings, "set", move |_, (key, value): (String, Value)| {
+            let bytes = to_cbor(&s, &value, 1)?.encode();
+            with_host(&s, |h| h.settings_set(&key, &bytes))?.map_err(api_err)
+        });
+        bh.set("settings", settings)?;
+
         let channels = lua.create_table()?;
         let s = sh.clone();
         b.func(&channels, "open", move |lua, (name, f): (String, Option<Function>)| {
