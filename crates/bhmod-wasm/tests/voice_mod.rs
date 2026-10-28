@@ -455,10 +455,21 @@ fn client_half() {
     h.ui_result(last_dialog(&b).0, 1, None);
     assert!(b.voice.calls.borrow().contains(&"mute a true".into()));
 
-    // Long press: the mode picker lists the other allowed modes and Cancel; the choice is kept as a setting.
+    // The mic button is hold-to-talk only: a long press keeps talking until the release, no dialog.
     b.voice.allowed_modes.set(0b1111);
+    b.voice.calls.borrow_mut().clear();
+    b.ui.borrow_mut().clear();
     h.ui_button("voice", "ptt", ButtonAction::Press);
     h.ui_button("voice", "ptt", ButtonAction::LongPress);
+    h.ui_button("voice", "ptt", ButtonAction::Release);
+    assert_eq!(*b.voice.calls.borrow(), ["talk default true", "talk default false"]);
+    assert!(!b.ui.borrow().iter().any(|c| matches!(c, UiCommand::ShowDialog { .. })));
+    // The headphones button opens the voice menu; "Talk mode" lists the other allowed modes and Cancel; the choice
+    // is kept as a setting.
+    h.ui_button("voice", "menu", ButtonAction::Release);
+    let hub = last_dialog(&b);
+    assert_eq!(hub.1, ["Talk mode", "Deafen", "Volumes", "Close"]);
+    h.ui_result(hub.0, 0, None);
     let picker = last_dialog(&b);
     assert_eq!(picker.1, ["Everyone", "Channel", "Broadcast", "Cancel"]);
     h.ui_result(picker.0, 1, None);
