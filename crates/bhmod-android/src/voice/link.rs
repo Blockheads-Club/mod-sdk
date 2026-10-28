@@ -6,7 +6,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use bhmod_core::types::ApiError;
-use bhmod_core::voice::{Activation, Icons, MicState, Mode, VoiceEvent, VoiceHost, VoiceState};
+use bhmod_core::voice::{Activation, Allowance, Icons, MicState, Mode, VoiceEvent, VoiceHost, VoiceState};
 use bhmod_proto::Message;
 
 use super::audio::FRAME;
@@ -148,6 +148,18 @@ impl VoiceHost for VoiceSlot {
     fn player_muted(&self, player: &str) -> Result<bool, ApiError> {
         self.with(|l| l.player_muted(player))
     }
+    fn allowed(&self) -> Result<Allowance, ApiError> {
+        self.with(|l| l.allowed())
+    }
+    fn self_muted(&self) -> Result<bool, ApiError> {
+        self.with(|l| l.self_muted())
+    }
+    fn deafened(&self) -> Result<bool, ApiError> {
+        self.with(|l| l.deafened())
+    }
+    fn mic(&self) -> Result<MicState, ApiError> {
+        self.with(|l| l.mic())
+    }
 }
 
 #[cfg(test)]
@@ -241,6 +253,18 @@ pub(crate) mod fake {
         fn player_muted(&self, player: &str) -> Result<bool, ApiError> {
             Ok(self.muted.borrow().iter().any(|p| p == player))
         }
+        fn allowed(&self) -> Result<Allowance, ApiError> {
+            Ok(Allowance { modes: 0b0101, activations: 0b111, max_bitrate: 24_000 })
+        }
+        fn self_muted(&self) -> Result<bool, ApiError> {
+            Ok(false)
+        }
+        fn deafened(&self) -> Result<bool, ApiError> {
+            Ok(true)
+        }
+        fn mic(&self) -> Result<MicState, ApiError> {
+            Ok(self.mic.borrow().last().copied().unwrap_or(MicState::Off))
+        }
     }
 
     impl VoiceLink for FakeLink {
@@ -328,6 +352,9 @@ mod tests {
         assert_eq!(slot.player_muted("p"), Ok(true));
         slot.mute_player("p", false).unwrap();
         assert_eq!(slot.player_muted("p"), Ok(false));
+        // the client getters reach the voice client too (the mod's talk-mode picker and deafen toggle use them)
+        assert_eq!(slot.allowed().map(|a| a.modes), Ok(0b0101));
+        assert_eq!((slot.self_muted(), slot.deafened(), slot.mic()), (Ok(false), Ok(true), Ok(MicState::Off)));
         // server functions stay unsupported on a client
         assert_eq!(slot.set_routes("p", &[]), Err(ApiError::Unsupported));
         assert_eq!(link.default_mode.get(), Some(Mode::Global));
