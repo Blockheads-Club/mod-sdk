@@ -1,4 +1,5 @@
-//! Mod UI (`blockheads:api@0.3.0` `ui`): HUD widgets, toasts, notices and dialogs of client mods.
+//! Mod UI (`blockheads:api@0.3.0` `ui`): HUD widgets, toasts, notices and dialogs of client mods; since 0.3.4 also
+//! overhead icons, on-screen buttons and the settings screen.
 //!
 //! Mods send data; the host program draws it with its own kit. This module holds the data types, the validation of
 //! what a mod may send (ids, lengths, counts) and the bookkeeping of what each mod has on screen, so the Android
@@ -31,6 +32,12 @@ pub const MAX_FIELD: u32 = 200;
 pub const MAX_BUTTONS: usize = 3;
 /// The `button` of a `ui-action` event when the dialog was closed without an answer (back, leaving the world).
 pub const CLOSED: u32 = u32::MAX;
+/// Most on-screen buttons one mod may have (0.3.4).
+pub const MAX_HUD_BUTTONS: usize = 4;
+/// On-screen button diameter range in density-independent points (0.3.4).
+pub const BUTTON_SIZE: (u16, u16) = (32, 160);
+/// On-screen button opacity range in percent (0.3.4).
+pub const BUTTON_OPACITY: (u8, u8) = (10, 100);
 
 macro_rules! named_enum {
     ($(#[$m:meta])* $name:ident { $($(#[$vm:meta])* $v:ident = $s:literal),+ $(,)? }) => {
@@ -102,6 +109,51 @@ named_enum! {
     }
 }
 
+named_enum! {
+    /// `ui.overhead-icon` (0.3.4).
+    OverheadIcon {
+        /// Talking.
+        Speaking = "speaking",
+        /// No voice chat.
+        NoVoice = "no-voice",
+        /// Muted their microphone.
+        SelfMute = "self-mute",
+        /// Hears nobody.
+        Deafen = "deafen",
+        /// Muted by an admin.
+        AdminMute = "admin-mute",
+    }
+}
+
+named_enum! {
+    /// The `action` of a `<mod-id>:ui-button` event (0.3.4).
+    ButtonAction {
+        /// Touch down / mouse down.
+        Press = "press",
+        /// Held 500 ms without moving (still pressed).
+        LongPress = "long-press",
+        /// Touch up, or a drag started.
+        Release = "release",
+    }
+}
+
+/// `ui.button` (0.3.4).
+#[derive(Debug, Clone, PartialEq)]
+pub struct Button {
+    /// A kit icon name.
+    pub icon: String,
+    /// A label under the icon.
+    pub label: Option<String>,
+    /// Default centre, fraction of the screen width.
+    pub x: f32,
+    /// Default centre, fraction of the screen height from the top.
+    pub y: f32,
+    /// Diameter in dp.
+    pub size: u16,
+    /// Opacity in percent.
+    pub opacity: u8,
+}
+
 /// `ui.widget`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Widget {
@@ -151,7 +203,7 @@ pub struct Dialog {
 }
 
 /// A validated request to the drawing side. `mod_id` goes along in [`crate::GameBridge::ui`].
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum UiCommand {
     /// Show or replace a widget.
     SetWidget {
@@ -189,7 +241,36 @@ pub enum UiCommand {
         /// The dialog id.
         id: u32,
     },
-    /// The mod is gone: remove every widget and dialog of it.
+    /// (0.3.4) Show an icon above a player's blockhead (replaces the mod's icon on that player).
+    SetOverhead {
+        /// The player id.
+        player: String,
+        /// The icon.
+        icon: OverheadIcon,
+    },
+    /// (0.3.4) Remove the mod's icon from a player.
+    ClearOverhead {
+        /// The player id.
+        player: String,
+    },
+    /// (0.3.4) Show or update an on-screen button.
+    SetButton {
+        /// The button id, unique within the mod.
+        id: String,
+        /// The button.
+        button: Button,
+    },
+    /// (0.3.4) Remove an on-screen button.
+    RemoveButton {
+        /// The button id.
+        id: String,
+    },
+    /// (0.3.4) Open the settings screen of mod `mod_id` (client settings, key bindings, server settings for admins).
+    OpenSettings {
+        /// The mod whose settings to show.
+        mod_id: String,
+    },
+    /// The mod is gone: remove every widget, dialog, overhead icon and button of it.
     ClearMod,
 }
 
@@ -257,10 +338,28 @@ pub fn check_dialog(d: &Dialog) -> Result<(), ApiError> {
     Ok(())
 }
 
+/// Checks an on-screen button (0.3.4).
+pub fn check_button(b: &Button) -> Result<(), ApiError> {
+    text("button icon", &b.icon, MAX_ID)?;
+    text("button label", b.label.as_deref().unwrap_or(""), MAX_BUTTON)?;
+    if !(0.0..=1.0).contains(&b.x) || !(0.0..=1.0).contains(&b.y) {
+        return Err(invalid("button x and y must be 0.0 to 1.0"));
+    }
+    if !(BUTTON_SIZE.0..=BUTTON_SIZE.1).contains(&b.size) {
+        return Err(invalid(&format!("button size must be {} to {}", BUTTON_SIZE.0, BUTTON_SIZE.1)));
+    }
+    if !(BUTTON_OPACITY.0..=BUTTON_OPACITY.1).contains(&b.opacity) {
+        return Err(invalid(&format!("button opacity must be {} to {}", BUTTON_OPACITY.0, BUTTON_OPACITY.1)));
+    }
+    Ok(())
+}
+
 /// What each mod (by slot index) has on screen.
 #[derive(Debug, Default)]
 pub struct UiState {
     widgets: BTreeMap<usize, BTreeSet<String>>,
+    buttons: BTreeMap<usize, BTreeSet<String>>,
+    overheads: BTreeMap<usize, BTreeSet<String>>,
     dialogs: BTreeMap<u32, usize>,
     next_dialog: u32,
 }
@@ -312,12 +411,51 @@ impl UiState {
         self.dialogs.remove(&id)
     }
 
+    /// Checks that `owner` may show button `id` (a new one must fit the per-mod count).
+    pub fn check_button(&self, owner: usize, id: &str, b: &Button) -> Result<(), ApiError> {
+        check_id(id)?;
+        check_button(b)?;
+        let mine = self.buttons.get(&owner);
+        if mine.is_none_or(|m| !m.contains(id)) && mine.map_or(0, |m| m.len()) >= MAX_HUD_BUTTONS {
+            return Err(limit("buttons per mod"));
+        }
+        Ok(())
+    }
+
+    /// Records a shown button.
+    pub fn button_added(&mut self, owner: usize, id: &str) {
+        self.buttons.entry(owner).or_default().insert(id.to_string());
+    }
+
+    /// Forgets a button; false when the mod had none by that id.
+    pub fn button_removed(&mut self, owner: usize, id: &str) -> bool {
+        self.buttons.get_mut(&owner).is_some_and(|m| m.remove(id))
+    }
+
+    /// True when `owner` has button `id` (input from the loader for an unknown button is dropped).
+    pub fn has_button(&self, owner: usize, id: &str) -> bool {
+        self.buttons.get(&owner).is_some_and(|m| m.contains(id))
+    }
+
+    /// Records an overhead icon of `owner` on `player`.
+    pub fn overhead_set(&mut self, owner: usize, player: &str) {
+        self.overheads.entry(owner).or_default().insert(player.to_string());
+    }
+
+    /// Forgets an overhead icon; false when there was none.
+    pub fn overhead_cleared(&mut self, owner: usize, player: &str) -> bool {
+        self.overheads.get_mut(&owner).is_some_and(|m| m.remove(player))
+    }
+
     /// The mod is gone. True when it had anything on screen.
     pub fn clear_owner(&mut self, owner: usize) -> bool {
-        let had_widgets = self.widgets.remove(&owner).is_some_and(|m| !m.is_empty());
+        let mut had = false;
+        for map in [&mut self.widgets, &mut self.buttons, &mut self.overheads] {
+            had |= map.remove(&owner).is_some_and(|m| !m.is_empty());
+        }
         let before = self.dialogs.len();
         self.dialogs.retain(|_, o| *o != owner);
-        had_widgets || self.dialogs.len() != before
+        had || self.dialogs.len() != before
     }
 }
 
@@ -351,6 +489,12 @@ mod tests {
         }
         for s in ["primary", "secondary", "danger"] {
             assert_eq!(ButtonKind::parse(s).unwrap().name(), s);
+        }
+        for s in ["speaking", "no-voice", "self-mute", "deafen", "admin-mute"] {
+            assert_eq!(OverheadIcon::parse(s).unwrap().name(), s);
+        }
+        for s in ["press", "long-press", "release"] {
+            assert_eq!(ButtonAction::parse(s).unwrap().name(), s);
         }
         assert!(Slot::parse("middle").is_none());
     }
@@ -443,5 +587,50 @@ mod tests {
         assert!(check_dialog(&d).is_err());
         d.field = Some(Field { placeholder: String::new(), initial: "abcdef".into(), max_length: 5 });
         assert!(matches!(check_dialog(&d), Err(ApiError::LimitExceeded(_))));
+    }
+
+    fn button() -> Button {
+        Button { icon: "mic".into(), label: Some("Talk".into()), x: 0.9, y: 0.7, size: 64, opacity: 80 }
+    }
+
+    #[test]
+    fn buttons_and_overheads() {
+        assert!(check_button(&button()).is_ok());
+        let bad = [
+            Button { icon: "i".repeat(33), ..button() },
+            Button { label: Some("l".repeat(25)), ..button() },
+            Button { x: 1.5, ..button() },
+            Button { y: -0.1, ..button() },
+            Button { x: f32::NAN, ..button() },
+            Button { size: 31, ..button() },
+            Button { size: 161, ..button() },
+            Button { opacity: 9, ..button() },
+            Button { opacity: 101, ..button() },
+        ];
+        for b in bad {
+            assert!(check_button(&b).is_err(), "{b:?}");
+        }
+        let mut s = UiState::default();
+        assert!(s.check_button(1, "BAD", &button()).is_err());
+        assert!(s.check_button(1, "b", &Button { size: 1, ..button() }).is_err());
+        for i in 0..MAX_HUD_BUTTONS {
+            s.check_button(1, &format!("b{i}"), &button()).unwrap();
+            s.button_added(1, &format!("b{i}"));
+        }
+        s.check_button(1, "b0", &button()).unwrap();
+        assert!(matches!(s.check_button(1, "new", &button()), Err(ApiError::LimitExceeded(_))));
+        assert!(s.has_button(1, "b1"));
+        assert!(!s.has_button(2, "b1"));
+        assert!(s.button_removed(1, "b1"));
+        assert!(!s.button_removed(1, "b1"));
+        assert!(!s.button_removed(7, "b1"));
+        s.overhead_set(5, "p");
+        assert!(s.overhead_cleared(5, "p"));
+        assert!(!s.overhead_cleared(5, "p"));
+        assert!(!s.overhead_cleared(6, "p"));
+        assert!(!s.clear_owner(5));
+        s.overhead_set(5, "p");
+        assert!(s.clear_owner(5));
+        assert!(s.clear_owner(1));
     }
 }

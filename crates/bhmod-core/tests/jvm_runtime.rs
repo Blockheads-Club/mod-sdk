@@ -123,7 +123,7 @@ fn the_whole_api_from_a_command() {
     assert_eq!(r, vec!["done".to_string()], "{}", t.b.log_text());
     let log = t.b.log_text();
     for want in [
-        "facts 0.3.3 sink 1.0.0 SERVER fake-host 1.0",
+        "facts 0.3.4 sink 1.0.0 SERVER fake-host 1.0",
         "get p1 -",
         "alias p1 -",
         "online 2",

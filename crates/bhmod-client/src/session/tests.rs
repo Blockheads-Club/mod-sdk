@@ -568,3 +568,61 @@ fn native_mods_with_a_trusted_hash_load_and_others_do_not() {
         }
     }
 }
+
+/// A session made modded by a server without mods that lists `server_features`; the loader lists `ours`.
+fn modded_with(ours: &[&str], server_features: &[&str]) -> Rig {
+    let t = tempfile::tempdir().unwrap();
+    let cache = PackageCache::new(t.path().join("cache"));
+    let mut o = Options::new("0.1.0", "pc", "0.3.4", &["lua"]);
+    o.features = ours.iter().map(|s| s.to_string()).collect();
+    let mut r = Rig { s: Session::new(o, cache.clone(), caps()), _t: t, cache };
+    r.s.contact(0);
+    let pkt = Message::ServerHello(ServerHello {
+        proto: 1,
+        mods_hash: [9; 32],
+        client_required: false,
+        count: 0,
+        players: None,
+        features: server_features.iter().map(|s| s.to_string()).collect(),
+        voice_udp_port: None,
+    })
+    .encode();
+    r.s.receive(&pkt, 1);
+    r
+}
+
+#[test]
+fn voice_and_settings_ops_need_both_features() {
+    use bhmod_proto::{SettingsFailure, SettingsResult, SettingsSchema, VoiceFrame, VoiceKey, VoiceState};
+    let key = Message::VoiceKey(VoiceKey { public: [1; 32], peer: Some(3), udp_port: None });
+    let state = Message::VoiceState(VoiceState { full: true, ..Default::default() });
+    let frame = Message::VoiceFrame(VoiceFrame { nonce: 1, sealed: vec![0; 16] });
+    let schema = Message::SettingsSchema(SettingsSchema { mod_id: "v".into(), schema: vec![0xa0], values: vec![0xa0] });
+    let result = Message::SettingsResult(SettingsResult { outcome: Err(SettingsFailure { code: 1, message: None }) });
+
+    // before the join nothing flows
+    let mut r = rig();
+    assert!(!r.s.voice_enabled() && !r.s.settings_enabled());
+    assert!(r.s.receive(&key.encode(), 1).is_empty());
+    assert!(r.s.voice_packet(vec![1]).is_none());
+    assert!(r.s.settings_set("v", "k", vec![0xf5]).is_none());
+
+    for (ours, theirs) in [(&["voice", "settings"][..], &[][..]), (&[][..], &["voice", "settings"][..])] {
+        let mut r = modded_with(ours, theirs);
+        assert!(r.s.is_modded() && !r.s.voice_enabled() && !r.s.settings_enabled());
+        for m in [&key, &state, &frame, &schema, &result] {
+            assert!(r.s.receive(&m.encode(), 2).is_empty());
+        }
+    }
+
+    let mut r = modded_with(&["voice", "settings", "voice-unsequenced"], &["settings", "voice"]);
+    assert!(r.s.voice_enabled() && r.s.settings_enabled());
+    for m in [&key, &state, &frame] {
+        assert!(matches!(&r.s.receive(&m.encode(), 2)[..], [Output::Voice(x)] if x == m));
+    }
+    assert!(matches!(&r.s.receive(&schema.encode(), 2)[..], [Output::SettingsSchema(s)] if s.mod_id == "v"));
+    assert!(matches!(&r.s.receive(&result.encode(), 2)[..], [Output::SettingsResult(x)] if x.outcome.is_err()));
+    assert_eq!(r.s.voice_packet(vec![7]), Some(vec![7]));
+    let set = Message::decode(&r.s.settings_set("v", "k", vec![0xf5]).unwrap()).unwrap();
+    assert!(matches!(set, Message::SettingsSet(s) if s.key == "k" && s.value == [0xf5]));
+}

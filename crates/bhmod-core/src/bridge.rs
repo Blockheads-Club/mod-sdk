@@ -3,9 +3,11 @@
 //! The bridge is the only way mod code reaches the game. Every method is called on the game's main thread while a
 //! mod call is running, so implementations must not call back into the [`crate::ModHost`].
 
+use crate::input::InputCommand;
 use crate::remote::{RemoteCall, RemoteError};
 use crate::types::{ApiError, ChannelTarget, ContentKind, LogLevel, Pos, Role, Side};
 use crate::ui::UiCommand;
+use crate::voice::VoiceHost;
 
 /// The game side of the mod host. Players are identified by their player id string (the vanilla `playerID`).
 pub trait GameBridge {
@@ -114,5 +116,38 @@ pub trait GameBridge {
     fn ui(&self, mod_id: &str, command: &UiCommand) -> Result<(), ApiError> {
         let _ = (mod_id, command);
         Err(ApiError::Unsupported)
+    }
+
+    /// The voice side of the host (API 0.3.4 `voice`); `None` (the default) = no voice: every `voice` function
+    /// reports `unsupported`.
+    fn voice(&self) -> Option<&dyn VoiceHost> {
+        None
+    }
+
+    /// Whether tile `(x, y)` is solid, for `terrain.solid-count` (API 0.3.4); `None` for a tile that is not loaded
+    /// (counted as not solid) and on hosts without a world (the default).
+    fn tile_solid(&self, x: i32, y: i32) -> Option<bool> {
+        let _ = (x, y);
+        None
+    }
+
+    /// The world width in tiles (`x` wraps around it), when known (API 0.3.4).
+    fn world_width(&self) -> Option<i32> {
+        None
+    }
+
+    /// Key bindings of client mods (API 0.3.4 `input`). The command is already validated and limited
+    /// ([`crate::input`]); the default, for hosts without a keyboard path such as the server, reports
+    /// [`ApiError::Unsupported`].
+    fn input(&self, mod_id: &str, command: &InputCommand) -> Result<(), ApiError> {
+        let _ = (mod_id, command);
+        Err(ApiError::Unsupported)
+    }
+
+    /// The key an action of `mod_id` is bound to now (API 0.3.4 `input.key-of`): the player's choice, or the
+    /// declared default (`default_key`, which the default implementation returns). `None` = the player cleared it.
+    fn input_key(&self, mod_id: &str, action: &str, default_key: &str) -> Option<String> {
+        let _ = (mod_id, action);
+        Some(default_key.to_string())
     }
 }

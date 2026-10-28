@@ -42,8 +42,9 @@ use crate::types::{
     ApiError, ChannelSource, ChannelTarget, CommandOutcome, CommandSender, CommandSpec, ContentKind, Event, EventKind,
     LogLevel, Mutation, Outcome, Pos, Priority, RejectReason, Role, ServiceError,
 };
-use crate::ui::{ButtonKind, Dialog, DialogButton, Field, NoticeLevel, Slot, Widget, WidgetKind};
+use crate::ui::{Button, ButtonKind, Dialog, DialogButton, Field, NoticeLevel, OverheadIcon, Slot, Widget, WidgetKind};
 use crate::value::Value;
+use crate::voice::{Activation, Caps, Icons, Mode, Route, Transport, TransportConfig, VoiceCall, VoiceReply};
 
 /// The Java SDK (generated bindings and runtime glue), compiled by `build.rs`.
 #[cfg(not(target_os = "android"))]
@@ -648,6 +649,157 @@ fn dialog_of(v: &Value) -> Result<Dialog, String> {
     Ok(Dialog { title: str_field(v, "title")?, text: str_field(v, "text")?, field, buttons })
 }
 
+fn num_field(v: &Value, key: &str) -> Result<f64, String> {
+    match v.get(key) {
+        Some(Value::Float(f)) => Ok(*f),
+        Some(Value::Int(i)) => Ok(*i as f64),
+        _ => Err(format!("{key} must be a number")),
+    }
+}
+
+fn uint_field<T: TryFrom<i64>>(v: &Value, key: &str) -> Result<T, String> {
+    match v.get(key) {
+        Some(Value::Int(i)) => T::try_from(*i).map_err(|_| format!("{key} is out of range")),
+        _ => Err(format!("{key} must be an integer")),
+    }
+}
+
+fn bool_field(v: &Value, key: &str) -> Result<bool, String> {
+    match v.get(key) {
+        Some(Value::Bool(b)) => Ok(*b),
+        _ => Err(format!("{key} must be a bool")),
+    }
+}
+
+/// A `list<enum>` as a mask.
+fn mask_of<T: Copy>(v: &Value, parse: fn(&str) -> Option<T>, bit: fn(T) -> u8) -> Result<u8, String> {
+    let Value::List(items) = v else { return Err("expected a list of names".into()) };
+    items.iter().try_fold(0, |m, i| Ok(m | bit(named(std::slice::from_ref(i), 0, parse)?)))
+}
+
+fn button_of(v: &Value) -> Result<Button, String> {
+    Ok(Button {
+        icon: str_field(v, "icon")?,
+        label: opt_str_field(v, "label")?,
+        x: num_field(v, "x")? as f32,
+        y: num_field(v, "y")? as f32,
+        size: uint_field(v, "size")?,
+        opacity: uint_field(v, "opacity")?,
+    })
+}
+
+fn icons_of(v: &Value) -> Result<Icons, String> {
+    Ok(Icons {
+        speaking: bool_field(v, "speaking")?,
+        no_voice: bool_field(v, "no-voice")?,
+        self_mute: bool_field(v, "self-mute")?,
+        deafen: bool_field(v, "deafen")?,
+        admin_mute: bool_field(v, "admin-mute")?,
+    })
+}
+
+fn icons_value(i: Icons) -> Value {
+    Value::Map(vec![
+        ("admin-mute".into(), Value::Bool(i.admin_mute)),
+        ("deafen".into(), Value::Bool(i.deafen)),
+        ("no-voice".into(), Value::Bool(i.no_voice)),
+        ("self-mute".into(), Value::Bool(i.self_mute)),
+        ("speaking".into(), Value::Bool(i.speaking)),
+    ])
+}
+
+/// How a `voice.*` reply becomes a value.
+type ShowReply = fn(VoiceReply) -> Value;
+
+/// `voice.*`: the call and how to show its reply.
+fn voice_call(f: &str, a: &[Value]) -> Result<(VoiceCall, ShowReply), String> {
+    let unit: ShowReply = |_| Value::Null;
+    let boolean: ShowReply = |r| Value::Bool(r.as_bool());
+    let percent: ShowReply = |r| Value::Int(r.as_percent().into());
+    let p = |i| text(a, i).map(str::to_string);
+    let pct = |i| u16::try_from(int(a, i)?).map_err(|_| format!("argument {i} is out of range"));
+    Ok(match f {
+        "voice.state" => (VoiceCall::State(p(0)?), |r| Value::text(r.as_state().name())),
+        "voice.icons" => (VoiceCall::Icons, |r| icons_value(r.as_icons())),
+        "voice.set-routes" => {
+            let Value::List(items) = arg(a, 1)? else { return Err("routes must be a list".into()) };
+            let routes = items
+                .iter()
+                .map(|r| {
+                    Ok(Route {
+                        listener: str_field(r, "listener")?,
+                        modes: mask_of(r.get("modes").unwrap_or(&Value::Null), Mode::parse, Mode::bit)?,
+                        gain: num_field(r, "gain")? as f32,
+                        pan: num_field(r, "pan")? as f32,
+                        muffle: num_field(r, "muffle")? as f32,
+                    })
+                })
+                .collect::<Result<Vec<_>, String>>()?;
+            (VoiceCall::SetRoutes(p(0)?, routes), unit)
+        }
+        "voice.mute" => {
+            let until = match arg(a, 1)? {
+                Value::Null => None,
+                _ => Some(u64::try_from(int(a, 1)?).map_err(|_| "until-ms is out of range".to_string())?),
+            };
+            (VoiceCall::Mute(p(0)?, until), unit)
+        }
+        "voice.unmute" => (VoiceCall::Unmute(p(0)?), boolean),
+        "voice.set-speaker-gain" => (VoiceCall::SetSpeakerGain(p(0)?, pct(1)?), unit),
+        "voice.set-caps" => {
+            let c = arg(a, 0)?;
+            let caps = Caps {
+                max_bitrate: uint_field(c, "max-bitrate")?,
+                max_speakers: uint_field(c, "max-speakers")?,
+                max_frames_per_sec: uint_field(c, "max-frames-per-sec")?,
+            };
+            (VoiceCall::SetCaps(caps), unit)
+        }
+        "voice.set-transport" => {
+            let c = arg(a, 0)?;
+            let mode = named(&[c.get("mode").cloned().unwrap_or(Value::Null)], 0, Transport::parse)?;
+            let udp_port = match c.get("udp-port") {
+                None | Some(Value::Null) => None,
+                Some(_) => Some(uint_field(c, "udp-port")?),
+            };
+            (VoiceCall::SetTransport(TransportConfig { mode, udp_port }), unit)
+        }
+        "voice.set-allowed" => {
+            let m = mask_of(arg(a, 1)?, Mode::parse, Mode::bit)?;
+            let act = mask_of(arg(a, 2)?, Activation::parse, Activation::bit)?;
+            (VoiceCall::SetAllowed(p(0)?, m, act), unit)
+        }
+        "voice.set-icons" => (VoiceCall::SetIcons(icons_of(arg(a, 0)?)?), unit),
+        "voice.set-broadcast-overrides-deafen" => (VoiceCall::SetBroadcastOverridesDeafen(flag(a, 0)?), unit),
+        "voice.set-default-mode" => (VoiceCall::SetDefaultMode(named(a, 0, Mode::parse)?), unit),
+        "voice.set-activation" => (VoiceCall::SetActivation(named(a, 0, Activation::parse)?), unit),
+        "voice.talk" => {
+            let mode = match arg(a, 0)? {
+                Value::Null => None,
+                _ => Some(named(a, 0, Mode::parse)?),
+            };
+            (VoiceCall::Talk(mode, flag(a, 1)?), unit)
+        }
+        "voice.set-mic" => (VoiceCall::SetMic(flag(a, 0)?), unit),
+        "voice.set-self-mute" => (VoiceCall::SetSelfMute(flag(a, 0)?), unit),
+        "voice.set-deafen" => (VoiceCall::SetDeafen(flag(a, 0)?), unit),
+        "voice.set-vad-threshold" => {
+            let db = match arg(a, 0)? {
+                Value::Float(f) => *f as f32,
+                _ => int(a, 0)? as f32,
+            };
+            (VoiceCall::SetVadThreshold(db), unit)
+        }
+        "voice.set-master" => (VoiceCall::SetMaster(pct(0)?), unit),
+        "voice.master" => (VoiceCall::Master, percent),
+        "voice.set-player-volume" => (VoiceCall::SetPlayerVolume(p(0)?, pct(1)?), unit),
+        "voice.player-volume" => (VoiceCall::PlayerVolume(p(0)?), percent),
+        "voice.mute-player" => (VoiceCall::MutePlayer(p(0)?, flag(a, 1)?), unit),
+        "voice.player-muted" => (VoiceCall::PlayerMuted(p(0)?), boolean),
+        other => return Err(format!("unknown host function {other:?} (this host does not implement it)")),
+    })
+}
+
 /// The WIT imports, by name (`interface.function`; resource methods `interface.resource.method` with the
 /// resource's key first).
 fn call_host(h: &mut dyn HostApi, f: &str, a: &[Value]) -> Result<Value, String> {
@@ -774,6 +926,26 @@ fn call_host(h: &mut dyn HostApi, f: &str, a: &[Value]) -> Result<Value, String>
         }
         "ui.show-dialog" => api_result(h.ui_show_dialog(dialog_of(arg(a, 0)?)?), |id| Value::Int(id.into())),
         "ui.close-dialog" => Value::Bool(h.ui_close_dialog(unsigned(a, 0)?)),
+        "ui.set-overhead" => {
+            api_result(h.ui_set_overhead(text(a, 0)?, named(a, 1, OverheadIcon::parse)?), |()| Value::Null)
+        }
+        "ui.clear-overhead" => Value::Bool(h.ui_clear_overhead(text(a, 0)?)),
+        "ui.set-button" => api_result(h.ui_set_button(text(a, 0)?, button_of(arg(a, 1)?)?), |()| Value::Null),
+        "ui.remove-button" => Value::Bool(h.ui_remove_button(text(a, 0)?)),
+        "ui.open-settings" => api_result(h.ui_open_settings(text(a, 0)?), |()| Value::Null),
+
+        "terrain.solid-count" => {
+            let n = h.terrain_solid_count(signed(a, 0)?, signed(a, 1)?, signed(a, 2)?, signed(a, 3)?);
+            api_result(n, |n| Value::Int(n.into()))
+        }
+        "input.bind" => api_result(h.input_bind(text(a, 0)?, text(a, 1)?), |()| Value::Null),
+        "input.unbind" => Value::Bool(h.input_unbind(text(a, 0)?)),
+        "input.key-of" => opt_text(h.input_key_of(text(a, 0)?)),
+
+        f if f.starts_with("voice.") => {
+            let (call, show) = voice_call(f, a)?;
+            api_result(h.voice(call), show)
+        }
 
         other => return Err(format!("unknown host function {other:?} (this host does not implement it)")),
     })

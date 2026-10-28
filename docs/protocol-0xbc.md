@@ -86,7 +86,7 @@ client                                   modded server                  vanilla 
 | `14` | both | `SERVICE_RESULT` | `{id, ok, value}` or `{id, ok, code, message}` |
 | `15` | both | `VOICE_KEY` | `{pub[, peer, udpPort]}` |
 | `16` | both | `VOICE_FRAME` | raw, unreliable: `nonce:u64le sealed[16..=1024]` |
-| `17` | S->C | `VOICE_STATE` | `{full, players[, speakers, icons]}` |
+| `17` | S->C | `VOICE_STATE` | `{full, players[, speakers, icons, modes, activations, bitrate]}` |
 | `18` | C->S | `VOICE_CTRL` | `{selfMute, deafen}` |
 | `19` | S->C | `SETTINGS_SCHEMA` | `{mod, schema, values}` |
 | `1a` | C->S | `SETTINGS_SET` | `{mod, key, value}` |
@@ -148,7 +148,7 @@ Mod entry:
 | `clientRequired` | bool | Whether this mod's client half is required to join. |
 | `sha256` | bytes(32) | SHA-256 of the `.bhmod`. |
 | `size` | uint | Size of the `.bhmod` in bytes. |
-| `permissions` | map | `{world: text, players: [text], netHttp: [text], channels: bool, native: bool}` |
+| `permissions` | map | `{world: text, players: [text], netHttp: [text], channels: bool, native: bool[, voice: bool]}` (`voice`, API 0.3.4, only when true) |
 | `indexListed` | bool | The public index lists this id, version **and** sha256. |
 | `sourceUrl` | text, optional | A URL the client may download from instead (the hash must match). |
 
@@ -346,7 +346,14 @@ is over 10 % or the server's poll lag is over 30 ms.
 | `full` | bool | `true` replaces everything the client knew; `false` is a delta for the listed players. |
 | `players` | map playerID -> text | `none` (no voice: vanilla or mod off), `ready`, `talking`, `self_muted`, `deafened`, `admin_muted`; in a delta `gone` = left. |
 | `speakers` | map playerID -> uint ≤ 65535, optional | The speaker id the player's frames carry. |
-| `icons` | map text -> bool, optional | Overhead icon visibility set by the admin: `speaking`, `no_voice`, `self_mute`, `admin_mute`. |
+| `icons` | map text -> bool, optional | Overhead icon visibility set by the admin: `speaking`, `no_voice`, `self_mute`, `deafen`, `admin_mute`. |
+| `modes` | uint ≤ 255, optional | (API 0.3.4) Talk modes the **receiving** player may use: bit 0 proximity, 1 global, 2 channel, 3 broadcast. |
+| `activations` | uint ≤ 255, optional | (API 0.3.4) Activations the receiving player may use: bit 0 push-to-talk, 1 voice activation, 2 toggle. |
+| `bitrate` | uint, optional | (API 0.3.4) Encoder bitrate (bits per second) the server's cap asks for. |
+
+Absent `modes` / `activations` / `bitrate` keep the last value (a delta) or mean the defaults (a full state: no
+modes, all activations, 24000). The reference server is `bhmod_voice::server` (sends a full state when a player's
+voice session starts, then deltas).
 
 ### 18 VOICE_CTRL (client -> server)
 

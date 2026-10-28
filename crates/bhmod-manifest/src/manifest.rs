@@ -175,6 +175,10 @@ pub struct Permissions {
     /// May open channels.
     #[serde(default)]
     pub channels: bool,
+    /// (API 0.3.4) May use voice chat (`voice` interface, `voice:*` events): microphone and speakers through the
+    /// host. Safe (the mod never sees audio), shown in the accept dialog.
+    #[serde(default)]
+    pub voice: bool,
     /// Native hooks or unsandboxed code (JVM, `.so`). Shown with a red warning.
     #[serde(default)]
     pub native: bool,

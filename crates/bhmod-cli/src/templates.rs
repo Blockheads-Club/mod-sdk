@@ -18,7 +18,7 @@ const JAVA_GITIGNORE: &str = include_str!("../templates/java/gitignore");
 const JAVA_README: &str = include_str!("../templates/java/README.md");
 
 /// The `blockheads:api` WIT files, copied into Rust projects.
-pub const WIT: [(&str, &str); 15] = [
+pub const WIT: [(&str, &str); 18] = [
     ("channels.wit", include_str!("../../../wit/blockheads-api/channels.wit")),
     ("commands.wit", include_str!("../../../wit/blockheads-api/commands.wit")),
     ("content.wit", include_str!("../../../wit/blockheads-api/content.wit")),
@@ -30,6 +30,9 @@ pub const WIT: [(&str, &str); 15] = [
     ("scheduler.wit", include_str!("../../../wit/blockheads-api/scheduler.wit")),
     ("services.wit", include_str!("../../../wit/blockheads-api/services.wit")),
     ("settings.wit", include_str!("../../../wit/blockheads-api/settings.wit")),
+    ("voice.wit", include_str!("../../../wit/blockheads-api/voice.wit")),
+    ("terrain.wit", include_str!("../../../wit/blockheads-api/terrain.wit")),
+    ("input.wit", include_str!("../../../wit/blockheads-api/input.wit")),
     ("storage.wit", include_str!("../../../wit/blockheads-api/storage.wit")),
     ("types.wit", include_str!("../../../wit/blockheads-api/types.wit")),
     ("ui.wit", include_str!("../../../wit/blockheads-api/ui.wit")),

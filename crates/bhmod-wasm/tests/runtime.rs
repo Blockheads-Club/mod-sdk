@@ -64,7 +64,7 @@ fn tour_calls_every_import() {
     let log = b.log_text();
     assert_eq!(h.mods()[0].state, ModState::Enabled, "{log}");
     for line in [
-        "api = \"0.3.3\"",
+        "api = \"0.3.4\"",
         "id = \"tour\"",
         "version = \"1.2.3\"",
         "side = Side::Server",
@@ -342,7 +342,7 @@ fn bad_components_are_refused() {
     // A component without the guest export.
     f.files.insert("server/missing.wasm".into(), b"(component)".to_vec());
     let e = rt.instantiate("m", &f, LIMITS).err().unwrap();
-    assert!(e.contains("no exported instance named `blockheads:api/guest@0.3.3`"), "{e}");
+    assert!(e.contains("no exported instance named `blockheads:api/guest@0.3.4`"), "{e}");
 }
 
 #[test]
@@ -515,7 +515,7 @@ fn old_components(old_wasm: Vec<u8>) {
         assert_eq!(info.state, ModState::Enabled, "{}: {log}", info.id);
     }
     for line in [
-        "old: api = (\"0.3.3\", \"old\", \"1.0.0\", Side::Server, \"fake-host 1.0\")",
+        "old: api = (\"0.3.4\", \"old\", \"1.0.0\", Side::Server, \"fake-host 1.0\")",
         "[trace] old: lvl",
         "old: p = (\"p1\", \"ALICE\", true, Role::Player, Ok(()), Ok(()))",
         "old: find = Some(\"p1\")",
@@ -684,7 +684,7 @@ fn newer_than_0_2_components(old_wasm: Vec<u8>) {
         assert_eq!(info.state, ModState::Enabled, "{}: {log}", info.id);
     }
     for line in [
-        "old: api = (\"0.3.3\", \"old\"",
+        "old: api = (\"0.3.4\", \"old\"",
         "old: pos = (Some(Pos { x: 7, y: 9 }), true, Some(\"p1\"))",
         "old: call = Ok([129, 1])",
         "old: send = Ok(())",

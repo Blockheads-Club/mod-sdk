@@ -125,6 +125,14 @@
       "file": "invalid/voice-state-icon-not-bool.hex"
     },
     {
+      "error": "type",
+      "file": "invalid/voice-state-modes-too-big.hex"
+    },
+    {
+      "error": "type",
+      "file": "invalid/voice-state-bitrate-text.hex"
+    },
+    {
       "error": "missing",
       "file": "invalid/voice-ctrl-missing-deafen.hex"
     },
@@ -448,6 +456,45 @@
       "direction": "S->C",
       "file": "03-mod-list-registry.hex",
       "length": 336,
+      "op": "0x03"
+    },
+    {
+      "body": {
+        "channels": [],
+        "mods": [
+          {
+            "clientRequired": false,
+            "description": {},
+            "id": "voice",
+            "indexListed": false,
+            "name": {
+              "en": "Hello (Lua)"
+            },
+            "permissions": {
+              "channels": false,
+              "native": false,
+              "netHttp": [],
+              "players": [],
+              "voice": true,
+              "world": "read"
+            },
+            "sha256": {
+              "$bytes": "c9f47f2fafa69d8e28bd8585599cd3020e2cca21188e8a51543ef016591be08e"
+            },
+            "sides": [
+              "server",
+              "client"
+            ],
+            "size": 1532,
+            "version": "0.1.0"
+          }
+        ],
+        "registry": {}
+      },
+      "description": "API 0.3.4: a client-optional mod with the `voice` permission (`permissions.voice` is sent only when true).",
+      "direction": "S->C",
+      "file": "03-mod-list-voice.hex",
+      "length": 253,
       "op": "0x03"
     },
     {
@@ -777,6 +824,25 @@
       "direction": "S->C",
       "file": "17-voice-state-full.hex",
       "length": 96,
+      "op": "0x17"
+    },
+    {
+      "body": {
+        "activations": 1,
+        "bitrate": 24000,
+        "full": false,
+        "icons": {
+          "deafen": false
+        },
+        "modes": 5,
+        "players": {
+          "player-a": "ready"
+        }
+      },
+      "description": "API 0.3.4: delta for the receiving player: may use proximity and channel, push-to-talk only, 24 kbps; deafen icon hidden.",
+      "direction": "S->C",
+      "file": "17-voice-state-allowed.hex",
+      "length": 79,
       "op": "0x17"
     },
     {
