@@ -233,6 +233,7 @@ declare bh: {
 		unmute: (player: Player) -> boolean,
 		set_speaker_gain: (player: Player, percent: number) -> (),
 		set_caps: (caps: { max_bitrate: number?, max_speakers: number?, max_frames_per_sec: number? }) -> (),
+		-- Only `udp_port` matters (nil = the host's default, game port + 1); `mode` is ignored (frames always use UDP).
 		set_transport: (t: { mode: ("auto" | "inband" | "udp")?, udp_port: number? }) -> (),
 		set_allowed: (player: Player, modes: { VoiceMode }, activations: { VoiceActivation }) -> (),
 		set_icons: (icons: VoiceIcons) -> (),
@@ -253,7 +254,7 @@ declare bh: {
 		allowed: () -> { modes: { VoiceMode }, activations: { VoiceActivation }, max_bitrate: number },
 		self_muted: () -> boolean,
 		deafened: () -> boolean,
-		mic: () -> "off" | "on" | "denied",
+		mic: () -> "off" | "on" | "denied" | "unavailable",
 	},
 	terrain: {
 		solid_count: (x1: number, y1: number, x2: number, y2: number) -> number,

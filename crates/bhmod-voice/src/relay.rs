@@ -7,15 +7,13 @@
 //! - [`RelayTable`]: policy written by the voice mod (routes at ~5 Hz, admin mutes, speaker gain, caps).
 //! - [`Relay`]: per-peer state (session keys, replay window, rate limit, path, self mute / deafen).
 //!
-//! Both transports go through one [`Relay::receive`]; output goes to a [`Transport`] with the [`Path`] to use.
+//! Frames arrive and leave only as datagrams of the voice UDP port ([`Relay::receive_udp`]); output goes to a
+//! [`Transport`].
 
 use std::collections::HashMap;
 
-use bhmod_proto::{Message, VoiceFrame};
-
 use crate::crypto::Session;
-use crate::frame::{max_opus_bytes, ClientFrame, Direction, ServerFrame};
-use crate::path::{LossMeter, Path, PathSelector, TransportMode};
+use crate::frame::{max_opus_bytes, ClientFrame, ServerFrame};
 use crate::udp::Datagram;
 use crate::{PeerId, VoiceMode};
 
@@ -166,19 +164,10 @@ pub fn muffle_byte(muffle: f32) -> u8 {
     (muffle.clamp(0.0, 1.0) * 255.0).round() as u8
 }
 
-/// Where relayed frames go. The host implements it for its ENet link and its UDP socket.
+/// Where relayed frames go: the host's voice UDP socket.
 pub trait Transport {
-    /// Sends `packet` to `to`: a full 0xBC packet for [`Path::InBand`] (unreliable + unsequenced, channel 0), a
-    /// full datagram for [`Path::Udp`].
-    fn send(&mut self, to: PeerId, path: Path, packet: Vec<u8>);
-}
-
-/// Wraps `nonce || sealed` for a path.
-pub fn wrap(path: Path, peer: PeerId, nonce: u64, sealed: Vec<u8>) -> Vec<u8> {
-    match path {
-        Path::InBand => Message::VoiceFrame(VoiceFrame { nonce, sealed }).encode(),
-        Path::Udp => Datagram::Frame { peer, nonce, sealed }.encode(),
-    }
+    /// Sends `datagram` to the address `to` authenticated from.
+    fn send(&mut self, to: PeerId, datagram: Vec<u8>);
 }
 
 /// Why a frame was not relayed.
@@ -209,7 +198,7 @@ pub enum Drop {
 pub struct Forwarded {
     /// The speaker was silent before this frame (`voice:talk-start`).
     pub started: bool,
-    /// Copies sent (deafened listeners and listeners whose path cannot take the frame get none).
+    /// Copies sent (deafened listeners and listeners not yet authenticated on the UDP port get none).
     pub copies: usize,
     /// The frame's talk mode.
     pub mode: VoiceMode,
@@ -222,8 +211,6 @@ pub enum Event {
     TalkStop(PeerId),
     /// An admin mute expired.
     MuteExpired(PeerId),
-    /// `auto` moved a peer to the UDP port.
-    PathChanged(PeerId, Path),
 }
 
 /// A peer's voice state (`VOICE_STATE` values).
@@ -273,8 +260,8 @@ pub enum UdpReceived {
 
 struct Peer {
     session: Session,
-    selector: PathSelector,
-    loss: LossMeter,
+    /// Authenticated on the UDP port.
+    udp: bool,
     tokens: u64,
     refilled: Option<u64>,
     last_frame: Option<u64>,
@@ -284,43 +271,30 @@ struct Peer {
 
 /// Per-peer relay state.
 pub struct Relay {
-    mode: TransportMode,
     udp_port: Option<u16>,
     peers: HashMap<PeerId, Peer>,
-    events: Vec<Event>,
 }
 
 impl Relay {
-    /// A relay with the admin's `transport` setting and voice UDP port.
-    pub fn new(mode: TransportMode, udp_port: Option<u16>) -> Relay {
-        Relay { mode, udp_port, peers: HashMap::new(), events: Vec::new() }
+    /// A relay with the voice UDP port the host has open (`None`: no port, voice is off).
+    pub fn new(udp_port: Option<u16>) -> Relay {
+        Relay { udp_port, peers: HashMap::new() }
     }
 
-    /// Changes the transport for peers added afterwards (sessions already running keep their path policy).
-    pub fn set_transport(&mut self, mode: TransportMode, udp_port: Option<u16>) {
-        self.mode = mode;
+    /// Changes the voice UDP port (announced to sessions that start afterwards).
+    pub fn set_udp_port(&mut self, udp_port: Option<u16>) {
         self.udp_port = udp_port;
     }
 
-    /// The UDP port to announce (`SERVER_HELLO.voiceUdpPort`, `VOICE_KEY.udpPort`), unless the mode is `inband`.
+    /// The UDP port to announce (`SERVER_HELLO.voiceUdpPort`, `VOICE_KEY.udpPort`).
     pub fn udp_port(&self) -> Option<u16> {
-        self.udp_port.filter(|_| self.mode != TransportMode::InBand)
+        self.udp_port
     }
 
-    /// Adds a peer once its `VOICE_KEY` arrived. `inband_capable`: the client can send unsequenced in-band.
-    pub fn add_peer(&mut self, peer: PeerId, session: Session, inband_capable: bool) {
-        let mut selector = PathSelector::new(self.mode, self.udp_port().is_some());
-        selector.inband_capable = inband_capable;
-        let p = Peer {
-            session,
-            selector,
-            loss: LossMeter::default(),
-            tokens: 0,
-            refilled: None,
-            last_frame: None,
-            self_mute: false,
-            deafen: false,
-        };
+    /// Adds a peer once its `VOICE_KEY` arrived; it gets frames once it authenticated on the UDP port.
+    pub fn add_peer(&mut self, peer: PeerId, session: Session) {
+        let p =
+            Peer { session, udp: false, tokens: 0, refilled: None, last_frame: None, self_mute: false, deafen: false };
         self.peers.insert(peer, p);
     }
 
@@ -364,7 +338,6 @@ impl Relay {
         now: u64,
         datagram: &[u8],
         table: &RelayTable,
-        lag_ms: u32,
         out: &mut impl Transport,
     ) -> Result<UdpReceived, Drop> {
         match Datagram::decode(datagram, crate::frame::DEFAULT_UDP_MAX).ok_or(Drop::Malformed)? {
@@ -373,37 +346,33 @@ impl Relay {
                 if self.udp_port.is_none() || !p.session.verify_udp_token(peer, &token) {
                     return Err(Drop::Crypto);
                 }
-                p.selector.udp_ready = true;
+                p.udp = true;
                 Ok(UdpReceived::Auth { peer, reply: Datagram::AuthOk { peer }.encode() })
             }
             Datagram::Frame { peer, nonce, sealed } => {
-                let ready = self.peers.get(&peer).ok_or(Drop::UnknownPeer)?.selector.udp_ready;
-                if !ready {
+                if !self.peers.get(&peer).ok_or(Drop::UnknownPeer)?.udp {
                     return Err(Drop::NotOnUdp);
                 }
-                self.receive(now, peer, nonce, &sealed, table, lag_ms, out).map(UdpReceived::Frame)
+                self.relay(now, peer, nonce, &sealed, table, out).map(UdpReceived::Frame)
             }
             Datagram::AuthOk { .. } => Err(Drop::Malformed),
         }
     }
 
-    /// A client's frame arrived (in-band `VOICE_FRAME` or UDP) from `from`; relays it to its routes.
-    #[allow(clippy::too_many_arguments)]
-    pub fn receive(
+    /// An authenticated peer's frame: relays it to its routes.
+    fn relay(
         &mut self,
         now: u64,
         from: PeerId,
         nonce: u64,
         sealed: &[u8],
         table: &RelayTable,
-        lag_ms: u32,
         out: &mut impl Transport,
     ) -> Result<Forwarded, Drop> {
         let speakers = self.peers.iter().filter(|(id, p)| **id != from && talking(p, now)).count();
-        let p = self.peers.get_mut(&from).ok_or(Drop::UnknownPeer)?;
+        let p = self.peers.get_mut(&from).expect("checked by receive_udp");
         let plain = p.session.open(nonce, sealed).map_err(|_| Drop::Crypto)?;
         let frame = ClientFrame::decode(&plain).map_err(|_| Drop::Malformed)?;
-        p.loss.record(frame.seq);
         if table.is_muted(from, now) {
             return Err(Drop::AdminMuted);
         }
@@ -431,7 +400,7 @@ impl Relay {
             }
             let Some(l) = self.peers.get_mut(&r.listener) else { continue };
             done.push(r.listener);
-            if l.deafen && !(frame.mode == VoiceMode::Broadcast && table.broadcast_overrides_deafen) {
+            if !l.udp || l.deafen && !(frame.mode == VoiceMode::Broadcast && table.broadcast_overrides_deafen) {
                 continue;
             }
             let plain = ServerFrame {
@@ -444,23 +413,15 @@ impl Relay {
                 opus: frame.opus.clone(),
             }
             .encode();
-            let was = l.selector.switched();
-            let Some(path) = l.selector.choose(Direction::Down, frame.opus.len(), l.loss.loss(), lag_ms) else {
-                continue;
-            };
-            if !was && l.selector.switched() {
-                self.events.push(Event::PathChanged(r.listener, path));
-            }
-            let Ok((n, sealed)) = l.session.seal(&plain) else { continue };
-            out.send(r.listener, path, wrap(path, r.listener, n, sealed));
+            let Ok((nonce, sealed)) = l.session.seal(&plain) else { continue };
+            out.send(r.listener, Datagram::Frame { peer: r.listener, nonce, sealed }.encode());
             copies += 1;
         }
         Ok(Forwarded { started, copies, mode: frame.mode })
     }
 
-    /// Housekeeping: talk-stop events, expired mutes and path changes since the last call.
+    /// Housekeeping: talk-stop events and expired mutes since the last call.
     pub fn tick(&mut self, now: u64, table: &mut RelayTable) -> Vec<Event> {
-        let mut ev = std::mem::take(&mut self.events);
         let mut stopped: Vec<PeerId> = Vec::new();
         for (id, p) in &mut self.peers {
             if p.last_frame.is_some() && !talking(p, now) {
@@ -469,7 +430,7 @@ impl Relay {
             }
         }
         stopped.sort_unstable();
-        ev.extend(stopped.into_iter().map(Event::TalkStop));
+        let mut ev: Vec<Event> = stopped.into_iter().map(Event::TalkStop).collect();
         ev.extend(table.prune_mutes(now).into_iter().map(Event::MuteExpired));
         ev
     }

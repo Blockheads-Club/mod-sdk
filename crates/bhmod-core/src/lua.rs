@@ -782,7 +782,7 @@ fn install_voice(b: &mut Builder, bh: &Table, sh: &Rc<Shared>) -> mlua::Result<(
     });
     let s = sh.clone();
     b.func(&v, "set_transport", move |_, t: Table| {
-        let mode = enum_key(&t, "mode", Transport::Auto, Transport::parse)?;
+        let mode = enum_key(&t, "mode", Transport::Udp, Transport::parse)?;
         call(&s, VoiceCall::SetTransport(TransportConfig { mode, udp_port: t.get("udp_port")? })).map(drop)
     });
     let s = sh.clone();

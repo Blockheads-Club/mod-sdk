@@ -105,12 +105,8 @@
       "file": "invalid/server-hello-players-too-big.hex"
     },
     {
-      "error": "truncated",
-      "file": "invalid/voice-frame-short-nonce.hex"
-    },
-    {
-      "error": "invalid",
-      "file": "invalid/voice-frame-no-tag.hex"
+      "error": "unknown-op",
+      "file": "invalid/voice-frame-reserved.hex"
     },
     {
       "error": "type",
@@ -796,18 +792,6 @@
       "file": "15-voice-key-server.hex",
       "length": 58,
       "op": "0x15"
-    },
-    {
-      "body": {
-        "nonce": 1,
-        "raw": true,
-        "sealed": "000102030405060708090a0b0c0d0e0f101112"
-      },
-      "description": "Nonce 1 and a 19-byte sealed body (3-byte plaintext + 16-byte tag; content arbitrary here, see bhmod-voice for real frames).",
-      "direction": "both",
-      "file": "16-voice-frame.hex",
-      "length": 29,
-      "op": "0x16"
     },
     {
       "body": {

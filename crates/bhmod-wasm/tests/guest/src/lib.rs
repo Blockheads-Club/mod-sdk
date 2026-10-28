@@ -51,13 +51,19 @@ fn vox() -> Result<(), String> {
     let b = players::get("p2").ok_or("p2 missing")?;
     show("state", v::state(&a));
     show("icons", v::icons());
-    let route = v::Route { listener: &b, modes: vec![v::Mode::Proximity, v::Mode::Broadcast], gain: 0.5, pan: 0.0, muffle: 0.0 };
+    let route = v::Route {
+        listener: &b,
+        modes: vec![v::Mode::Proximity, v::Mode::Broadcast],
+        gain: 0.5,
+        pan: 0.0,
+        muffle: 0.0,
+    };
     show("routes", v::set_routes(&a, &[route]));
     show("mute", v::mute(&b, Some(5)));
     show("unmute", v::unmute(&b));
     show("gain", v::set_speaker_gain(&a, 120));
     show("caps", v::set_caps(v::Caps { max_bitrate: 16_000, max_speakers: 4, max_frames_per_sec: 50 }));
-    show("transport", v::set_transport(v::TransportConfig { mode: v::Transport::Inband, udp_port: None }));
+    show("transport", v::set_transport(v::TransportConfig { mode: v::Transport::Udp, udp_port: None }));
     show("allowed", v::set_allowed(&a, &[v::Mode::Global, v::Mode::Channel], &[v::Activation::Vad]));
     let icons = v::IconVisibility { speaking: true, no_voice: false, self_mute: true, deafen: true, admin_mute: true };
     show("set-icons", v::set_icons(icons));
@@ -78,7 +84,10 @@ fn vox() -> Result<(), String> {
     let button = ui::Button { icon: "mic".into(), label: None, x: 0.5, y: 0.5, size: 64, opacity: 80 };
     show("button", (ui::set_button("ptt", &button), ui::remove_button("ptt")));
     show("settings-screen", ui::open_settings("vox"));
-    show("gaps", (host::platform(), a.sleeping(), a.alive(), players::local_player().is_none(), players::has_mod(&a, "vox")));
+    show(
+        "gaps",
+        (host::platform(), a.sleeping(), a.alive(), players::local_player().is_none(), players::has_mod(&a, "vox")),
+    );
     show("gaps2", (terrain::world_width(), ui::has_touch()));
     show("client-state", (v::allowed().is_err(), v::self_muted(), v::deafened(), v::mic()));
     Ok(())

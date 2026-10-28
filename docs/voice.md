@@ -1,7 +1,13 @@
 # Voice chat, overhead icons, buttons, key bindings (API 0.3.4)
 
 `blockheads:api@0.3.4` adds what a voice chat mod needs, and the seams every host implements. Plan and decisions:
-`notes/voice-mod.md` (maintainer repo); wire format: [protocol-0xbc.md](protocol-0xbc.md) ops `0x15`-`0x1b`.
+`notes/voice-mod.md` (maintainer repo); wire format: [protocol-0xbc.md](protocol-0xbc.md) ops `0x15`, `0x17`-`0x1b` and the voice UDP port.
+
+**Transport (decision 2026-10-28):** voice frames travel **only** over a dedicated UDP port of the server, by default
+the game port + 1 (15152); the admin must open it (firewall, router, UDP). Control messages (`VOICE_KEY`,
+`VOICE_STATE`, `VOICE_CTRL`, `SETTINGS_*`) stay reliable 0xBC packets. The former in-band `VOICE_FRAME` (op `0x16`,
+unsequenced ENet) and the `voice-unsequenced` feature are retired (ENet's throttle dropped 10-85 % of those frames).
+A server without an open voice port leaves voice off: clients report the microphone as `unavailable`.
 
 The **host** does capture, voice activity detection (VAD), Opus, encryption, the server relay and the client mix. A
 **mod** never sees audio: on the server it publishes policy (who hears whom, mutes, gains, caps, allowed modes), on
@@ -39,7 +45,7 @@ the accept dialog: "Use voice chat: microphone and speakers through the game"). 
 | `unmute(who) -> bool` | server | False when not muted. |
 | `set-speaker-gain(who, percent)` | server | 0..=200, default 100, applied to everything `who` says. |
 | `set-caps(caps)` | server | `{max-bitrate 6000..=64000, max-speakers 1..=64, max-frames-per-sec 50..=200}`, default 24000 / 8 / 60. |
-| `set-transport({mode: auto\|inband\|udp, udp-port})` | server | Applies to voice sessions started afterwards; the host opens or closes the port. |
+| `set-transport({mode, udp-port})` | server | The voice UDP port (`none` = the host's default, the game port + 1). `mode` is kept for 0.3.x compatibility and ignored (pass `udp`): frames always use the UDP port. Applies to voice sessions started afterwards; the host opens the port. |
 | `set-allowed(who, modes, activations)` | server | What the client offers (PTT keys, mode picker, activations). Default: no modes, all activations. Routes decide what is heard. |
 | `set-icons(icon-visibility)` | server | `{speaking, no-voice, self-mute, deafen, admin-mute}`, default all `true`. |
 | `set-broadcast-overrides-deafen(bool)` | server | Default `false`. |
@@ -54,7 +60,7 @@ the accept dialog: "Use voice chat: microphone and speakers through the game"). 
 | `mute-player(who, muted)`, `player-muted(who)` | client | Local mute; stored on the device by player id. |
 | `allowed() -> allowance{modes, activations, max-bitrate}` | client | What the server allows this player (from `VOICE_STATE`). |
 | `self-muted()`, `deafened()` | client | The player's own switches. |
-| `mic() -> mic-state` | client | `off`, `on`, `denied`. |
+| `mic() -> mic-state` | client | `off`, `on`, `denied`, `unavailable` (the server has no voice UDP port, or no microphone). |
 
 Wrong side -> `unsupported`; a host without voice -> `unsupported`; out-of-range numbers -> `invalid-argument`;
 a player who left -> `stale-handle`. The server never learns client volumes or local mutes.
@@ -72,7 +78,7 @@ is the vanilla `playerID` text (`players.get` gives the handle).
 | `voice:talk-start` | `{player, mode}` | Server: first relayed frame of a talk spurt. Client: first frame heard from that speaker. |
 | `voice:talk-stop` | `{player, mode}` | 300 ms without a frame. |
 | `voice:state` | `{player, state}` | A `voice-state` changed (state names as in WIT: `self-muted`, ...). |
-| `voice:mic` | `{state: "off" \| "on" \| "denied"}` | Client: the microphone opened, closed, or the OS refused. |
+| `voice:mic` | `{state: "off" \| "on" \| "denied" \| "unavailable"}` | Client: the microphone opened, closed, the OS refused, or voice is unavailable (no voice port on the server, no microphone). |
 | `voice:allowed` | `{modes: [text], activations: [text], max-bitrate}` | Client: what the server allows changed. |
 | `voice:mode` | `{mode}` | Client: the default mode changed (`set-default-mode` or the loader's mode picker). |
 
@@ -173,14 +179,17 @@ implement it compiles and behaves exactly as before; without the voice mod no ne
 ### `bhmod-voice` (GPL, hosts only)
 
 - `bhmod_voice::server::VoiceServer` (shared as `SharedVoiceServer`, which implements `VoiceHost`): `join(player,
-  alias, features)`, `leave(player)`, `receive(now, player, &Message, lag_ms, sink)` for `VOICE_KEY`, `VOICE_CTRL`,
-  `VOICE_FRAME`, `receive_udp(now, datagram, &bound, lag_ms, sink) -> Option<peer to bind>`, `udp_port()`, `tick(now, sink)` (talk-stop, mute expiry,
-  `VOICE_STATE` deltas), `take_events() -> Vec<VoiceEvent>` (pass to `ModHost::voice_event`). `now` is Unix time in
-  ms. Output goes to a `ServerSink` (`reliable(player, packet)`, `unsequenced(player, packet)`, `udp(peer, datagram)`).
-- `bhmod_voice::client::VoiceClient` (shared as `SharedVoiceClient`, which implements `VoiceHost`): `new(codec,
-  unsequenced)`, `start() -> Option<VOICE_KEY packet>`, `on_message(&Message)` (`VOICE_KEY` reply, `VOICE_STATE`,
-  `VOICE_FRAME`), `on_packet(&[u8])` (raw 0xBC), `on_udp(&[u8])`, `on_mic_frame(&[f32; 960 mono])`,
-  `poll_send(now) -> Vec<Outgoing>` (`Reliable`, `Unsequenced`, `Udp`), `mix(&mut [f32] stereo)`, `mic_wanted()`,
+  alias, features)`, `leave(player)`, `receive(now, player, &Message, sink)` for `VOICE_KEY` and `VOICE_CTRL`,
+  `receive_udp(now, datagram, &bound, sink) -> Option<peer to bind>` for the voice port (`AUTH`, frames),
+  `set_transport(config)` with the port the host really opened (`None`: voice off), `udp_port()`, `tick(now, sink)`
+  (talk-stop, mute expiry, `VOICE_STATE` deltas), `take_events() -> Vec<VoiceEvent>` (pass to
+  `ModHost::voice_event`). `now` is Unix time in ms. Output goes to a `ServerSink` (`reliable(player, packet)`,
+  `udp(peer, datagram)`).
+- `bhmod_voice::client::VoiceClient` (shared as `SharedVoiceClient`, which implements `VoiceHost`): `new(codec)`,
+  `start() -> Option<VOICE_KEY packet>`, `on_message(&Message)` (`VOICE_KEY` reply, `VOICE_STATE`),
+  `on_packet(&[u8])` (raw 0xBC), `on_udp(&[u8])` (datagrams from `udp_port()`), `on_mic_frame(&[f32; 960 mono])`,
+  `poll_send(now) -> Vec<Outgoing>` (`Reliable`, `Udp`: `AUTH` every 1 s until `AUTH_OK`, then every 15 s; frames
+  only after `AUTH_OK`), `mix(&mut [f32] stereo)`, `mic_wanted()`,
   `mic_state(MicState)`, `transmitting() -> Option<Mode>` (host-drawn mic indicator), `take_events()`,
   `prefs()` / `load_prefs()` (master, per-player volumes and mutes as text for a file on the device),
   `players()` / `alias(id)` (every player the server listed with its alias: what the loader's bridge answers for
@@ -192,7 +201,7 @@ implement it compiles and behaves exactly as before; without the voice mod no ne
 ### `bhmod-client` (MIT OR Apache-2.0, sans-IO)
 
 The session stays free of GPL code: it routes the new ops and the host feeds them to `VoiceClient`.
-`Output::Voice(Message)` (`VOICE_KEY`, `VOICE_STATE`, `VOICE_FRAME`, only when both sides listed `voice`),
+`Output::Voice(Message)` (`VOICE_KEY`, `VOICE_STATE`, only when both sides listed `voice`),
 `Output::SettingsSchema(SettingsSchema)`, `Output::SettingsResult(SettingsResult)`; `Session::voice_enabled()`,
 `Session::settings_set(mod, key, value_cbor) -> Option<packet>`, `Session::voice_ctrl(...)`.
 
@@ -200,6 +209,6 @@ The session stays free of GPL code: it routes the new ops and the host feeds the
 
 | Host | Implements |
 | --- | --- |
-| blockheads-server | `GameBridge::voice` -> `SharedVoiceServer`; `tile_solid`, `world_width`, `platform`, `player_sleeping`, `player_alive`, `player_has_mod`; `ModHost::player_event` on sleep/wake/respawn; route `/mods settings|set` to `ModHost::settings_command`; feeds `VOICE_*` 0xBC packets and the UDP socket to `VoiceServer`, calls `tick` each poll and forwards `take_events` to `ModHost::voice_event`; `SettingsNet` for `SETTINGS_*`; lists `voice` in `SERVER_HELLO.features` only when a loaded mod holds the `voice` permission, `settings` always with mods. |
-| PC client (blockheads-pc) | `GameBridge::voice` -> `SharedVoiceClient`; `local_player`, `platform`, `has_touch`; `ModHost::ui_pick` on blockhead clicks; mic capture -> `on_mic_frame`, `poll_send` -> unsequenced ENet / UDP, `mix` -> audio out; `input` + `input_key` (key bindings, rebinding UI, file); new `UiCommand`s (overhead icons on the blockhead render path, buttons, settings screen); `client_settings` path; `Output::Voice`/`Settings*` from the session. |
+| blockheads-server | `GameBridge::voice` -> `SharedVoiceServer`; `tile_solid`, `world_width`, `platform`, `player_sleeping`, `player_alive`, `player_has_mod`; `ModHost::player_event` on sleep/wake/respawn; route `/mods settings|set` to `ModHost::settings_command`; opens the voice UDP port (default game port + 1) and gives it to `VoiceServer::set_transport`, feeds `VOICE_*` 0xBC packets and the UDP socket to `VoiceServer`, calls `tick` each poll and forwards `take_events` to `ModHost::voice_event`; `SettingsNet` for `SETTINGS_*`; lists `voice` in `SERVER_HELLO.features` only when a loaded mod holds the `voice` permission, `settings` always with mods. |
+| PC client (blockheads-pc) | `GameBridge::voice` -> `SharedVoiceClient`; `local_player`, `platform`, `has_touch`; `ModHost::ui_pick` on blockhead clicks; mic capture -> `on_mic_frame`, `poll_send` -> reliable 0xBC / the voice UDP socket, `mix` -> audio out; `input` + `input_key` (key bindings, rebinding UI, file); new `UiCommand`s (overhead icons on the blockhead render path, buttons, settings screen); `client_settings` path; `Output::Voice`/`Settings*` from the session. |
 | Android loader (bhmod-android) | Same as PC with AAudio/OpenSL capture/playback, the draggable PTT button, the runtime `RECORD_AUDIO` prompt (`voice:mic`). |

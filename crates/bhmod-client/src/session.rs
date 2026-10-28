@@ -219,7 +219,8 @@ pub enum Output {
     /// The server's answer to a call of a client mod (`SERVICE_RESULT`).
     ServiceResult(ServiceResult),
     /// (API 0.3.4) A voice op for the host's voice client (`bhmod_voice::client::VoiceClient::on_message`):
-    /// `VOICE_KEY`, `VOICE_STATE` or `VOICE_FRAME`, only when both sides listed `voice` ([`Session::voice_enabled`]).
+    /// `VOICE_KEY` or `VOICE_STATE`, only when both sides listed `voice` ([`Session::voice_enabled`]). Voice frames
+    /// do not pass the session: they use the server's voice UDP port.
     Voice(Message),
     /// (API 0.3.4) A mod's server settings form for the in-game admin screen (`SETTINGS_SCHEMA`), only when both
     /// sides listed `settings`.
@@ -444,7 +445,7 @@ impl Session {
             Message::Cosmetics(c) if self.is_modded() => vec![Output::Cosmetics(c)],
             Message::ServiceCall(c) if self.is_modded() => vec![Output::ServiceCall(c)],
             Message::ServiceResult(r) if self.is_modded() => vec![Output::ServiceResult(r)],
-            m @ (Message::VoiceKey(_) | Message::VoiceState(_) | Message::VoiceFrame(_)) if self.voice_enabled() => {
+            m @ (Message::VoiceKey(_) | Message::VoiceState(_)) if self.voice_enabled() => {
                 vec![Output::Voice(m)]
             }
             Message::SettingsSchema(s) if self.settings_enabled() => vec![Output::SettingsSchema(s)],

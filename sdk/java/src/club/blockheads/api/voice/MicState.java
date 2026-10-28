@@ -19,7 +19,11 @@ public enum MicState {
     /**
      * The OS refused the permission.
      */
-    DENIED("denied");
+    DENIED("denied"),
+    /**
+     * No voice: the server has no voice UDP port, or the device has no microphone.
+     */
+    UNAVAILABLE("unavailable");
 
     /** The WIT name of the case. */
     public final String wire;

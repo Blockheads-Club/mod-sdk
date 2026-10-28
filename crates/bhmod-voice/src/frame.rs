@@ -1,12 +1,12 @@
-//! Plaintext layouts of `VOICE_FRAME` and the size budget.
+//! Plaintext layouts of voice frames and their sizes.
 //!
 //! ```text
 //! C->S: mode:u8 seq:u16le opus
 //! S->C: speaker:u16le mode:u8 seq:u16le gain:u8 pan:i8 muffle:u8 opus
 //! ```
 //!
-//! On the wire the plaintext is sealed (+16-byte tag) behind an 8-byte nonce; in-band that is behind `bc 16` in an
-//! ENet `SEND_UNSEQUENCED` on channel 0, on the dedicated port behind a 3-byte [`crate::udp`] header.
+//! On the wire the plaintext is sealed (+16-byte tag) behind an 8-byte nonce and a 3-byte [`crate::udp`] header, in
+//! one datagram of the dedicated voice UDP port.
 
 use std::fmt;
 
@@ -16,20 +16,13 @@ use crate::{PeerId, VoiceMode};
 pub const C2S_HEADER: usize = 3;
 /// S->C plaintext header bytes.
 pub const S2C_HEADER: usize = 8;
-/// `bc 16` in front of an in-band frame.
-pub const OP_HEADER: usize = 2;
 /// The `nonce:u64le` of a sealed frame.
 pub const NONCE_LEN: usize = 8;
-/// ENet bytes around one in-band packet: protocol header with sent time (4) + `SEND_UNSEQUENCED` command (8). ENet
-/// may coalesce several commands into one datagram; then only the 8 command bytes are per frame.
-pub const ENET_OVERHEAD: usize = 12;
 /// IPv4 (20) + UDP (8) headers.
 pub const IP_UDP_OVERHEAD: usize = 28;
-/// Hard cap on the Opus payload of one frame. Above ENet's fragment threshold (1364) an unsequenced packet turns into
-/// reliable fragments; 400 bytes keeps every frame far below it (≈160 kbps for 20 ms).
+/// Hard cap on the Opus payload of one frame (≈160 kbps for 20 ms); every frame datagram stays far below
+/// [`DEFAULT_UDP_MAX`].
 pub const MAX_OPUS_BYTES: usize = 400;
-/// Default in-band budget for a whole 0xBC voice packet (`bc 16` + nonce + sealed), the "≈ 200 bytes" of the plan.
-pub const DEFAULT_INBAND_MAX: usize = 200;
 /// Largest dedicated-UDP datagram we send or accept (well below a 1280-byte IPv6 minimum MTU path).
 pub const DEFAULT_UDP_MAX: usize = 1200;
 
@@ -175,60 +168,14 @@ pub fn max_opus_bytes(max_bitrate: u32) -> usize {
     (opus_bytes(max_bitrate) * 2).min(MAX_OPUS_BYTES)
 }
 
-/// Bytes of the full in-band 0xBC packet (`bc 16` + nonce + sealed) for an Opus payload.
-pub fn inband_packet_len(dir: Direction, opus: usize) -> usize {
-    OP_HEADER + NONCE_LEN + crate::crypto::TAG_LEN + dir.header() + opus
-}
-
-/// Bytes of a dedicated-UDP voice datagram for an Opus payload.
+/// Bytes of a voice datagram for an Opus payload.
 pub fn udp_datagram_len(dir: Direction, opus: usize) -> usize {
     crate::udp::FRAME_HEADER + NONCE_LEN + crate::crypto::TAG_LEN + dir.header() + opus
 }
 
-/// IP datagram bytes of one in-band frame sent alone (ENet + IPv4 + UDP headers included).
-pub fn inband_ip_len(dir: Direction, opus: usize) -> usize {
-    inband_packet_len(dir, opus) + ENET_OVERHEAD + IP_UDP_OVERHEAD
-}
-
-/// Where a frame of a given size can go.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Fit {
-    /// Fits the in-band budget.
-    InBand,
-    /// Too big for in-band, fits a UDP datagram.
-    NeedsUdp,
-    /// Too big for either.
-    TooLarge,
-}
-
-/// Size limits of the two paths.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Budget {
-    /// Largest in-band 0xBC packet (see [`inband_packet_len`]).
-    pub inband_max: usize,
-    /// Largest UDP datagram (see [`udp_datagram_len`]).
-    pub udp_max: usize,
-}
-
-impl Default for Budget {
-    fn default() -> Budget {
-        Budget { inband_max: DEFAULT_INBAND_MAX, udp_max: DEFAULT_UDP_MAX }
-    }
-}
-
-impl Budget {
-    /// Where a frame with `opus` payload bytes fits.
-    pub fn fit(&self, dir: Direction, opus: usize) -> Fit {
-        if opus > MAX_OPUS_BYTES {
-            Fit::TooLarge
-        } else if inband_packet_len(dir, opus) <= self.inband_max {
-            Fit::InBand
-        } else if udp_datagram_len(dir, opus) <= self.udp_max {
-            Fit::NeedsUdp
-        } else {
-            Fit::TooLarge
-        }
-    }
+/// IP datagram bytes of one voice frame (IPv4 + UDP headers included).
+pub fn udp_ip_len(dir: Direction, opus: usize) -> usize {
+    udp_datagram_len(dir, opus) + IP_UDP_OVERHEAD
 }
 
 #[cfg(test)]
@@ -275,30 +222,18 @@ mod tests {
     }
 
     #[test]
-    fn sizes_match_the_transport_note() {
-        // notes/voice-transport.md §4: datagrams C->S 109/129/149, S->C 114/134/154 at 16/24/32 kbps.
+    fn sizes() {
+        // 20 ms CBR frames at 16/24/32 kbps: datagrams C->S 98/118/138, S->C 103/123/143 bytes on the IP layer.
         let rates = [16_000, 24_000, 32_000];
         let opus: Vec<usize> = rates.iter().map(|r| opus_bytes(*r)).collect();
         assert_eq!(opus, [40, 60, 80]);
-        let up: Vec<usize> = opus.iter().map(|o| inband_ip_len(Direction::Up, *o)).collect();
-        let down: Vec<usize> = opus.iter().map(|o| inband_ip_len(Direction::Down, *o)).collect();
-        assert_eq!(up, [109, 129, 149]);
-        assert_eq!(down, [114, 134, 154]);
-        assert_eq!(inband_packet_len(Direction::Up, 80), 109);
+        let up: Vec<usize> = opus.iter().map(|o| udp_ip_len(Direction::Up, *o)).collect();
+        let down: Vec<usize> = opus.iter().map(|o| udp_ip_len(Direction::Down, *o)).collect();
+        assert_eq!(up, [98, 118, 138]);
+        assert_eq!(down, [103, 123, 143]);
         assert_eq!(udp_datagram_len(Direction::Down, 80), 115);
+        assert!(udp_datagram_len(Direction::Down, MAX_OPUS_BYTES) < DEFAULT_UDP_MAX);
         assert_eq!(max_opus_bytes(24_000), 120);
         assert_eq!(max_opus_bytes(1_000_000), MAX_OPUS_BYTES);
-    }
-
-    #[test]
-    fn budget() {
-        let b = Budget::default();
-        assert_eq!(b.fit(Direction::Down, 80), Fit::InBand);
-        // 200 - (2 + 8 + 16 + 8) = 166 bytes of Opus fit in-band S->C.
-        assert_eq!(b.fit(Direction::Down, 166), Fit::InBand);
-        assert_eq!(b.fit(Direction::Down, 167), Fit::NeedsUdp);
-        assert_eq!(b.fit(Direction::Up, MAX_OPUS_BYTES + 1), Fit::TooLarge);
-        let tiny = Budget { inband_max: 50, udp_max: 59 };
-        assert_eq!(tiny.fit(Direction::Up, 30), Fit::TooLarge);
     }
 }

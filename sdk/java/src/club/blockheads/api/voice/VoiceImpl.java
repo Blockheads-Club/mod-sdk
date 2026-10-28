@@ -74,8 +74,8 @@ public final class VoiceImpl implements Voice {
     }
 
     /**
-     * *Server.* Transport and UDP port (default `auto`, no port). Applies to players whose voice session starts
-     * afterwards; the host opens or closes the port.
+     * *Server.* The voice UDP port (`mode` is ignored). Applies to players whose voice session starts afterwards;
+     * the host opens the port. Without any call the host uses its default port.
      */
     @Override
     public void setTransport(club.blockheads.api.voice.TransportConfig config) {

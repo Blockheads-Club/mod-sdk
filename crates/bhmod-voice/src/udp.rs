@@ -1,13 +1,15 @@
-//! Datagrams of the dedicated voice UDP port (fallback transport, `voiceUdpPort`).
+//! Datagrams of the dedicated voice UDP port (`VOICE_KEY.udpPort`): the only path of voice frames. The admin opens
+//! this port (default: game port + 1); without it voice stays off.
 //!
 //! ```text
-//! 01 AUTH    C->S  peer:u16le token[32]     first datagram, repeated every KEEPALIVE_MS (NAT keepalive)
+//! 01 AUTH    C->S  peer:u16le token[32]     first datagram; every AUTH_RETRY_MS until AUTH_OK, then every KEEPALIVE_MS
 //! 02 AUTH_OK S->C  peer:u16le               the server learned the client's address
 //! 03 FRAME   both  peer:u16le nonce:u64le sealed
 //! ```
 //!
-//! `peer` is the client's id from `VOICE_KEY` (sender C->S, recipient S->C). `nonce || sealed` are the exact bytes of
-//! an in-band `VOICE_FRAME` body, sharing its counter and replay window.
+//! `peer` is the client's id from `VOICE_KEY` (sender C->S, recipient S->C). `nonce` is the per-direction counter
+//! of the session ([`crate::crypto::Session`], with its replay window); `sealed` the ChaCha20-Poly1305 ciphertext and
+//! tag of a [`crate::frame`] plaintext.
 
 use crate::crypto::{TAG_LEN, TOKEN_LEN};
 use crate::PeerId;
@@ -16,6 +18,8 @@ use crate::PeerId;
 pub const FRAME_HEADER: usize = 3;
 /// How often a client resends `AUTH` to keep NAT bindings open.
 pub const KEEPALIVE_MS: u64 = 15_000;
+/// How often a client resends `AUTH` until the server answers `AUTH_OK`.
+pub const AUTH_RETRY_MS: u64 = 1_000;
 
 const AUTH: u8 = 1;
 const AUTH_OK: u8 = 2;

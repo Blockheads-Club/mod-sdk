@@ -134,7 +134,7 @@ fn server_voice_api() {
         "gain p1 150",
         "caps Caps { max_bitrate: 16000, max_speakers: 8, max_frames_per_sec: 60 }",
         "transport TransportConfig { mode: Udp, udp_port: Some(15151) }",
-        "transport TransportConfig { mode: Auto, udp_port: None }",
+        "transport TransportConfig { mode: Udp, udp_port: None }",
         "allowed p1 5 1",
         "icons Icons { speaking: true, no_voice: true, self_mute: true, deafen: false, admin_mute: true }",
         "override true",

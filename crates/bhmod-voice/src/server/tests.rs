@@ -1,22 +1,20 @@
 use std::sync::Arc;
 
+use bhmod_core::voice::Transport;
 use bhmod_core::voice::{Caps as CoreCaps, Route as CoreRoute};
-use bhmod_proto::{VoiceCtrl, VoiceFrame};
+use bhmod_proto::VoiceCtrl;
 
 use super::*;
 use crate::client::{Outgoing, VoiceClient};
 use crate::codec::TestCodec;
 
-/// Everything a sink got, as `(to, kind, packet)`; kind 0 reliable, 1 unsequenced, 2 udp (to = peer id).
+/// Everything a sink got, as `(to, kind, packet)`; kind 0 reliable, 2 udp (to = peer id).
 #[derive(Default)]
 struct Sink(Vec<(String, u8, Vec<u8>)>);
 
 impl ServerSink for Sink {
     fn reliable(&mut self, player: &str, packet: Vec<u8>) {
         self.0.push((player.into(), 0, packet));
-    }
-    fn unsequenced(&mut self, player: &str, packet: Vec<u8>) {
-        self.0.push((player.into(), 1, packet));
     }
     fn udp(&mut self, peer: PeerId, datagram: Vec<u8>) {
         self.0.push((peer.to_string(), 2, datagram));
@@ -39,43 +37,44 @@ impl Sink {
     }
 }
 
-fn features(unsequenced: bool) -> Vec<String> {
-    let mut f = vec!["voice".to_string(), "settings".to_string()];
-    if unsequenced {
-        f.push("voice-unsequenced".into());
-    }
-    f
+fn features() -> Vec<String> {
+    vec!["voice".to_string(), "settings".to_string()]
 }
 
+/// A server with voice UDP port 15151 and fixed keys.
 fn server() -> VoiceServer {
     let mut n = 0u8;
-    VoiceServer::with_keys(Box::new(move || {
+    let mut s = VoiceServer::with_keys(Box::new(move || {
         n += 1;
         Some(KeyPair::from_secret([200 - n; 32]))
-    }))
+    }));
+    s.set_transport(TransportConfig { mode: Transport::Udp, udp_port: Some(15151) });
+    s
 }
 
 fn client(seed: u8) -> (VoiceClient, Vec<u8>) {
-    let mut c = VoiceClient::new(Arc::new(TestCodec), true);
+    let mut c = VoiceClient::new(Arc::new(TestCodec));
     let key = c.start_with(KeyPair::from_secret([seed; 32]));
     (c, key)
 }
 
-/// Joins `name` with voice and runs the key exchange; returns the client.
+/// Joins `name` with voice, runs the key exchange and the UDP `AUTH`; returns the client.
 fn connect(s: &mut VoiceServer, sink: &mut Sink, name: &str, seed: u8) -> VoiceClient {
-    connect_with(s, sink, name, seed, true)
-}
-
-fn connect_with(s: &mut VoiceServer, sink: &mut Sink, name: &str, seed: u8, unsequenced: bool) -> VoiceClient {
-    s.join(name, &uc_alias(name), &features(unsequenced));
-    let mut c = VoiceClient::new(Arc::new(TestCodec), unsequenced);
-    let key = c.start_with(KeyPair::from_secret([seed; 32]));
-    s.receive(0, name, &Message::decode(&key).unwrap(), 0, sink);
+    s.join(name, &uc_alias(name), &features());
+    let (mut c, key) = client(seed);
+    s.receive(0, name, &Message::decode(&key).unwrap(), sink);
     for (to, _, b) in sink.take() {
         assert_eq!(to, name);
         c.on_packet(&b);
     }
     assert!(c.connected());
+    let sent = c.poll_send(0);
+    let [Outgoing::Udp(auth)] = &sent[..] else { panic!("{sent:?}") };
+    let peer = s.receive_udp(0, auth, &|_| true, sink);
+    assert_eq!(peer, s.peer_of(name));
+    let out = sink.take();
+    assert_eq!(out[0].1, 2);
+    c.on_udp(&out[0].2);
     c
 }
 
@@ -90,8 +89,8 @@ fn handshake_states_and_relay() {
     // a vanilla player and a modded one without voice: ops are ignored
     s.join("vanilla", &uc_alias("vanilla"), &[]);
     let (_, key) = client(9);
-    s.receive(0, "vanilla", &Message::decode(&key).unwrap(), 0, &mut sink);
-    s.receive(0, "nobody", &Message::decode(&key).unwrap(), 0, &mut sink);
+    s.receive(0, "vanilla", &Message::decode(&key).unwrap(), &mut sink);
+    s.receive(0, "nobody", &Message::decode(&key).unwrap(), &mut sink);
     assert!(sink.take().is_empty());
 
     let mut a = connect(&mut s, &mut sink, "a", 1);
@@ -130,13 +129,13 @@ fn handshake_states_and_relay() {
     a.talk(None, true);
     a.on_mic_frame(&vec![0.25; crate::FRAME_SAMPLES]);
     let sent = a.poll_send(30);
-    let [Outgoing::Unsequenced(pkt)] = &sent[..] else { panic!("{sent:?}") };
-    s.receive(30, "a", &Message::decode(pkt).unwrap(), 0, &mut sink);
+    let [Outgoing::Udp(frame)] = &sent[..] else { panic!("{sent:?}") };
+    assert_eq!(s.receive_udp(30, frame, &|_| true, &mut sink), None);
     assert_eq!(s.take_events(), vec![VoiceEvent::TalkStart { player: "a".into(), mode: Mode::Proximity }]);
     let out = sink.take();
     assert_eq!(out.len(), 1);
-    assert_eq!((out[0].0.as_str(), out[0].1), ("b", 1));
-    b.on_packet(&out[0].2);
+    assert_eq!((out[0].0.as_str(), out[0].1), ("2", 2));
+    b.on_udp(&out[0].2);
     assert_eq!(b.take_events().last(), Some(&VoiceEvent::TalkStart { player: "a".into(), mode: Mode::Proximity }));
     assert_eq!(s.state("a"), State::Talking);
     s.tick(40, &mut sink);
@@ -146,15 +145,13 @@ fn handshake_states_and_relay() {
     let ev = s.take_events();
     assert!(ev.contains(&VoiceEvent::TalkStop { player: "a".into(), mode: Mode::Proximity }));
 
-    // VOICE_CTRL, unknown ops, frames before a session
+    // VOICE_CTRL, unknown ops, ops before a session
     sink.take();
-    s.receive(1_001, "a", &Message::VoiceCtrl(VoiceCtrl { self_mute: true, deafen: false }), 0, &mut sink);
+    s.receive(1_001, "a", &Message::VoiceCtrl(VoiceCtrl { self_mute: true, deafen: false }), &mut sink);
     assert_eq!(s.state("a"), State::SelfMuted);
-    s.receive(1_001, "a", &Message::ListRequest, 0, &mut sink);
-    s.join("late", &uc_alias("late"), &features(false));
-    s.receive(1_001, "late", &Message::VoiceCtrl(VoiceCtrl::default()), 0, &mut sink);
-    s.receive(1_001, "late", &Message::VoiceFrame(VoiceFrame { nonce: 1, sealed: vec![0; 20] }), 0, &mut sink);
-    s.receive(1_001, "a", &Message::VoiceFrame(VoiceFrame { nonce: 1, sealed: vec![0; 20] }), 0, &mut sink);
+    s.receive(1_001, "a", &Message::ListRequest, &mut sink);
+    s.join("late", &uc_alias("late"), &features());
+    s.receive(1_001, "late", &Message::VoiceCtrl(VoiceCtrl::default()), &mut sink);
     assert!(sink.take().is_empty());
 
     // leaving: others get `gone`, routes naming the player are dropped
@@ -217,22 +214,12 @@ fn policy_mutes_gains_caps_icons() {
 fn udp_transport() {
     let mut s = server();
     let mut sink = Sink::default();
-    s.set_transport(TransportConfig { mode: Transport::Udp, udp_port: Some(15151) });
     assert_eq!(s.transport().udp_port, Some(15151));
     assert_eq!(s.udp_port(), Some(15151));
-    let mut a = connect_with(&mut s, &mut sink, "a", 1, false);
-    let mut b = connect_with(&mut s, &mut sink, "b", 2, false);
+    let mut a = connect(&mut s, &mut sink, "a", 1);
+    let mut b = connect(&mut s, &mut sink, "b", 2);
     assert_eq!(a.udp_port(), Some(15151));
     s.set_routes("a", &[route("b")]);
-    // AUTH from both
-    for (c, peer) in [(&mut a, 1), (&mut b, 2)] {
-        let sent = c.poll_send(0);
-        let [Outgoing::Udp(auth)] = &sent[..] else { panic!("{sent:?}") };
-        assert_eq!(s.receive_udp(0, auth, &|_| true, 0, &mut sink), Some(peer));
-        let out = sink.take();
-        assert_eq!(out[0].1, 2);
-        c.on_udp(&out[0].2);
-    }
     assert!(a.poll_send(1).is_empty(), "keepalive only every 15 s");
     s.tick(5, &mut sink);
     for (to, _, p) in sink.take() {
@@ -253,15 +240,33 @@ fn udp_transport() {
     let sent = a.poll_send(10);
     let [Outgoing::Udp(frame)] = &sent[..] else { panic!("{sent:?}") };
     // from an address that is not a's: dropped
-    assert_eq!(s.receive_udp(10, frame, &|_| false, 0, &mut sink), None);
+    assert_eq!(s.receive_udp(10, frame, &|_| false, &mut sink), None);
     assert!(sink.take().is_empty());
-    assert_eq!(s.receive_udp(10, frame, &|_| true, 0, &mut sink), None);
+    assert_eq!(s.receive_udp(10, frame, &|_| true, &mut sink), None);
     assert_eq!(s.take_events()[2..], vec![VoiceEvent::TalkStart { player: "a".into(), mode: Mode::Proximity }]);
     let out = sink.take();
     assert_eq!((out[0].0.as_str(), out[0].1), ("2", 2));
     b.on_udp(&out[0].2);
     // garbage
-    assert_eq!(s.receive_udp(10, &[0xff], &|_| true, 0, &mut sink), None);
+    assert_eq!(s.receive_udp(10, &[0xff], &|_| true, &mut sink), None);
+}
+
+#[test]
+fn no_port_no_voice() {
+    // Without a port the key reply carries none: the client keeps voice off.
+    let mut s = server();
+    s.set_transport(TransportConfig { mode: Transport::Auto, udp_port: None });
+    assert_eq!(s.udp_port(), None);
+    let mut sink = Sink::default();
+    s.join("a", &uc_alias("a"), &features());
+    let (mut c, key) = client(1);
+    s.receive(0, "a", &Message::decode(&key).unwrap(), &mut sink);
+    for (_, _, b) in sink.take() {
+        c.on_packet(&b);
+    }
+    assert!(!c.connected());
+    assert_eq!(c.mic(), bhmod_core::voice::MicState::Unavailable);
+    assert!(c.poll_send(0).is_empty());
 }
 
 #[test]
@@ -269,18 +274,18 @@ fn keys_and_helpers() {
     // no randomness: the exchange is refused; a low-order public key too
     let mut s = VoiceServer::with_keys(Box::new(|| None));
     let mut sink = Sink::default();
-    s.join("a", &uc_alias("a"), &features(true));
+    s.join("a", &uc_alias("a"), &features());
     let (_, key) = client(1);
-    s.receive(0, "a", &Message::decode(&key).unwrap(), 0, &mut sink);
+    s.receive(0, "a", &Message::decode(&key).unwrap(), &mut sink);
     assert!(sink.take().is_empty());
     let mut s = server();
-    s.join("a", &uc_alias("a"), &features(true));
-    s.receive(0, "a", &Message::VoiceKey(VoiceKey { public: [0; 32], peer: None, udp_port: None }), 0, &mut sink);
+    s.join("a", &uc_alias("a"), &features());
+    s.receive(0, "a", &Message::VoiceKey(VoiceKey { public: [0; 32], peer: None, udp_port: None }), &mut sink);
     assert!(sink.take().is_empty() && s.peer_of("a").is_none());
     // a rekey keeps the speaker id; ids wrap
     let _ = connect(&mut s, &mut sink, "a", 1);
     let (_, key) = client(2);
-    s.receive(0, "a", &Message::decode(&key).unwrap(), 0, &mut sink);
+    s.receive(0, "a", &Message::decode(&key).unwrap(), &mut sink);
     sink.take();
     assert_eq!(s.peer_of("a"), Some(1));
     s.next_peer = u16::MAX;
@@ -295,16 +300,13 @@ fn keys_and_helpers() {
     for st in all {
         assert_eq!(state_of(st).wire(), st.as_str());
     }
-    for t in Transport::ALL {
-        assert_eq!(TransportMode::parse(t.name()), Some(transport_mode(*t)));
-    }
 }
 
 #[test]
 fn shared_server_is_a_voice_host() {
     let shared = SharedVoiceServer::new(server());
     let h: &dyn VoiceHost = &shared;
-    shared.lock().join("a", &uc_alias("a"), &features(true));
+    shared.lock().join("a", &uc_alias("a"), &features());
     assert_eq!(h.state("a"), Ok(State::None));
     assert_eq!(h.icons(), Ok(Icons::default()));
     h.set_routes("a", &[route("b")]).unwrap();
@@ -324,6 +326,7 @@ fn shared_server_is_a_voice_host() {
 #[test]
 fn random_keys_and_a_poisoned_lock() {
     let mut s = VoiceServer::new();
+    s.set_transport(TransportConfig { mode: Transport::Udp, udp_port: Some(1) });
     let mut sink = Sink::default();
     let _ = connect(&mut s, &mut sink, "a", 1);
     assert_eq!(s.peer_of("a"), Some(1));

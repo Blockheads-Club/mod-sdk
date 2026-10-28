@@ -33,10 +33,6 @@ pub const HELLO_TIMEOUT_MS: u64 = 1500;
 pub const PLIST_KEY: &str = "bhcModLoader";
 /// The vanilla rejection reason (`0x26 <reason>`) used for clients without the mod loader: CLIENT_TOO_OLD.
 pub const REJECT_CLIENT_TOO_OLD: u8 = 3;
-/// Smallest sealed `VOICE_FRAME` ciphertext: the 16-byte Poly1305 tag of an empty plaintext.
-pub const VOICE_TAG_LEN: usize = 16;
-/// Largest sealed `VOICE_FRAME` ciphertext (tag included). Real frames are ~100 bytes; this only bounds garbage.
-pub const MAX_VOICE_SEALED: usize = 1024;
 /// Largest `SETTINGS_SCHEMA` `schema` / `values` byte strings (canonical CBOR).
 pub const MAX_SETTINGS_PAYLOAD: usize = 256 * 1024;
 /// Largest `SETTINGS_SET` `value` byte string (canonical CBOR).
@@ -44,13 +40,11 @@ pub const MAX_SETTINGS_VALUE: usize = 32 * 1024;
 
 /// Feature names of `HELLO.features` / `SERVER_HELLO.features`.
 pub mod feature {
-    /// Voice chat ops `VOICE_*` (0x15-0x18).
+    /// Voice chat ops `VOICE_KEY`, `VOICE_STATE`, `VOICE_CTRL` (0x15, 0x17, 0x18); voice frames use the voice UDP
+    /// port. (`voice-unsequenced`, for in-band frames, is retired: senders omit it, receivers ignore it.)
     pub const VOICE: &str = "voice";
     /// Mod settings ops `SETTINGS_*` (0x19-0x1b).
     pub const SETTINGS: &str = "settings";
-    /// The client can send unsequenced in-band `VOICE_FRAME`s (ENet channel 0). A `voice` client without it uses
-    /// the dedicated UDP port only.
-    pub const VOICE_UNSEQUENCED: &str = "voice-unsequenced";
 }
 
 /// `SETTINGS_RESULT` failure codes.
@@ -179,10 +173,9 @@ pub enum Op {
     ServiceCall = 0x13,
     /// Both directions, the answer to a `SERVICE_CALL` (M10).
     ServiceResult = 0x14,
-    /// Both directions, the X25519 public key of the voice session.
+    /// Both directions, the X25519 public key of the voice session. (0x16, in-band `VOICE_FRAME`, is reserved and
+    /// unused: voice frames travel over the voice UDP port.)
     VoiceKey = 0x15,
-    /// Both directions, one encrypted voice frame (raw; sent unreliable + unsequenced).
-    VoiceFrame = 0x16,
     /// S->C, voice state of the players (overhead icons).
     VoiceState = 0x17,
     /// C->S, the player's self mute / deafen.
@@ -214,7 +207,6 @@ impl Op {
             0x13 => Op::ServiceCall,
             0x14 => Op::ServiceResult,
             0x15 => Op::VoiceKey,
-            0x16 => Op::VoiceFrame,
             0x17 => Op::VoiceState,
             0x18 => Op::VoiceCtrl,
             0x19 => Op::SettingsSchema,
@@ -222,11 +214,6 @@ impl Op {
             0x1b => Op::SettingsResult,
             _ => return None,
         })
-    }
-
-    /// True for the one op that is sent unreliable + unsequenced (`VOICE_FRAME`); every other op is reliable.
-    pub fn is_unreliable(self) -> bool {
-        self == Op::VoiceFrame
     }
 }
 
@@ -465,18 +452,8 @@ pub struct VoiceKey {
     pub public: [u8; 32],
     /// S->C only: the client's own speaker id (S->C frames name speakers by it; part of the UDP token).
     pub peer: Option<u16>,
-    /// S->C only: the dedicated voice UDP port, when one is open.
+    /// S->C only: the voice UDP port that carries the voice frames; absent: the server has none, voice stays off.
     pub udp_port: Option<u16>,
-}
-
-/// `VOICE_FRAME` (both), raw: `nonce:u64le sealed`. `sealed` is the ChaCha20-Poly1305 ciphertext plus tag of the
-/// frame plaintext (layouts in `bhmod-voice`).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct VoiceFrame {
-    /// Per-direction counter, also the AEAD nonce.
-    pub nonce: u64,
-    /// Ciphertext and 16-byte tag ([`VOICE_TAG_LEN`]..=[`MAX_VOICE_SEALED`] bytes).
-    pub sealed: Vec<u8>,
 }
 
 /// `VOICE_STATE` (S->C): who can talk / is talking, for the overhead icons.
@@ -487,7 +464,7 @@ pub struct VoiceState {
     /// Vanilla `playerID` -> `none`, `ready`, `talking`, `self_muted`, `deafened`, `admin_muted` (or `gone` in a
     /// delta: the player left).
     pub players: BTreeMap<String, String>,
-    /// Vanilla `playerID` -> speaker id of the `VOICE_FRAME`s (omitted on the wire when empty).
+    /// Vanilla `playerID` -> speaker id of the voice frames (UDP datagrams) (omitted on the wire when empty).
     pub speakers: BTreeMap<String, u16>,
     /// Which icons the admin shows: `speaking`, `no_voice`, `self_mute`, `deafen`, `admin_mute` -> visible (omitted
     /// when empty).
@@ -590,8 +567,6 @@ pub enum Message {
     ServiceResult(ServiceResult),
     /// 0x15.
     VoiceKey(VoiceKey),
-    /// 0x16.
-    VoiceFrame(VoiceFrame),
     /// 0x17.
     VoiceState(VoiceState),
     /// 0x18.
@@ -643,7 +618,6 @@ impl Message {
             Message::ServiceCall(_) => Op::ServiceCall,
             Message::ServiceResult(_) => Op::ServiceResult,
             Message::VoiceKey(_) => Op::VoiceKey,
-            Message::VoiceFrame(_) => Op::VoiceFrame,
             Message::VoiceState(_) => Op::VoiceState,
             Message::VoiceCtrl(_) => Op::VoiceCtrl,
             Message::SettingsSchema(_) => Op::SettingsSchema,
@@ -662,12 +636,7 @@ impl Message {
         out
     }
 
-    /// True when the packet must be sent unreliable + unsequenced (see [`Op::is_unreliable`]).
-    pub fn is_unreliable(&self) -> bool {
-        self.op().is_unreliable()
-    }
-
-    /// The CBOR body, or `Err(raw bytes)` for the three raw messages.
+    /// The CBOR body, or `Err(raw bytes)` for the two raw messages.
     fn body(&self) -> Result<Value, Vec<u8>> {
         Ok(match self {
             Message::Hello(h) => {
@@ -844,11 +813,6 @@ impl Message {
                 }
                 map(e)
             }
-            Message::VoiceFrame(f) => {
-                let mut raw = f.nonce.to_le_bytes().to_vec();
-                raw.extend(&f.sealed);
-                return Err(raw);
-            }
             Message::FileChunk(c) => {
                 let mut raw = c.sha256.to_vec();
                 raw.extend(c.offset.to_le_bytes());
@@ -875,7 +839,6 @@ impl Message {
         match op {
             Op::FileChunk => decode_chunk(body),
             Op::Channel => decode_channel(body),
-            Op::VoiceFrame => decode_voice_frame(body),
             _ if body.len() > MAX_BODY => Err(Error::TooLarge("body")),
             _ => decode_cbor(op, &Fields::from(cbor::decode(body)?)?),
         }
@@ -1030,7 +993,7 @@ fn decode_cbor(op: Op, f: &Fields) -> Result<Message, Error> {
             mod_id: f.opt_text("mod")?,
             key: f.opt_text("key")?,
         }),
-        // FILE_CHUNK, CHANNEL and VOICE_FRAME never reach here; CHANNEL_REGISTER is the remaining CBOR message.
+        // FILE_CHUNK and CHANNEL never reach here; CHANNEL_REGISTER is the remaining CBOR message.
         _ => Message::ChannelRegister(ChannelRegister { name: f.text("name")?, id: f.u16("id")? }),
     })
 }
@@ -1098,21 +1061,6 @@ fn decode_channel(body: &[u8]) -> Result<Message, Error> {
         return Err(Error::TooLarge("channel payload"));
     }
     Ok(Message::Channel(Channel { channel_id: u16::from_le_bytes([body[0], body[1]]), payload }))
-}
-
-fn decode_voice_frame(body: &[u8]) -> Result<Message, Error> {
-    if body.len() < 8 {
-        return Err(Error::Truncated);
-    }
-    let sealed = body[8..].to_vec();
-    if sealed.len() > MAX_VOICE_SEALED {
-        return Err(Error::TooLarge("voice frame"));
-    }
-    if sealed.len() < VOICE_TAG_LEN {
-        return Err(Error::Invalid("voice frame shorter than its tag"));
-    }
-    let nonce = u64::from_le_bytes(body[..8].try_into().expect("8 bytes"));
-    Ok(Message::VoiceFrame(VoiceFrame { nonce, sealed }))
 }
 
 /// A CBOR map with typed accessors. Unknown keys are ignored.

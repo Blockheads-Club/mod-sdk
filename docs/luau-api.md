@@ -224,7 +224,8 @@ snake_case keys, missing optional fields take the defaults.
 
 - `bh.voice.*` (permission `voice`): `state(p)`, `icons()`; server: `set_routes(speaker, { { listener = p, modes = {...},
   gain, pan, muffle } })`, `mute(p, until_ms?)`, `unmute(p)`, `set_speaker_gain(p, n)`, `set_caps{...}`,
-  `set_transport{ mode, udp_port }`, `set_allowed(p, modes, activations)`, `set_icons{...}`,
+  `set_transport{ udp_port }` (`mode` is ignored: frames always use the voice UDP port), `set_allowed(p, modes,
+  activations)`, `set_icons{...}`,
   `set_broadcast_overrides_deafen(b)`; client: `set_default_mode(m)`, `set_activation(a)`, `talk(mode?, pressed)`,
   `set_mic(b)`, `set_self_mute(b)`, `set_deafen(b)`, `set_vad_threshold(db)`, `set_master(n)`, `master()`,
   `set_player_volume(p, n)`, `player_volume(p)`, `mute_player(p, b)`, `player_muted(p)`, `allowed()`,

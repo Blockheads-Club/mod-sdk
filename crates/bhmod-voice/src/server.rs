@@ -2,8 +2,9 @@
 //! deltas and the mod policy behind [`bhmod_core::VoiceHost`]. The server program only glues it:
 //!
 //! - [`VoiceServer::join`] / [`VoiceServer::leave`] when a player is in the game / gone (with `HELLO.features`);
-//! - [`VoiceServer::receive`] for every 0xBC `VOICE_KEY`, `VOICE_CTRL` and `VOICE_FRAME` of a player, and
-//!   [`VoiceServer::receive_udp`] for datagrams of the voice UDP port;
+//! - [`VoiceServer::receive`] for every 0xBC `VOICE_KEY` and `VOICE_CTRL` of a player, and
+//!   [`VoiceServer::receive_udp`] for datagrams of the voice UDP port (the only path of voice frames);
+//! - [`VoiceServer::set_transport`] with the port the host really has open (`None`: no port, voice stays off);
 //! - [`VoiceServer::tick`] once per poll; [`VoiceServer::take_events`] into `ModHost::voice_event`;
 //! - [`SharedVoiceServer`] as `GameBridge::voice`.
 //!
@@ -14,13 +15,12 @@ use std::sync::{Arc, Mutex, MutexGuard};
 
 use bhmod_core::types::ApiError;
 use bhmod_core::voice::{
-    Activation, Caps as CoreCaps, Icons, Mode, Route as CoreRoute, Transport, TransportConfig, VoiceEvent, VoiceHost,
+    Activation, Caps as CoreCaps, Icons, Mode, Route as CoreRoute, TransportConfig, VoiceEvent, VoiceHost,
     VoiceState as State,
 };
 use bhmod_proto::{feature, Message, VoiceKey, VoiceState};
 
 use crate::crypto::{KeyPair, Role};
-use crate::path::{Path, TransportMode};
 use crate::relay::{Caps, Event, Relay, RelayTable, Route, Status, Transport as RelayTransport, UdpReceived};
 use crate::udp::Datagram;
 use crate::{PeerId, VoiceMode};
@@ -29,8 +29,6 @@ use crate::{PeerId, VoiceMode};
 pub trait ServerSink {
     /// A reliable 0xBC packet to a player (`VOICE_KEY`, `VOICE_STATE`).
     fn reliable(&mut self, player: &str, packet: Vec<u8>);
-    /// An in-band `VOICE_FRAME` (unreliable + unsequenced, ENet channel 0).
-    fn unsequenced(&mut self, player: &str, packet: Vec<u8>);
     /// A datagram to the address the peer authenticated from on the voice UDP port.
     fn udp(&mut self, peer: PeerId, datagram: Vec<u8>);
 }
@@ -52,19 +50,10 @@ pub fn state_of(s: Status) -> State {
     }
 }
 
-fn transport_mode(t: Transport) -> TransportMode {
-    match t {
-        Transport::Auto => TransportMode::Auto,
-        Transport::Inband => TransportMode::InBand,
-        Transport::Udp => TransportMode::Udp,
-    }
-}
-
 #[derive(Debug, Default)]
 struct Player {
     alias: String,
     voice: bool,
-    unsequenced: bool,
     peer: Option<PeerId>,
     modes: u8,
     activations: u8,
@@ -100,18 +89,12 @@ pub struct VoiceServer {
     keys: Box<dyn FnMut() -> Option<KeyPair> + Send>,
 }
 
-/// Adapts a [`ServerSink`] to the relay's peer ids.
-struct Out<'a> {
-    peers: &'a HashMap<PeerId, String>,
-    sink: &'a mut dyn ServerSink,
-}
+/// Adapts a [`ServerSink`] to the relay.
+struct Out<'a>(&'a mut dyn ServerSink);
 
 impl RelayTransport for Out<'_> {
-    fn send(&mut self, to: PeerId, path: Path, packet: Vec<u8>) {
-        match path {
-            Path::InBand => self.peers.get(&to).into_iter().for_each(|p| self.sink.unsequenced(p, packet.clone())),
-            Path::Udp => self.sink.udp(to, packet),
-        }
+    fn send(&mut self, to: PeerId, datagram: Vec<u8>) {
+        self.0.udp(to, datagram);
     }
 }
 
@@ -122,7 +105,7 @@ impl Default for VoiceServer {
 }
 
 impl VoiceServer {
-    /// A server with the defaults (`auto`, no UDP port, default caps, all icons) and random session keys.
+    /// A server with the defaults (no UDP port yet, default caps, all icons) and random session keys.
     pub fn new() -> VoiceServer {
         VoiceServer::default()
     }
@@ -130,7 +113,7 @@ impl VoiceServer {
     /// A server whose session keys come from `keys` (tests; `None` = no randomness, the key exchange is refused).
     pub fn with_keys(keys: Box<dyn FnMut() -> Option<KeyPair> + Send>) -> VoiceServer {
         VoiceServer {
-            relay: Relay::new(TransportMode::Auto, None),
+            relay: Relay::new(None),
             table: RelayTable::new(Caps::default()),
             transport: TransportConfig::default(),
             players: BTreeMap::new(),
@@ -151,12 +134,12 @@ impl VoiceServer {
         }
     }
 
-    /// The UDP port the host should have open (`None`: close it).
+    /// The voice UDP port announced to clients (`None`: no port, voice is off).
     pub fn udp_port(&self) -> Option<u16> {
         self.relay.udp_port()
     }
 
-    /// The transport set by the mod.
+    /// The transport last given to [`VoiceServer::set_transport`].
     pub fn transport(&self) -> TransportConfig {
         self.transport
     }
@@ -172,7 +155,6 @@ impl VoiceServer {
         let has = |f: &str| features.iter().any(|x| x == f);
         let p = Player {
             voice: has(feature::VOICE),
-            unsequenced: has(feature::VOICE_UNSEQUENCED),
             activations: Activation::mask(Activation::ALL),
             alias: alias.to_string(),
             ..Player::default()
@@ -224,10 +206,10 @@ impl VoiceServer {
         }
     }
 
-    /// A 0xBC voice op from `player`: `VOICE_KEY` (answered with the server's key and a full `VOICE_STATE`),
-    /// `VOICE_CTRL` or `VOICE_FRAME` (relayed). Other messages, and every op of a player who did not list `voice`,
-    /// are ignored. `lag_ms` is the server's measured poll lag (for `auto`).
-    pub fn receive(&mut self, now: u64, player: &str, msg: &Message, lag_ms: u32, sink: &mut dyn ServerSink) {
+    /// A 0xBC voice op from `player`: `VOICE_KEY` (answered with the server's key, the voice UDP port and a full
+    /// `VOICE_STATE`) or `VOICE_CTRL`. Other messages, and every op of a player who did not list `voice`, are
+    /// ignored.
+    pub fn receive(&mut self, now: u64, player: &str, msg: &Message, sink: &mut dyn ServerSink) {
         self.now = now;
         if !self.players.get(player).is_some_and(|p| p.voice) {
             return;
@@ -239,18 +221,14 @@ impl VoiceServer {
                     self.relay.set_ctrl(peer, c.self_mute, c.deafen);
                 }
             }
-            Message::VoiceFrame(f) => {
-                let Some(peer) = self.peer_of(player) else { return };
-                let mut out = Out { peers: &self.peers, sink };
-                let r = self.relay.receive(now, peer, f.nonce, &f.sealed, &self.table, lag_ms, &mut out);
-                self.forwarded(peer, r.ok());
-            }
             _ => {}
         }
     }
 
-    fn forwarded(&mut self, peer: PeerId, f: Option<crate::relay::Forwarded>) {
-        let Some(f) = f.filter(|f| f.started) else { return };
+    fn forwarded(&mut self, peer: PeerId, f: crate::relay::Forwarded) {
+        if !f.started {
+            return;
+        }
         let player = self.peers[&peer].clone();
         let mode = mode_of(f.mode);
         if let Some(p) = self.players.get_mut(&player) {
@@ -273,7 +251,7 @@ impl VoiceServer {
             }
         };
         p.told = None;
-        self.relay.add_peer(peer, session, p.unsequenced);
+        self.relay.add_peer(peer, session);
         self.peers.insert(peer, player.to_string());
         self.table.unmute(peer);
         if let Some(until) = self.mutes.get(player) {
@@ -318,7 +296,6 @@ impl VoiceServer {
         now: u64,
         datagram: &[u8],
         bound: &dyn Fn(PeerId) -> bool,
-        lag_ms: u32,
         sink: &mut dyn ServerSink,
     ) -> Option<PeerId> {
         self.now = now;
@@ -329,15 +306,14 @@ impl VoiceServer {
         if frame_peer.is_some_and(|p| !bound(p)) {
             return None;
         }
-        let mut out = Out { peers: &self.peers, sink };
-        match self.relay.receive_udp(now, datagram, &self.table, lag_ms, &mut out) {
+        match self.relay.receive_udp(now, datagram, &self.table, &mut Out(&mut *sink)) {
             Ok(UdpReceived::Auth { peer, reply }) => {
                 sink.udp(peer, reply);
                 Some(peer)
             }
             Ok(UdpReceived::Frame(f)) => {
                 // Only a frame datagram is relayed, so `frame_peer` is set.
-                self.forwarded(frame_peer.unwrap_or_default(), Some(f));
+                self.forwarded(frame_peer.unwrap_or_default(), f);
                 None
             }
             Err(_) => None,
@@ -355,8 +331,8 @@ impl VoiceServer {
                     let mode = self.players.get_mut(&player).and_then(|p| p.talking.take()).unwrap_or(Mode::Proximity);
                     self.events.push(VoiceEvent::TalkStop { player, mode });
                 }
-                // Player-level mutes expire below; path changes need nothing.
-                Event::MuteExpired(_) | Event::PathChanged(..) => {}
+                // Player-level mutes expire below.
+                Event::MuteExpired(_) => {}
             }
         }
         self.mutes.retain(|_, u| u.is_none_or(|t| now < t));
@@ -452,10 +428,12 @@ impl VoiceServer {
         };
     }
 
-    /// `voice.set-transport`.
+    /// `voice.set-transport`, with the port the host really opened. Only `udp_port` matters (frames always use the
+    /// voice UDP port; `mode` is kept for 0.3.x compatibility and ignored). `None`: no port, voice stays off for
+    /// sessions that start afterwards.
     pub fn set_transport(&mut self, t: TransportConfig) {
         self.transport = t;
-        self.relay.set_transport(transport_mode(t.mode), t.udp_port);
+        self.relay.set_udp_port(t.udp_port);
     }
 
     /// `voice.set-allowed`.

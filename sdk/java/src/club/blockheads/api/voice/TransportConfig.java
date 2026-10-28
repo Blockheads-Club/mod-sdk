@@ -5,12 +5,16 @@ package club.blockheads.api.voice;
 import club.blockheads.mod.rt.Wire;
 
 /**
- * Transport settings.
+ * Transport settings: only `udp-port` matters.
  */
 public final class TransportConfig {
+    /**
+     * Ignored (see `transport`).
+     */
     public club.blockheads.api.voice.Transport mode;
     /**
-     * The dedicated voice UDP port the host opens; `none` = no port (everything in-band).
+     * The voice UDP port the host opens; `none` = the host's default (the server's voice port, by default the
+     * game port + 1). The admin must open it (firewall, router); without it voice stays off.
      */
     public Integer udpPort;
 

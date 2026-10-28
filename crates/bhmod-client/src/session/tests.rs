@@ -599,10 +599,9 @@ fn modded_with(ours: &[&str], server_features: &[&str]) -> Rig {
 
 #[test]
 fn voice_and_settings_ops_need_both_features() {
-    use bhmod_proto::{SettingsFailure, SettingsResult, SettingsSchema, VoiceFrame, VoiceKey, VoiceState};
+    use bhmod_proto::{SettingsFailure, SettingsResult, SettingsSchema, VoiceKey, VoiceState};
     let key = Message::VoiceKey(VoiceKey { public: [1; 32], peer: Some(3), udp_port: None });
     let state = Message::VoiceState(VoiceState { full: true, ..Default::default() });
-    let frame = Message::VoiceFrame(VoiceFrame { nonce: 1, sealed: vec![0; 16] });
     let schema = Message::SettingsSchema(SettingsSchema { mod_id: "v".into(), schema: vec![0xa0], values: vec![0xa0] });
     let result = Message::SettingsResult(SettingsResult {
         outcome: Err(SettingsFailure { code: 1, message: None }),
@@ -620,14 +619,14 @@ fn voice_and_settings_ops_need_both_features() {
     for (ours, theirs) in [(&["voice", "settings"][..], &[][..]), (&[][..], &["voice", "settings"][..])] {
         let mut r = modded_with(ours, theirs);
         assert!(r.s.is_modded() && !r.s.voice_enabled() && !r.s.settings_enabled());
-        for m in [&key, &state, &frame, &schema, &result] {
+        for m in [&key, &state, &schema, &result] {
             assert!(r.s.receive(&m.encode(), 2).is_empty());
         }
     }
 
-    let mut r = modded_with(&["voice", "settings", "voice-unsequenced"], &["settings", "voice"]);
+    let mut r = modded_with(&["voice", "settings"], &["settings", "voice"]);
     assert!(r.s.voice_enabled() && r.s.settings_enabled());
-    for m in [&key, &state, &frame] {
+    for m in [&key, &state] {
         assert!(matches!(&r.s.receive(&m.encode(), 2)[..], [Output::Voice(x)] if x == m));
     }
     assert!(matches!(&r.s.receive(&schema.encode(), 2)[..], [Output::SettingsSchema(s)] if s.mod_id == "v"));

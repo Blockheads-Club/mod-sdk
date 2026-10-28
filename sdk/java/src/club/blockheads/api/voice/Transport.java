@@ -5,19 +5,20 @@ package club.blockheads.api.voice;
 import club.blockheads.mod.rt.Wire;
 
 /**
- * How voice frames travel.
+ * How voice frames travel. Kept for 0.3.x compatibility and ignored: voice frames always use the dedicated
+ * voice UDP port (control messages stay in the game connection). Pass `udp`.
  */
 public enum Transport {
     /**
-     * In-band first; a player moves to the UDP port when frames do not fit or the link is lossy.
+     * Same as `udp`.
      */
     AUTO("auto"),
     /**
-     * Always inside the game connection.
+     * Same as `udp` (in-band voice frames were retired).
      */
     INBAND("inband"),
     /**
-     * The dedicated UDP port only.
+     * The dedicated voice UDP port.
      */
     UDP("udp");
 

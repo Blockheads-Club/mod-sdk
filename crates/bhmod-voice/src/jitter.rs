@@ -3,8 +3,6 @@
 
 use std::collections::HashMap;
 
-use crate::path::LossMeter;
-
 /// Default frames buffered before playout starts: 4 × 20 ms = 80 ms (the server's 0.2 s world step adds jitter).
 pub const DEFAULT_TARGET: u16 = 4;
 /// Default most frames held; older ones are skipped when it overflows.
@@ -32,7 +30,6 @@ pub struct JitterBuffer<T> {
     frames: HashMap<u16, T>,
     next: Option<u16>,
     missed: u16,
-    loss: LossMeter,
 }
 
 impl<T> Default for JitterBuffer<T> {
@@ -49,15 +46,7 @@ impl<T> JitterBuffer<T> {
     /// A buffer that starts after `target` frames, holds at most `max`, and conceals at most `max_conceal` in a row.
     pub fn new(target: u16, max: u16, max_conceal: u16) -> JitterBuffer<T> {
         let target = target.max(1);
-        JitterBuffer {
-            target,
-            max: max.max(target),
-            max_conceal,
-            frames: HashMap::new(),
-            next: None,
-            missed: 0,
-            loss: LossMeter::default(),
-        }
+        JitterBuffer { target, max: max.max(target), max_conceal, frames: HashMap::new(), next: None, missed: 0 }
     }
 
     /// Adds a received frame. Returns false if it was late or a duplicate.
@@ -76,7 +65,6 @@ impl<T> JitterBuffer<T> {
         if self.frames.contains_key(&seq) {
             return false;
         }
-        self.loss.record(seq);
         self.frames.insert(seq, frame);
         if self.next.is_none() && self.frames.len() >= usize::from(self.target) {
             self.next = self.frames.keys().copied().min_by_key(|s| ahead(*s, seq));
@@ -116,11 +104,6 @@ impl<T> JitterBuffer<T> {
     pub fn playing(&self) -> bool {
         self.next.is_some()
     }
-
-    /// Smoothed loss of this speaker's stream (for the `auto` transport policy).
-    pub fn loss(&self) -> f32 {
-        self.loss.loss()
-    }
 }
 
 #[cfg(test)]
@@ -150,7 +133,6 @@ mod tests {
         assert_eq!(j.pop(), Playout::Lost);
         assert_eq!(j.pop(), Playout::Idle, "spurt ended after 2 concealed");
         assert!(!j.playing());
-        assert_eq!(j.loss(), 0.0);
     }
 
     #[test]

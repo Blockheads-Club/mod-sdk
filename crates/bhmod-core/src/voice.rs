@@ -126,13 +126,14 @@ impl VoiceState {
 }
 
 named! {
-    /// `voice.transport`.
+    /// `voice.transport`. Kept for 0.3.x compatibility and ignored: voice frames always travel over the voice UDP
+    /// port (maintainer decision 2026-10-28); only [`TransportConfig::udp_port`] matters.
     Transport {
-        /// In-band, UDP when needed.
+        /// Same as `udp`.
         Auto = "auto",
-        /// Always in-band.
+        /// Same as `udp` (in-band voice frames were retired).
         Inband = "inband",
-        /// The UDP port only.
+        /// The voice UDP port.
         Udp = "udp",
     }
 }
@@ -146,6 +147,8 @@ named! {
         On = "on",
         /// The OS refused the permission.
         Denied = "denied",
+        /// No voice: the server has no voice UDP port, or the device has no microphone.
+        Unavailable = "unavailable",
     }
 }
 
@@ -253,15 +256,15 @@ impl Default for Allowance {
 /// `voice.transport-config`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TransportConfig {
-    /// The mode.
+    /// Ignored (see [`Transport`]).
     pub mode: Transport,
-    /// The dedicated UDP port, if any.
+    /// The voice UDP port; `None`: the host's default (the server's configured voice port, game port + 1).
     pub udp_port: Option<u16>,
 }
 
 impl Default for TransportConfig {
     fn default() -> TransportConfig {
-        TransportConfig { mode: Transport::Auto, udp_port: None }
+        TransportConfig { mode: Transport::Udp, udp_port: None }
     }
 }
 
@@ -782,6 +785,7 @@ mod tests {
         assert_eq!(Activation::parse("vad"), Some(Activation::Vad));
         assert_eq!(Transport::parse("inband"), Some(Transport::Inband));
         assert_eq!(MicState::parse("denied"), Some(MicState::Denied));
+        assert_eq!(MicState::parse("unavailable"), Some(MicState::Unavailable));
         assert!(Mode::parse("shout").is_none());
         for s in VoiceState::ALL {
             assert_eq!(VoiceState::from_wire(s.wire()), Some(*s));
@@ -809,7 +813,7 @@ mod tests {
         assert!(check_vad_db(-45.0).is_ok());
         assert!(check_vad_db(1.0).is_err());
         assert!(check_vad_db(f32::NAN).is_err());
-        assert_eq!(TransportConfig::default().mode, Transport::Auto);
+        assert_eq!(TransportConfig::default().mode, Transport::Udp);
     }
 
     #[test]

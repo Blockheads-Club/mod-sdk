@@ -414,12 +414,6 @@ fn valid() -> Vec<(&'static str, &'static str, &'static str, Message)> {
             }),
         ),
         (
-            "16-voice-frame",
-            "both",
-            "Nonce 1 and a 19-byte sealed body (3-byte plaintext + 16-byte tag; content arbitrary here, see bhmod-voice for real frames).",
-            Message::VoiceFrame(VoiceFrame { nonce: 1, sealed: (0..19).collect() }),
-        ),
-        (
             "17-voice-state-full",
             "S->C",
             "Full state: player-a talks, player-b has no mod loader; icon visibility.",
@@ -679,8 +673,7 @@ fn invalid() -> Vec<(&'static str, String, &'static str)> {
             ),
             "type",
         ),
-        ("voice-frame-short-nonce", "bc1601020304".into(), "truncated"),
-        ("voice-frame-no-tag", format!("bc16{}{}", "01".repeat(8), "00".repeat(15)), "invalid"),
+        ("voice-frame-reserved", format!("bc16{}{}", "01".repeat(8), "00".repeat(16)), "unknown-op"),
         (
             "voice-key-short",
             format!("bc15{}", cbor_hex(Value::Map(vec![(Value::text("pub"), Value::Bytes(vec![1; 31]))]))),
@@ -833,7 +826,6 @@ fn valid_vectors() {
                 "dataLength": c.data.len(), "dataSha256": sha_hex(&c.data),
             }),
             Message::Channel(c) => json!({ "raw": true, "channelId": c.channel_id, "payload": to_hex(&c.payload) }),
-            Message::VoiceFrame(f) => json!({ "raw": true, "nonce": f.nonce, "sealed": to_hex(&f.sealed) }),
             _ => cbor_json(&cbor::decode(&bytes[2..]).unwrap()),
         };
         index.push(json!({

@@ -1,20 +1,19 @@
-//! End-to-end: clients seal frames, the relay opens, applies policy and re-seals per listener, clients open.
+//! End-to-end over the voice UDP port: clients authenticate and seal frames, the relay opens, applies policy and
+//! re-seals per listener, clients open.
 
-use bhmod_proto::Message;
-use bhmod_voice::crypto::{KeyPair, Role};
+use bhmod_voice::crypto::{KeyPair, Role, Session};
 use bhmod_voice::frame::{Direction, MAX_OPUS_BYTES};
 use bhmod_voice::link::{ClientLink, LinkError};
-use bhmod_voice::path::{Path, TransportMode};
 use bhmod_voice::relay::*;
 use bhmod_voice::udp::Datagram;
 use bhmod_voice::{PeerId, VoiceMode};
 
 #[derive(Default)]
-struct Out(Vec<(PeerId, Path, Vec<u8>)>);
+struct Out(Vec<(PeerId, Vec<u8>)>);
 
 impl Transport for Out {
-    fn send(&mut self, to: PeerId, path: Path, packet: Vec<u8>) {
-        self.0.push((to, path, packet));
+    fn send(&mut self, to: PeerId, datagram: Vec<u8>) {
+        self.0.push((to, datagram));
     }
 }
 
@@ -24,25 +23,25 @@ struct Rig {
     clients: Vec<ClientLink>,
 }
 
-fn rig(n: u16, mode: TransportMode, port: Option<u16>) -> Rig {
-    let mut relay = Relay::new(mode, port);
-    let clients = (1..=n)
-        .map(|id| {
-            let ck = KeyPair::from_secret([id as u8; 32]);
-            let sk = KeyPair::from_secret([100 + id as u8; 32]);
-            relay.add_peer(id, sk.session(Role::Server, &ck.public()).unwrap(), true);
-            ClientLink::new(ck.session(Role::Client, &sk.public()).unwrap(), id, mode, relay.udp_port())
-        })
-        .collect();
-    Rig { relay, table: RelayTable::new(Caps::default()), clients }
+fn keys(id: u8) -> (KeyPair, KeyPair) {
+    (KeyPair::from_secret([id; 32]), KeyPair::from_secret([100 + id; 32]))
 }
 
-/// The in-band packet's VOICE_FRAME fields.
-fn fields(packet: &[u8]) -> (u64, Vec<u8>) {
-    match Message::decode(packet).unwrap() {
-        Message::VoiceFrame(f) => (f.nonce, f.sealed),
-        other => panic!("{other:?}"),
+/// `n` clients with sessions; the first `authed` of them authenticated on the UDP port.
+fn rig(n: u16, authed: u16) -> Rig {
+    let mut relay = Relay::new(Some(15152));
+    let clients = (1..=n)
+        .map(|id| {
+            let (ck, sk) = keys(id as u8);
+            relay.add_peer(id, sk.session(Role::Server, &ck.public()).unwrap());
+            ClientLink::new(ck.session(Role::Client, &sk.public()).unwrap(), id)
+        })
+        .collect();
+    let mut r = Rig { relay, table: RelayTable::new(Caps::default()), clients };
+    for id in 1..=authed {
+        r.auth(id);
     }
+    r
 }
 
 impl Rig {
@@ -50,20 +49,33 @@ impl Rig {
         &mut self.clients[usize::from(id) - 1]
     }
 
+    fn auth(&mut self, id: PeerId) {
+        let auth = self.client(id).auth_datagram();
+        let mut out = Out::default();
+        let UdpReceived::Auth { peer, reply } = self.relay.receive_udp(0, &auth, &self.table, &mut out).unwrap() else {
+            panic!()
+        };
+        assert_eq!(peer, id);
+        assert!(!self.client(id).authed());
+        assert!(self.client(id).receive_udp(&reply).is_none());
+        assert!(self.client(id).authed());
+    }
+
     /// Client `from` talks; returns the relay's result and what it sent.
     fn talk(&mut self, now: u64, from: PeerId, mode: VoiceMode, opus: &[u8]) -> (Result<Forwarded, Drop>, Out) {
-        let (path, pkt) = self.client(from).send(mode, opus, 0.0).unwrap();
-        assert_eq!(path, Path::InBand);
-        let (n, sealed) = fields(&pkt);
+        let dgram = self.client(from).send(mode, opus).unwrap();
         let mut out = Out::default();
-        let r = self.relay.receive(now, from, n, &sealed, &self.table, 0, &mut out);
+        let r = self.relay.receive_udp(now, &dgram, &self.table, &mut out).map(|r| match r {
+            UdpReceived::Frame(f) => f,
+            other => panic!("{other:?}"),
+        });
         (r, out)
     }
 }
 
 #[test]
 fn routes_gain_pan_muffle() {
-    let mut r = rig(4, TransportMode::Auto, None);
+    let mut r = rig(4, 4);
     r.table.set_speaker_gain(1, 150);
     r.table.set_routes(
         1,
@@ -78,23 +90,23 @@ fn routes_gain_pan_muffle() {
     let (res, out) = r.talk(0, 1, VoiceMode::Proximity, &[7; 60]);
     assert_eq!(res, Ok(Forwarded { started: true, copies: 2, mode: VoiceMode::Proximity }));
     assert_eq!(out.0.len(), 2);
-    let (to, path, pkt) = &out.0[0];
-    assert_eq!((*to, *path), (2, Path::InBand));
-    let (n, sealed) = fields(pkt);
-    let f = r.client(2).open(n, &sealed).unwrap();
+    let (to, dgram) = &out.0[0];
+    assert_eq!(*to, 2);
+    let f = r.client(2).receive_udp(dgram).unwrap().unwrap();
     assert_eq!((f.speaker, f.mode, f.seq, f.gain, f.pan, f.muffle), (1, VoiceMode::Proximity, 0, 75, -64, 51));
     assert_eq!(f.opus, vec![7; 60]);
-    // The wrong client cannot open it.
-    assert!(matches!(r.client(3).open(n, &sealed), Err(LinkError::Crypto(_))));
-    let (_, _, pkt3) = &out.0[1];
-    let (n3, s3) = fields(pkt3);
-    assert_eq!(r.client(3).open(n3, &s3).unwrap().gain, 150);
+    // Addressed to peer 2: client 3 ignores it; re-addressed, it cannot open it.
+    assert!(r.client(3).receive_udp(dgram).is_none());
+    let Some(Datagram::Frame { nonce, sealed, .. }) = Datagram::decode(dgram, 1200) else { panic!() };
+    let forged = Datagram::Frame { peer: 3, nonce, sealed }.encode();
+    assert!(matches!(r.client(3).receive_udp(&forged), Some(Err(LinkError::Crypto(_)))));
+    let f3 = r.client(3).receive_udp(&out.0[1].1).unwrap().unwrap();
+    assert_eq!(f3.gain, 150);
 
     // Global: the proximity-only route does not match; the second route to 2 does.
     let (res, out) = r.talk(10, 1, VoiceMode::Global, &[1; 10]);
     assert_eq!(res, Ok(Forwarded { started: false, copies: 2, mode: VoiceMode::Global }));
-    let (n, sealed) = fields(&out.0[0].2);
-    let f = r.client(2).open(n, &sealed).unwrap();
+    let f = r.client(2).receive_udp(&out.0[0].1).unwrap().unwrap();
     assert_eq!((f.seq, f.gain, f.pan, f.muffle), (1, 150, 0, 0));
     assert_eq!(r.table.routes(1).len(), 5);
     r.table.set_routes(1, vec![]);
@@ -106,8 +118,7 @@ fn routes_gain_pan_muffle() {
 
 #[test]
 fn caps_and_mutes() {
-    let mut r = rig(3, TransportMode::InBand, Some(9000));
-    assert_eq!(r.relay.udp_port(), None, "inband never announces a port");
+    let mut r = rig(3, 3);
     r.table.caps = Caps { max_bitrate: 16_000, max_speakers: 1, max_frames_per_sec: 50 };
     r.table.set_routes(1, vec![Route::new(2)]);
     r.table.set_routes(2, vec![Route::new(1)]);
@@ -162,118 +173,86 @@ fn caps_and_mutes() {
 }
 
 #[test]
-fn drops() {
-    let mut r = rig(2, TransportMode::Auto, None);
+fn auth_and_drops() {
+    let mut r = rig(2, 0);
+    assert_eq!(r.relay.udp_port(), Some(15152));
     let mut out = Out::default();
-    let (_, pkt) = r.client(1).send(VoiceMode::Global, &[1; 5], 0.0).unwrap();
-    let (n, sealed) = fields(&pkt);
-    assert_eq!(r.relay.receive(0, 7, n, &sealed, &r.table, 0, &mut out), Err(Drop::UnknownPeer));
-    assert!(r.relay.receive(0, 1, n, &sealed, &r.table, 0, &mut out).is_ok());
-    assert_eq!(r.relay.receive(0, 1, n, &sealed, &r.table, 0, &mut out), Err(Drop::Crypto), "replay");
+
+    // Bad tokens, unknown peers and non-auth junk.
+    let bad = Datagram::Auth { peer: 1, token: [0; 32] }.encode();
+    assert_eq!(r.relay.receive_udp(0, &bad, &r.table, &mut out), Err(Drop::Crypto));
+    let unknown = Datagram::Auth { peer: 9, token: [0; 32] }.encode();
+    assert_eq!(r.relay.receive_udp(0, &unknown, &r.table, &mut out), Err(Drop::UnknownPeer));
+    assert_eq!(r.relay.receive_udp(0, &[1], &r.table, &mut out), Err(Drop::Malformed));
+    let ok = Datagram::AuthOk { peer: 1 }.encode();
+    assert_eq!(r.relay.receive_udp(0, &ok, &r.table, &mut out), Err(Drop::Malformed));
+    let early = Datagram::Frame { peer: 1, nonce: 1, sealed: vec![0; 16] }.encode();
+    assert_eq!(r.relay.receive_udp(0, &early, &r.table, &mut out), Err(Drop::NotOnUdp));
+    let ghost = Datagram::Frame { peer: 9, nonce: 1, sealed: vec![0; 16] }.encode();
+    assert_eq!(r.relay.receive_udp(0, &ghost, &r.table, &mut out), Err(Drop::UnknownPeer));
+
+    // A client sends nothing before AUTH_OK; another peer's AUTH_OK or junk is ignored.
+    assert!(r.client(1).send(VoiceMode::Global, &[1; 5]).is_none());
+    assert!(r.client(1).receive_udp(&Datagram::AuthOk { peer: 2 }.encode()).is_none());
+    assert!(r.client(1).receive_udp(&[0]).is_none());
+    assert!(!r.client(1).authed());
+    r.auth(1);
+
+    // A listener that did not authenticate yet gets nothing; after AUTH it does.
+    r.table.set_routes(1, vec![Route::new(2)]);
+    let (res, out) = r.talk(0, 1, VoiceMode::Global, &[3; 40]);
+    assert_eq!((res.unwrap().copies, out.0.len()), (0, 0));
+    r.auth(2);
+    let (res, mut out) = r.talk(20, 1, VoiceMode::Global, &[3; 40]);
+    assert_eq!(res.unwrap().copies, 1);
+    assert_eq!(r.client(2).receive_udp(&out.0[0].1).unwrap().unwrap().opus, vec![3; 40]);
+
+    // Replay.
+    let dgram = r.client(1).send(VoiceMode::Global, &[1; 5]).unwrap();
+    assert!(r.relay.receive_udp(40, &dgram, &r.table, &mut out).is_ok());
+    assert_eq!(r.relay.receive_udp(40, &dgram, &r.table, &mut out), Err(Drop::Crypto), "replay");
     assert!(r.relay.has_peer(1));
     r.relay.remove_peer(1);
     assert!(!r.relay.has_peer(1));
 
     // A sealed but malformed plaintext (the client link never sends one; seal by hand).
-    let ck = KeyPair::from_secret([50; 32]);
-    let sk = KeyPair::from_secret([51; 32]);
-    let mut cs = ck.session(Role::Client, &sk.public()).unwrap();
-    r.relay.add_peer(5, sk.session(Role::Server, &ck.public()).unwrap(), true);
-    let (n, sealed) = cs.seal(&[9, 0, 0]).unwrap();
-    assert_eq!(r.relay.receive(0, 5, n, &sealed, &r.table, 0, &mut out), Err(Drop::Malformed));
-    assert!(out.0.is_empty());
-
-    // Opus over the hard cap cannot be sent at all.
-    assert!(r.client(2).send(VoiceMode::Global, &[0; MAX_OPUS_BYTES + 1], 0.0).is_none());
+    let (ck, sk) = keys(50);
+    let mut cs: Session = ck.session(Role::Client, &sk.public()).unwrap();
+    r.relay.add_peer(5, sk.session(Role::Server, &ck.public()).unwrap());
+    let auth = Datagram::Auth { peer: 5, token: cs.udp_token(5) }.encode();
+    assert!(r.relay.receive_udp(0, &auth, &r.table, &mut out).is_ok());
+    let (nonce, sealed) = cs.seal(&[9, 0, 0]).unwrap();
+    let bad = Datagram::Frame { peer: 5, nonce, sealed }.encode();
+    assert_eq!(r.relay.receive_udp(0, &bad, &r.table, &mut out), Err(Drop::Malformed));
 
     // The client rejects a malformed relayed plaintext.
-    let ck = KeyPair::from_secret([60; 32]);
-    let sk = KeyPair::from_secret([61; 32]);
+    let (ck, sk) = keys(60);
     let mut ss = sk.session(Role::Server, &ck.public()).unwrap();
-    let mut link = ClientLink::new(ck.session(Role::Client, &sk.public()).unwrap(), 3, TransportMode::Auto, None);
-    let (n, sealed) = ss.seal(&[1, 2]).unwrap();
-    assert!(matches!(link.open(n, &sealed), Err(LinkError::Frame(_))));
+    let mut link = ClientLink::new(ck.session(Role::Client, &sk.public()).unwrap(), 3);
+    let (nonce, sealed) = ss.seal(&[1, 2]).unwrap();
+    let dgram = Datagram::Frame { peer: 3, nonce, sealed }.encode();
+    assert!(matches!(link.receive_udp(&dgram), Some(Err(LinkError::Frame(_)))));
     assert_eq!(link.peer(), 3);
 }
 
 #[test]
-fn udp_fallback() {
-    let mut r = rig(2, TransportMode::Auto, Some(15152));
-    assert_eq!(r.relay.udp_port(), Some(15152));
-    r.table.set_routes(1, vec![Route::new(2)]);
-    let mut out = Out::default();
-
-    // Bad tokens, unknown peers and non-auth junk.
-    let bad = Datagram::Auth { peer: 1, token: [0; 32] }.encode();
-    assert_eq!(r.relay.receive_udp(0, &bad, &r.table, 0, &mut out), Err(Drop::Crypto));
-    let unknown = Datagram::Auth { peer: 9, token: [0; 32] }.encode();
-    assert_eq!(r.relay.receive_udp(0, &unknown, &r.table, 0, &mut out), Err(Drop::UnknownPeer));
-    assert_eq!(r.relay.receive_udp(0, &[1], &r.table, 0, &mut out), Err(Drop::Malformed));
-    let ok = Datagram::AuthOk { peer: 1 }.encode();
-    assert_eq!(r.relay.receive_udp(0, &ok, &r.table, 0, &mut out), Err(Drop::Malformed));
-    let early = Datagram::Frame { peer: 1, nonce: 1, sealed: vec![0; 16] }.encode();
-    assert_eq!(r.relay.receive_udp(0, &early, &r.table, 0, &mut out), Err(Drop::NotOnUdp));
-    let ghost = Datagram::Frame { peer: 9, nonce: 1, sealed: vec![0; 16] }.encode();
-    assert_eq!(r.relay.receive_udp(0, &ghost, &r.table, 0, &mut out), Err(Drop::UnknownPeer));
-
-    // Both clients authenticate.
-    for id in [1, 2] {
-        let auth = r.client(id).auth_datagram();
-        let UdpReceived::Auth { peer, reply } = r.relay.receive_udp(0, &auth, &r.table, 0, &mut out).unwrap() else {
-            panic!()
-        };
-        assert_eq!(peer, id);
-        assert!(r.client(id).receive_udp(&reply).is_none());
-    }
-    // Another peer's AUTH_OK or junk is ignored by a client.
-    assert!(r.client(1).receive_udp(&Datagram::AuthOk { peer: 2 }.encode()).is_none());
-    assert!(r.client(1).receive_udp(&[0]).is_none());
-
-    // auto still prefers in-band while it is healthy...
-    let (path, pkt) = r.client(1).send(VoiceMode::Global, &[3; 40], 0.0).unwrap();
-    assert_eq!(path, Path::InBand);
-    let (n, sealed) = fields(&pkt);
-    r.relay.receive(0, 1, n, &sealed, &r.table, 0, &mut out).unwrap();
-    assert_eq!(out.0.pop().unwrap().1, Path::InBand);
-    // ...and switches when the server lags (event once), or the client measures loss.
-    let (_, pkt) = r.client(1).send(VoiceMode::Global, &[3; 40], 0.0).unwrap();
-    let (n, sealed) = fields(&pkt);
-    r.relay.receive(20, 1, n, &sealed, &r.table, 50, &mut out).unwrap();
-    let (to, path, dgram) = out.0.pop().unwrap();
-    assert_eq!((to, path), (2, Path::Udp));
-    let mut table = r.table.clone();
-    assert_eq!(r.relay.tick(20, &mut table), vec![Event::PathChanged(2, Path::Udp)]);
-    let f = r.client(2).receive_udp(&dgram).unwrap().unwrap();
-    assert_eq!(f.opus, vec![3; 40]);
-    assert!(r.client(1).receive_udp(&dgram).is_none(), "addressed to peer 2");
-
-    let (path, dgram) = r.client(1).send(VoiceMode::Global, &[4; 40], 0.5).unwrap();
-    assert_eq!(path, Path::Udp);
-    let UdpReceived::Frame(fw) = r.relay.receive_udp(40, &dgram, &r.table, 0, &mut out).unwrap() else { panic!() };
-    assert_eq!(fw.copies, 1);
-
-    // Big frames go UDP directly; client 2 cannot send in-band at all.
-    r.client(2).selector_mut().inband_capable = false;
-    r.table.set_routes(2, vec![Route::new(1)]);
-    let (path, _) = r.client(2).send(VoiceMode::Global, &[0; 10], 0.0).unwrap();
-    assert_eq!(path, Path::Udp);
+fn no_port_refuses_auth() {
+    let mut r = rig(1, 0);
+    r.relay.set_udp_port(None);
+    assert_eq!(r.relay.udp_port(), None);
+    let auth = r.client(1).auth_datagram();
+    assert_eq!(r.relay.receive_udp(0, &auth, &r.table, &mut Out::default()), Err(Drop::Crypto));
 }
 
 #[test]
-fn lost_listener_path_and_exhaustion() {
-    // A listener whose path cannot take the frame (in-band only, frame too big for in-band) gets nothing.
-    let mut r = rig(2, TransportMode::InBand, None);
-    r.table.caps.max_bitrate = 128_000;
+fn oversized_opus_is_dropped() {
+    let mut r = rig(2, 2);
+    r.table.caps.max_bitrate = 1_000_000;
     r.table.set_routes(1, vec![Route::new(2)]);
-    let ck = KeyPair::from_secret([1; 32]);
-    let sk = KeyPair::from_secret([101; 32]);
-    let mut cs = ck.session(Role::Client, &sk.public()).unwrap();
-    let plain = bhmod_voice::frame::ClientFrame { mode: VoiceMode::Global, seq: 0, opus: vec![0; 300] }.encode();
-    let (n, sealed) = cs.seal(&plain).unwrap();
-    let mut out = Out::default();
-    let fw = r.relay.receive(0, 1, n, &sealed, &r.table, 0, &mut out).unwrap();
-    assert_eq!((fw.copies, out.0.len()), (0, 0));
-    assert_eq!(bhmod_voice::frame::inband_packet_len(Direction::Down, 300), 334);
+    // The client seals it; the relay refuses the plaintext over the hard cap.
+    let (res, out) = r.talk(0, 1, VoiceMode::Global, &[0; MAX_OPUS_BYTES + 1]);
+    assert_eq!((res, out.0.len()), (Err(Drop::Malformed), 0));
+    assert!(r.talk(0, 1, VoiceMode::Global, &[0; MAX_OPUS_BYTES]).0.is_ok());
 }
 
 #[test]
@@ -306,22 +285,20 @@ fn table_helpers() {
 
 #[test]
 fn measured_wire_sizes() {
-    // Real sealed packets for 20 ms Opus at 16/24/32 kbps (40/60/80 bytes), compared with the size helpers.
-    use bhmod_voice::frame::{inband_ip_len, opus_bytes, udp_datagram_len, ENET_OVERHEAD, IP_UDP_OVERHEAD};
-    let mut r = rig(2, TransportMode::Auto, None);
+    // Real datagrams for 20 ms Opus at 16/24/32 kbps (40/60/80 bytes), compared with the size helpers.
+    use bhmod_voice::frame::{opus_bytes, udp_datagram_len, udp_ip_len, IP_UDP_OVERHEAD};
+    let mut r = rig(2, 2);
     r.table.caps.max_bitrate = 32_000;
     r.table.set_routes(1, vec![Route::new(2)]);
-    for (rate, up_ip, down_ip) in [(16_000, 109, 114), (24_000, 129, 134), (32_000, 149, 154)] {
+    for (rate, up_ip, down_ip) in [(16_000, 98, 103), (24_000, 118, 123), (32_000, 138, 143)] {
         let opus = vec![0u8; opus_bytes(rate)];
-        let (_, up) = r.client(1).send(VoiceMode::Global, &opus, 0.0).unwrap();
-        let (n, sealed) = fields(&up);
+        let up = r.client(1).send(VoiceMode::Global, &opus).unwrap();
         let mut out = Out::default();
-        r.relay.receive(0, 1, n, &sealed, &r.table, 0, &mut out).unwrap();
-        let down = &out.0[0].2;
-        assert_eq!(up.len() + ENET_OVERHEAD + IP_UDP_OVERHEAD, up_ip);
-        assert_eq!(down.len() + ENET_OVERHEAD + IP_UDP_OVERHEAD, down_ip);
-        assert_eq!(inband_ip_len(Direction::Up, opus.len()), up_ip);
-        assert_eq!(inband_ip_len(Direction::Down, opus.len()), down_ip);
-        assert_eq!(udp_datagram_len(Direction::Up, opus.len()), up.len() + 1);
+        r.relay.receive_udp(0, &up, &r.table, &mut out).unwrap();
+        let down = &out.0[0].1;
+        assert_eq!(up.len() + IP_UDP_OVERHEAD, up_ip);
+        assert_eq!(down.len() + IP_UDP_OVERHEAD, down_ip);
+        assert_eq!(udp_ip_len(Direction::Up, opus.len()), up_ip);
+        assert_eq!(udp_datagram_len(Direction::Down, opus.len()), down.len());
     }
 }

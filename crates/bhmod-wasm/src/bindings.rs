@@ -641,7 +641,7 @@ pub mod v03 {
     enum_fn!(activation_from: voice::Activation => cv::Activation { Ptt, Vad, Toggle });
     enum_fn!(transport_from: voice::Transport => cv::Transport { Auto, Inband, Udp });
     enum_fn!(state_to: cv::VoiceState => voice::VoiceState { None, Ready, Talking, SelfMuted, Deafened, AdminMuted });
-    enum_fn!(mic_to: cv::MicState => voice::MicState { Off, On, Denied });
+    enum_fn!(mic_to: cv::MicState => voice::MicState { Off, On, Denied, Unavailable });
 
     fn names<T: Copy, U>(mask: u8, all: fn(u8) -> Vec<T>, to: fn(T) -> U) -> Vec<U> {
         all(mask).into_iter().map(to).collect()

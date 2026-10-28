@@ -1,12 +1,12 @@
 //! Transport-agnostic voice chat core shared by the Blockheads Club hosts (server, PC, Android).
 //!
 //! Pure and deterministic: no audio devices, no sockets, no clocks (callers pass `now` in milliseconds). The wire
-//! format is the 0xBC `VOICE_*` ops of `docs/protocol-0xbc.md`.
+//! format is the 0xBC `VOICE_*` ops of `docs/protocol-0xbc.md` plus the voice UDP datagrams of [`udp`].
 //!
 //! - [`crypto`]: X25519 + HKDF-SHA256 session keys, ChaCha20-Poly1305 frames with a replay window, UDP auth token.
-//! - [`frame`]: plaintext frame layouts and the size budget (in-band vs. dedicated UDP).
-//! - [`udp`]: datagrams of the dedicated voice UDP port.
-//! - [`path`]: transport policy (`inband` / `udp` / `auto`) and loss measurement.
+//! - [`frame`]: plaintext frame layouts and sizes.
+//! - [`udp`]: datagrams of the dedicated voice UDP port, the only path of voice frames (maintainer decision
+//!   2026-10-28); the control ops stay on reliable 0xBC.
 //! - [`relay`]: the server relay (route table, mutes, speaker gain, caps). It never decodes audio.
 //! - [`jitter`], [`mix`], [`vad`], [`activation`], [`codec`]: client pipeline pieces.
 //! - [`server`] and [`client`] (API 0.3.4): the host-agnostic halves the server and the loaders glue in, including
@@ -21,7 +21,6 @@ pub mod frame;
 pub mod jitter;
 pub mod link;
 pub mod mix;
-pub mod path;
 pub mod relay;
 pub mod server;
 pub mod udp;

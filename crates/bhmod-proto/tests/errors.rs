@@ -156,12 +156,11 @@ fn constants() {
 
 #[test]
 fn voice_and_settings_limits() {
+    // 0x16 (in-band VOICE_FRAME) is reserved and unused: voice frames travel over the voice UDP port.
     let mut frame = vec![PACKET_TYPE, 0x16];
     frame.extend(5u64.to_le_bytes());
-    frame.extend(vec![0u8; MAX_VOICE_SEALED]);
-    assert!(Message::decode(&frame).unwrap().is_unreliable());
-    frame.push(0);
-    assert_eq!(err(&frame), Error::TooLarge("voice frame"));
+    frame.extend([0u8; 16]);
+    assert_eq!(err(&frame), Error::UnknownOp(0x16));
 
     let schema = |schema: Vec<u8>, values: Vec<u8>| {
         packet(
@@ -200,12 +199,11 @@ fn voice_state_maps_are_checked() {
 }
 
 #[test]
-fn reliability_per_op() {
+fn ops_round_trip() {
     for b in 0..=0xffu8 {
         if let Some(op) = Op::from_u8(b) {
             assert_eq!(op as u8, b);
-            assert_eq!(op.is_unreliable(), b == 0x16);
         }
     }
-    assert!(!Message::ListRequest.is_unreliable());
+    assert_eq!(Op::from_u8(0x16), None);
 }

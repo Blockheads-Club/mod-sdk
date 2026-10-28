@@ -1,11 +1,10 @@
 use std::collections::BTreeMap;
 
-use bhmod_proto::VoiceFrame;
-
 use super::*;
 use crate::codec::{CodecError, TestCodec};
 use crate::server::{ServerSink, VoiceServer};
 
+/// What the server sent: `(player, packet)` for reliable 0xBC, `("#<peer>", datagram)` for UDP.
 #[derive(Default)]
 struct Sink(Vec<(String, Vec<u8>)>);
 
@@ -13,14 +12,38 @@ impl ServerSink for Sink {
     fn reliable(&mut self, player: &str, packet: Vec<u8>) {
         self.0.push((player.into(), packet));
     }
-    fn unsequenced(&mut self, player: &str, packet: Vec<u8>) {
-        self.0.push((player.into(), packet));
+    fn udp(&mut self, peer: PeerId, datagram: Vec<u8>) {
+        self.0.push((format!("#{peer}"), datagram));
     }
-    fn udp(&mut self, _peer: PeerId, _datagram: Vec<u8>) {}
+}
+
+impl Sink {
+    /// Hands everything to the client it is for (`a` = peer 1, `b` = peer 2).
+    fn deliver(&mut self, a: &mut VoiceClient, b: &mut VoiceClient) {
+        for (to, p) in std::mem::take(&mut self.0) {
+            match to.as_str() {
+                "a" => a.on_packet(&p),
+                "#1" => a.on_udp(&p),
+                "b" => b.on_packet(&p),
+                "#2" => b.on_udp(&p),
+                other => panic!("{other}"),
+            }
+        }
+    }
 }
 
 fn feats() -> Vec<String> {
-    vec!["voice".into(), "voice-unsequenced".into()]
+    vec!["voice".into()]
+}
+
+/// Sends the client's `AUTH` to the server and its `AUTH_OK` back.
+fn auth(s: &mut VoiceServer, c: &mut VoiceClient, sink: &mut Sink, now: u64) {
+    let sent = c.poll_send(now);
+    let [Outgoing::Udp(auth)] = &sent[..] else { panic!("{sent:?}") };
+    assert!(s.receive_udp(now, auth, &|_| true, sink).is_some());
+    for (_, p) in std::mem::take(&mut sink.0) {
+        c.on_udp(&p);
+    }
 }
 
 /// A server with talker `a` (routes to `b`) and listener `b`, both connected; returns (server, a, b).
@@ -30,16 +53,21 @@ fn pair() -> (VoiceServer, VoiceClient, VoiceClient, Sink) {
         n += 1;
         Some(KeyPair::from_secret([90 + n; 32]))
     }));
+    s.set_transport(bhmod_core::voice::TransportConfig {
+        mode: bhmod_core::voice::Transport::Udp,
+        udp_port: Some(15152),
+    });
     let mut sink = Sink::default();
     let mut cs = Vec::new();
     for (name, seed) in [("a", 1u8), ("b", 2)] {
         s.join(name, &uc_alias(name), &feats());
-        let mut c = VoiceClient::new(Arc::new(TestCodec), true);
+        let mut c = VoiceClient::new(Arc::new(TestCodec));
         let key = c.start_with(KeyPair::from_secret([seed; 32]));
-        s.receive(0, name, &Message::decode(&key).unwrap(), 0, &mut sink);
+        s.receive(0, name, &Message::decode(&key).unwrap(), &mut sink);
         for (_, p) in std::mem::take(&mut sink.0) {
             c.on_packet(&p);
         }
+        auth(&mut s, &mut c, &mut sink, 0);
         cs.push(c);
     }
     let route = bhmod_core::voice::Route { listener: "b".into(), modes: 0, gain: 1.0, pan: 0.5, muffle: 0.0 };
@@ -48,13 +76,7 @@ fn pair() -> (VoiceServer, VoiceClient, VoiceClient, Sink) {
     s.tick(1, &mut sink);
     let mut b = cs.pop().unwrap();
     let mut a = cs.pop().unwrap();
-    for (to, p) in std::mem::take(&mut sink.0) {
-        if to == "a" {
-            a.on_packet(&p)
-        } else {
-            b.on_packet(&p)
-        }
-    }
+    sink.deliver(&mut a, &mut b);
     a.take_events();
     b.take_events();
     (s, a, b, sink)
@@ -68,11 +90,9 @@ fn tone() -> Vec<f32> {
 fn say(s: &mut VoiceServer, a: &mut VoiceClient, b: &mut VoiceClient, sink: &mut Sink, now: u64) -> bool {
     a.on_mic_frame(&tone());
     let sent = a.poll_send(now);
-    let Some(Outgoing::Unsequenced(p)) = sent.first() else { return false };
-    s.receive(now, "a", &Message::decode(p).unwrap(), 0, sink);
-    for (_, p) in std::mem::take(&mut sink.0) {
-        b.on_packet(&p);
-    }
+    let Some(Outgoing::Udp(p)) = sent.first() else { return false };
+    s.receive_udp(now, p, &|_| true, sink);
+    sink.deliver(a, b);
     true
 }
 
@@ -171,20 +191,23 @@ fn activation_and_allowed() {
     assert!(a.self_muted() && a.deafened());
     assert!(!a.set_activation(Act::Vad));
     assert!(!a.set_activation(Act::Toggle));
-    // denied microphone
+    // denied microphone, no device
     a.mic_state(MicState::Denied);
     assert!(!a.mic_wanted());
     a.mic_state(MicState::On);
-    assert_eq!(a.take_events()[..], [VoiceEvent::Mic(MicState::Denied), VoiceEvent::Mic(MicState::On)]);
+    a.set_mic(true);
+    a.mic_state(MicState::Unavailable);
+    assert!(!a.mic_wanted());
+    let mics = [MicState::Denied, MicState::On, MicState::Unavailable].map(VoiceEvent::Mic);
+    assert_eq!(a.take_events()[..], mics);
 }
 
 #[test]
 fn state_messages_and_prefs() {
-    let mut c = VoiceClient::new(Arc::new(TestCodec), false);
+    let mut c = VoiceClient::new(Arc::new(TestCodec));
     assert!(c.start().is_some());
     assert!(!c.connected());
-    // frames before a session, garbage, other ops: ignored
-    c.on_message(&Message::VoiceFrame(VoiceFrame { nonce: 1, sealed: vec![0; 16] }));
+    // datagrams before a session, garbage, other ops: ignored
     c.on_udp(&[1, 2]);
     c.on_packet(&[0xff]);
     c.on_message(&Message::ListRequest);
@@ -224,7 +247,7 @@ fn state_messages_and_prefs() {
     c.mute_player("p2", true);
     let text = c.prefs();
     assert_eq!(text, "master 80\nplayer p1 50 0\nplayer p2 100 1\n");
-    let mut d = VoiceClient::new(Arc::new(TestCodec), false);
+    let mut d = VoiceClient::new(Arc::new(TestCodec));
     d.load_prefs(&format!("{text}junk\nmaster x\nplayer p3 x 1\nmaster 900\n"));
     assert_eq!((d.master(), d.player_volume("p1"), d.player_muted("p2"), d.player_muted("p3")), (200, 50, true, false));
     // self mute and deafen before a session send nothing
@@ -234,7 +257,7 @@ fn state_messages_and_prefs() {
 }
 
 #[test]
-fn udp_path_and_keepalive() {
+fn auth_retry_and_keepalive() {
     let mut s = VoiceServer::with_keys(Box::new(|| Some(KeyPair::from_secret([77; 32]))));
     s.set_transport(bhmod_core::voice::TransportConfig {
         mode: bhmod_core::voice::Transport::Udp,
@@ -242,26 +265,53 @@ fn udp_path_and_keepalive() {
     });
     let mut sink = Sink::default();
     s.join("a", &uc_alias("a"), &["voice".to_string()]);
-    let mut c = VoiceClient::new(Arc::new(TestCodec), false);
+    let mut c = VoiceClient::new(Arc::new(TestCodec));
     let key = c.start_with(KeyPair::from_secret([3; 32]));
-    s.receive(0, "a", &Message::decode(&key).unwrap(), 0, &mut sink);
+    s.receive(0, "a", &Message::decode(&key).unwrap(), &mut sink);
     for (_, p) in std::mem::take(&mut sink.0) {
         c.on_packet(&p);
     }
     assert_eq!(c.udp_port(), Some(9000));
+    // AUTH every second until the server confirms it
     assert_eq!(c.poll_send(0).len(), 1);
-    assert!(c.poll_send(KEEPALIVE_MS - 1).is_empty());
-    assert_eq!(c.poll_send(KEEPALIVE_MS).len(), 1);
-    // not authenticated on UDP yet and no in-band: frames cannot go anywhere
+    assert!(c.poll_send(AUTH_RETRY_MS - 1).is_empty());
     s.set_allowed("a", 1, 1);
     s.tick(1, &mut sink);
     for (_, p) in std::mem::take(&mut sink.0) {
         c.on_packet(&p);
     }
+    // not authenticated yet: frames are not sent
     c.set_mic(true);
     c.talk(None, true);
     c.on_mic_frame(&tone());
-    assert!(c.poll_send(KEEPALIVE_MS + 1).is_empty());
+    assert!(c.poll_send(AUTH_RETRY_MS - 1).is_empty());
+    auth(&mut s, &mut c, &mut sink, AUTH_RETRY_MS);
+    // then a keepalive every 15 s
+    let t = AUTH_RETRY_MS;
+    assert!(c.poll_send(t + KEEPALIVE_MS - 1).is_empty());
+    assert_eq!(c.poll_send(t + KEEPALIVE_MS).len(), 1);
+    c.on_mic_frame(&tone());
+    assert!(matches!(&c.poll_send(t + KEEPALIVE_MS + 1)[..], [Outgoing::Udp(_)]));
+}
+
+#[test]
+fn no_voice_port_keeps_voice_off() {
+    let mut c = VoiceClient::new(Arc::new(TestCodec));
+    c.start_with(KeyPair::from_secret([4; 32]));
+    c.set_mic(true);
+    let server = KeyPair::from_secret([5; 32]).public();
+    c.on_message(&Message::VoiceKey(VoiceKey { public: server, peer: Some(1), udp_port: None }));
+    assert!(!c.connected() && !c.mic_wanted());
+    assert_eq!((c.udp_port(), c.mic()), (None, MicState::Unavailable));
+    assert_eq!(c.take_events(), vec![VoiceEvent::Mic(MicState::Unavailable)]);
+    // the mods cannot turn it on, the loader's reports are ignored, nothing is sent
+    c.set_mic(true);
+    c.mic_state(MicState::On);
+    assert!(!c.mic_wanted() && c.take_events().is_empty());
+    assert_eq!(c.mic(), MicState::Unavailable);
+    c.talk(None, true);
+    c.on_mic_frame(&tone());
+    assert!(c.poll_send(0).is_empty());
 }
 
 /// A codec whose encoder or decoder fails.
@@ -330,7 +380,7 @@ fn codec_failures() {
 
 #[test]
 fn shared_client_is_a_voice_host() {
-    let shared = SharedVoiceClient::new(VoiceClient::new(Arc::new(TestCodec), true));
+    let shared = SharedVoiceClient::new(VoiceClient::new(Arc::new(TestCodec)));
     let h: &dyn VoiceHost = &shared;
     assert_eq!(h.state("p"), Ok(State::None));
     assert_eq!(h.icons(), Ok(Icons::default()));
@@ -359,7 +409,7 @@ fn shared_client_is_a_voice_host() {
 
 #[test]
 fn poisoned_lock_is_taken_over() {
-    let shared = SharedVoiceClient::new(VoiceClient::new(Arc::new(TestCodec), true));
+    let shared = SharedVoiceClient::new(VoiceClient::new(Arc::new(TestCodec)));
     let s2 = shared.clone();
     let _ = std::thread::spawn(move || {
         let _g = s2.lock();
@@ -367,34 +417,6 @@ fn poisoned_lock_is_taken_over() {
     })
     .join();
     assert_eq!(shared.lock().master(), 100);
-}
-
-#[test]
-fn heard_speakers_feed_the_loss_of_auto() {
-    let (mut s, mut a, mut b, mut sink) = pair();
-    let route = bhmod_core::voice::Route { listener: "a".into(), modes: 0, gain: 1.0, pan: 0.0, muffle: 0.0 };
-    s.set_routes("b", &[route]);
-    s.set_allowed("b", 0x0f, 0x07);
-    s.tick(2, &mut sink);
-    for (to, p) in std::mem::take(&mut sink.0) {
-        if to == "b" {
-            b.on_packet(&p);
-        }
-    }
-    b.set_mic(true);
-    b.talk(None, true);
-    b.on_mic_frame(&tone());
-    let sent = b.poll_send(10);
-    let [Outgoing::Unsequenced(p)] = &sent[..] else { panic!("{sent:?}") };
-    s.receive(10, "b", &Message::decode(p).unwrap(), 0, &mut sink);
-    for (_, p) in std::mem::take(&mut sink.0) {
-        a.on_packet(&p);
-    }
-    assert_eq!(a.speakers.len(), 1);
-    a.set_mic(true);
-    a.talk(None, true);
-    a.on_mic_frame(&tone());
-    assert_eq!(a.poll_send(20).len(), 1);
 }
 
 /// The alias the tests give a player id.

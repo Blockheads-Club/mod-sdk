@@ -89,20 +89,23 @@ interface voice {
         max-frames-per-sec: u32,
     }
 
-    /// How voice frames travel.
+    /// How voice frames travel. Kept for 0.3.x compatibility and ignored: voice frames always use the dedicated
+    /// voice UDP port (control messages stay in the game connection). Pass `udp`.
     enum transport {
-        /// In-band first; a player moves to the UDP port when frames do not fit or the link is lossy.
+        /// Same as `udp`.
         auto,
-        /// Always inside the game connection.
+        /// Same as `udp` (in-band voice frames were retired).
         inband,
-        /// The dedicated UDP port only.
+        /// The dedicated voice UDP port.
         udp,
     }
 
-    /// Transport settings.
+    /// Transport settings: only `udp-port` matters.
     record transport-config {
+        /// Ignored (see `transport`).
         mode: transport,
-        /// The dedicated voice UDP port the host opens; `none` = no port (everything in-band).
+        /// The voice UDP port the host opens; `none` = the host's default (the server's voice port, by default the
+        /// game port + 1). The admin must open it (firewall, router); without it voice stays off.
         udp-port: option<u16>,
     }
 
@@ -114,6 +117,8 @@ interface voice {
         on,
         /// The OS refused the permission.
         denied,
+        /// No voice: the server has no voice UDP port, or the device has no microphone.
+        unavailable,
     }
 
     /// What the server allows this client (client; from `VOICE_STATE`).
@@ -160,8 +165,8 @@ interface voice {
     /// *Server.* Relay caps; the defaults are 24000 / 8 / 60.
     set-caps: func(caps: caps) -> result<_, api-error>;
 
-    /// *Server.* Transport and UDP port (default `auto`, no port). Applies to players whose voice session starts
-    /// afterwards; the host opens or closes the port.
+    /// *Server.* The voice UDP port (`mode` is ignored). Applies to players whose voice session starts afterwards;
+    /// the host opens the port. Without any call the host uses its default port.
     set-transport: func(config: transport-config) -> result<_, api-error>;
 
     /// *Server.* What `who`'s client offers: the talk modes (PTT keys / mode picker) and activations. Default: no

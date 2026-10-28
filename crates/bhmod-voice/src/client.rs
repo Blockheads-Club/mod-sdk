@@ -5,10 +5,11 @@
 //! - when `bhmod_client::Session::voice_enabled` turns true: send [`VoiceClient::start`] (through
 //!   `Session::voice_packet`);
 //! - every `Output::Voice(msg)` of the session -> [`VoiceClient::on_message`]; datagrams of the voice UDP port ->
-//!   [`VoiceClient::on_udp`];
+//!   [`VoiceClient::on_udp`]. Voice frames travel only over that port ([`VoiceClient::udp_port`], from the server's
+//!   `VOICE_KEY`); a server without one leaves voice off (the mods see [`MicState::Unavailable`]);
 //! - every 20 ms of microphone (48 kHz mono, 960 samples) -> [`VoiceClient::on_mic_frame`] while
 //!   [`VoiceClient::mic_wanted`] (report the device with [`VoiceClient::mic_state`]);
-//! - [`VoiceClient::poll_send`] -> reliable 0xBC / unsequenced ENet channel 0 / UDP datagrams;
+//! - [`VoiceClient::poll_send`] -> reliable 0xBC packets / UDP datagrams (`AUTH` first, then frames);
 //! - every 20 ms of playback -> [`VoiceClient::mix`] (interleaved stereo, 1920 samples);
 //! - [`VoiceClient::take_events`] -> `ModHost::voice_event`; [`SharedVoiceClient`] as `GameBridge::voice`;
 //! - [`VoiceClient::prefs`] / [`VoiceClient::load_prefs`] for the device file of volumes and local mutes.
@@ -29,9 +30,8 @@ use crate::frame::ServerFrame;
 use crate::jitter::{JitterBuffer, Playout, DEFAULT_MAX, DEFAULT_MAX_CONCEAL, DEFAULT_TARGET};
 use crate::link::ClientLink;
 use crate::mix::{Mixer, Source, MAX_VOLUME};
-use crate::path::{Path, TransportMode};
 use crate::server::mode_of;
-use crate::udp::KEEPALIVE_MS;
+use crate::udp::{AUTH_RETRY_MS, KEEPALIVE_MS};
 use crate::vad::{Vad, VadConfig};
 use crate::{PeerId, VoiceMode, FRAME_SAMPLES, SAMPLE_RATE};
 
@@ -40,9 +40,7 @@ use crate::{PeerId, VoiceMode, FRAME_SAMPLES, SAMPLE_RATE};
 pub enum Outgoing {
     /// A reliable 0xBC packet (`VOICE_KEY`, `VOICE_CTRL`).
     Reliable(Vec<u8>),
-    /// An in-band `VOICE_FRAME`: unreliable + unsequenced on ENet channel 0.
-    Unsequenced(Vec<u8>),
-    /// A datagram for the server's voice UDP port.
+    /// A datagram for the server's voice UDP port (`AUTH` or a frame).
     Udp(Vec<u8>),
 }
 
@@ -70,10 +68,11 @@ fn voice_mode(m: Mode) -> VoiceMode {
 /// The client's voice state.
 pub struct VoiceClient {
     codec: Arc<dyn Codec>,
-    unsequenced: bool,
     keypair: Option<KeyPair>,
     link: Option<ClientLink>,
     udp_port: Option<u16>,
+    /// The server answered `VOICE_KEY` without a voice UDP port: voice is off.
+    no_port: bool,
     last_auth: Option<u64>,
     encoder: Option<Box<dyn Encoder>>,
     bitrate: u32,
@@ -99,15 +98,15 @@ pub struct VoiceClient {
 }
 
 impl VoiceClient {
-    /// A client. `unsequenced`: this loader can send in-band `VOICE_FRAME`s (it listed `voice-unsequenced`).
-    pub fn new(codec: Arc<dyn Codec>, unsequenced: bool) -> VoiceClient {
+    /// A client.
+    pub fn new(codec: Arc<dyn Codec>) -> VoiceClient {
         let activation = Activation::new(Allowed::default(), 0, Kind::Ptt, VoiceMode::Proximity);
         VoiceClient {
             codec,
-            unsequenced,
             keypair: None,
             link: None,
             udp_port: None,
+            no_port: false,
             last_auth: None,
             encoder: None,
             bitrate: 24_000,
@@ -145,7 +144,7 @@ impl VoiceClient {
         pkt
     }
 
-    /// True once the server answered `VOICE_KEY`.
+    /// True once the server answered `VOICE_KEY` with a voice UDP port.
     pub fn connected(&self) -> bool {
         self.link.is_some()
     }
@@ -162,12 +161,6 @@ impl VoiceClient {
         match msg {
             Message::VoiceKey(k) => self.on_key(k),
             Message::VoiceState(s) => self.on_state(s),
-            Message::VoiceFrame(f) => {
-                let Some(link) = self.link.as_mut() else { return };
-                if let Ok(frame) = link.open(f.nonce, &f.sealed) {
-                    self.heard(frame);
-                }
-            }
             _ => {}
         }
     }
@@ -175,11 +168,19 @@ impl VoiceClient {
     fn on_key(&mut self, k: &VoiceKey) {
         let (Some(kp), Some(peer)) = (self.keypair.as_ref(), k.peer) else { return };
         let Ok(session) = kp.session(Role::Client, &k.public) else { return };
-        let mut link = ClientLink::new(session, peer, TransportMode::Auto, k.udp_port);
-        link.selector_mut().inband_capable = self.unsequenced;
-        self.link = Some(link);
         self.udp_port = k.udp_port;
         self.last_auth = None;
+        self.no_port = k.udp_port.is_none();
+        if self.no_port {
+            // No voice port on this server: voice stays off.
+            self.link = None;
+            self.mic_wanted = false;
+            self.transmitting = None;
+            self.mic = MicState::Unavailable;
+            self.events.push(VoiceEvent::Mic(MicState::Unavailable));
+            return;
+        }
+        self.link = Some(ClientLink::new(session, peer));
         self.encoder = self.codec.encoder(self.bitrate).ok();
     }
 
@@ -282,19 +283,17 @@ impl VoiceClient {
         if enc.encode(pcm, &mut self.opus).is_err() {
             return;
         }
-        let loss = self.speakers.values().map(|s| s.jitter.loss()).fold(0.0, f32::max);
-        if let Some((path, pkt)) = link.send(mode, &self.opus, loss) {
-            self.out.push(match path {
-                Path::InBand => Outgoing::Unsequenced(pkt),
-                Path::Udp => Outgoing::Udp(pkt),
-            });
+        if let Some(datagram) = link.send(mode, &self.opus) {
+            self.out.push(Outgoing::Udp(datagram));
         }
     }
 
-    /// The packets to send now (`now` in ms, for the UDP `AUTH` keepalive).
+    /// The packets to send now (`now` in ms, for the UDP `AUTH`: every [`AUTH_RETRY_MS`] until the server confirms
+    /// it, then every [`KEEPALIVE_MS`]).
     pub fn poll_send(&mut self, now: u64) -> Vec<Outgoing> {
-        if let (Some(link), Some(_)) = (self.link.as_ref(), self.udp_port) {
-            if self.last_auth.is_none_or(|t| now >= t + KEEPALIVE_MS) {
+        if let Some(link) = self.link.as_ref() {
+            let every = if link.authed() { KEEPALIVE_MS } else { AUTH_RETRY_MS };
+            if self.last_auth.is_none_or(|t| now >= t + every) {
                 self.last_auth = Some(now);
                 self.out.push(Outgoing::Udp(link.auth_datagram()));
             }
@@ -302,7 +301,7 @@ impl VoiceClient {
         std::mem::take(&mut self.out)
     }
 
-    /// The server's voice UDP port, when it announced one (send [`Outgoing::Udp`] there).
+    /// The server's voice UDP port, when it announced one (send [`Outgoing::Udp`] there; `None`: voice is off).
     pub fn udp_port(&self) -> Option<u16> {
         self.udp_port
     }
@@ -352,9 +351,13 @@ impl VoiceClient {
         self.mic_wanted
     }
 
-    /// The loader reports the microphone device (`voice:mic` to the mods). `denied` also turns the wish off.
+    /// The loader reports the microphone device (`voice:mic` to the mods). `denied` and `unavailable` also turn the
+    /// wish off. Ignored while the server has no voice port (the state stays `unavailable`).
     pub fn mic_state(&mut self, state: MicState) {
-        if state == MicState::Denied {
+        if self.no_port {
+            return;
+        }
+        if matches!(state, MicState::Denied | MicState::Unavailable) {
             self.mic_wanted = false;
         }
         self.mic = state;
@@ -483,9 +486,9 @@ impl VoiceClient {
         self.transmitting = self.activation.handle(input);
     }
 
-    /// `voice.set-mic`.
+    /// `voice.set-mic` (no effect while the server has no voice port).
     pub fn set_mic(&mut self, on: bool) {
-        self.mic_wanted = on;
+        self.mic_wanted = on && !self.no_port;
     }
 
     fn ctrl(&mut self) {
