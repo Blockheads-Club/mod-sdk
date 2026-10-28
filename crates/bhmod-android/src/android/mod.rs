@@ -374,6 +374,7 @@ extern "C" fn hook_draw_frame(this: Id, cmd: Sel) {
             }
             l.on_frame();
             items::sync();
+            lifecycle::on_frame(world);
         });
         // After the loader ran: mods may have just loaded or unloaded their weapon cosmetics.
         weapons::sync();

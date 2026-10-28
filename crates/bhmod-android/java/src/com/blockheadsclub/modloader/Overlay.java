@@ -279,6 +279,13 @@ final class Overlay {
                 super.onMeasure(wSpec, hSpec);
             }
 
+            /** A touch here never reaches the game: tell it the player is active (its idle PAUSE menu stays away). */
+            @Override public boolean dispatchTouchEvent(android.view.MotionEvent e) {
+                int act = e.getActionMasked();
+                if (act == android.view.MotionEvent.ACTION_DOWN || act == android.view.MotionEvent.ACTION_UP) touched();
+                return super.dispatchTouchEvent(e);
+            }
+
             @Override public boolean dispatchKeyEvent(KeyEvent e) {
                 if (e.getKeyCode() == KeyEvent.KEYCODE_BACK) {
                     if (e.getAction() == KeyEvent.ACTION_UP) {
@@ -318,6 +325,11 @@ final class Overlay {
         } catch (RuntimeException ignored) {
         }
         d.requestFocus();
+    }
+
+    /** The player touched a loader window (counts as activity for the game's idle pause). */
+    static void touched() {
+        Native.ok(new Runnable() { public void run() { Native.touched(); } });
     }
 
     static void dismiss() {

@@ -192,6 +192,8 @@ final class VoiceUi {
             Activity a = Overlay.activity();
             if (a == null) return false;
             int slop = ViewConfiguration.get(a).getScaledTouchSlop() * 2;
+            int act = e.getActionMasked();
+            if (act == MotionEvent.ACTION_DOWN || act == MotionEvent.ACTION_UP) Overlay.touched();
             switch (e.getActionMasked()) {
                 case MotionEvent.ACTION_DOWN:
                     downX = e.getRawX();
