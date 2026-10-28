@@ -542,11 +542,13 @@ impl<P: Platform + 'static> Loader<P> {
                 }
                 let id =
                     if self.server.is_empty() { format!("local:{name}") } else { format!("server:{}", self.server) };
+                // Voice first: mods apply their client voice settings (master volume, VAD, default mode) in
+                // `on-enable`, which fails as `unsupported` while there is no voice client yet.
+                self.start_voice();
                 if let Some(h) = self.host.as_mut() {
                     h.enable(name, &id);
                 }
                 self.flush_outbox();
-                self.start_voice();
                 let n =
                     self.host.as_ref().map_or(0, |h| h.mods().iter().filter(|m| m.state == ModState::Enabled).count());
                 let settings = self.settings_mods();

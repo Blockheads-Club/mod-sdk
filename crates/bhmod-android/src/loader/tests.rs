@@ -760,6 +760,7 @@ const VOICE_CLIENT: &str = r#"
 local mod = {}
 function mod.on_enable()
     bh.input.bind("talk", "v")
+    bh.voice.set_default_mode("channel")
     bh.ui.set_button("ptt", { icon = "mic", label = "Talk" })
     bh.events.on_custom("vtest:ui-button", function(ev)
         bh.log.info("button " .. ev.payload.action)
@@ -848,6 +849,9 @@ fn voice_flows_through_the_pipeline_and_the_mods() {
     // VOICE_KEY went out reliably, the prefs were loaded, the button was drawn and the mod's settings can open
     assert!(r.p.sent.borrow().iter().any(|p| p == &[0xBC, 0x15]));
     assert_eq!(link.prefs(), "master=90");
+    // the voice client existed before `on-enable`, so the mod's voice settings applied
+    assert_eq!(link.default_mode.get(), Some(Mode::Channel));
+    assert!(!r.p.logged("unsupported"), "{:?}", r.p.logs.borrow());
     assert_eq!(ui_of(&r, "btn-set")[0]["icon"], "mic");
     assert_eq!(ui_of(&r, "world")[0]["settings"][0], "vtest");
     // the player presses the button: the mod opens the mic (first time: the system dialog), talks
