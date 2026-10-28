@@ -167,6 +167,28 @@ pub struct KeyRow {
     pub is_default: bool,
 }
 
+/// One player of the voice volume list.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PlayerVolume {
+    /// The player id.
+    pub id: String,
+    /// The alias.
+    pub name: String,
+    /// 0-200 %.
+    pub volume: u16,
+    /// Locally muted.
+    pub muted: bool,
+}
+
+/// The voice section of the settings screen (mods holding `voice`): the master volume and every speaker's.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VoiceSection {
+    /// 0-200 %.
+    pub master: u16,
+    /// Players with a voice session.
+    pub players: Vec<PlayerVolume>,
+}
+
 /// A settings form: `({"fields": [...]}, {key: value})`.
 pub type Form = (Value, Value);
 
@@ -180,7 +202,7 @@ pub fn settings_screen(
     mod_id: &str,
     client: Option<&Form>,
     keys: &[KeyRow],
-    master: Option<u16>,
+    voice: Option<&VoiceSection>,
     server: Option<&Form>,
 ) -> String {
     let keys: Vec<Value> = keys
@@ -190,7 +212,10 @@ pub fn settings_screen(
     json!({
         "t": "settings", "mod": mod_id, "name": mod_id,
         "client": client.map(form), "server": server.map(form), "keys": keys,
-        "voice": master.map(|m| json!({"master": m})),
+        "voice": voice.map(|v| json!({
+            "master": v.master,
+            "players": v.players.iter().map(|p| json!({"id": p.id, "name": p.name, "volume": p.volume, "muted": p.muted})).collect::<Vec<_>>(),
+        })),
     })
     .to_string()
 }
@@ -306,7 +331,10 @@ mod tests {
         assert_eq!(v(mic_denied())["t"], "voice-denied");
         let form: Form = (json!({"fields": [{"key": "a"}]}), json!({"a": 1}));
         let keys = [KeyRow { action: "talk".into(), key: None, default_key: "v".into(), is_default: false }];
-        let s = v(settings_screen("voice", Some(&form), &keys, Some(120), None));
+        let pv = PlayerVolume { id: "p1".into(), name: "ALICE".into(), volume: 50, muted: true };
+        let vs = VoiceSection { master: 120, players: vec![pv] };
+        let s = v(settings_screen("voice", Some(&form), &keys, Some(&vs), None));
+        assert_eq!(s["voice"]["players"][0]["name"], "ALICE");
         assert_eq!(s["client"]["fields"][0]["key"], "a");
         assert_eq!(s["client"]["values"]["a"], 1);
         assert!(s["server"].is_null());

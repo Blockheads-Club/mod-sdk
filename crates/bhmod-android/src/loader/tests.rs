@@ -775,6 +775,7 @@ function mod.on_enable()
         bh.log.info("key " .. ev.payload.action .. " " .. tostring(ev.payload.pressed))
     end)
     bh.events.on_custom("voice:mic", function(ev) bh.log.info("mic " .. ev.payload.state) end)
+    bh.events.on_custom("voice:mode", function(ev) bh.log.info("mode " .. ev.payload.mode) end)
     bh.events.on_custom("voice:state", function(ev)
         local p = bh.players.get(ev.payload.player)
         if p then
@@ -940,6 +941,8 @@ fn voice_flows_through_the_pipeline_and_the_mods() {
     r.l.on_ui(UiEvent::VoiceMode("global".into()));
     r.l.on_ui(UiEvent::VoiceMode("shout".into()));
     assert_eq!(link.default_mode.get(), Some(Mode::Global));
+    r.l.on_frame();
+    assert!(r.p.logged("mode global"), "the picker fires voice:mode");
     r.l.on_ui(UiEvent::Ptt(false));
     assert_eq!(link.talks.borrow().last(), Some(&(None, false)));
     // a dropped button is remembered on the device
@@ -981,6 +984,7 @@ fn the_settings_screen_sets_client_keys_voice_and_server_values() {
     assert_eq!(screen["client"]["fields"][0]["key"], "ring");
     assert_eq!(screen["keys"][0]["key"], "v");
     assert_eq!(screen["voice"]["master"], 0);
+    assert!(screen["voice"]["players"].as_array().unwrap().is_empty());
     assert!(screen["server"].is_null());
     // client scope: stored on the device, the mod hears about it
     let set = |r: &mut Rig, scope: &str, key: &str, json: &str| {
@@ -1012,6 +1016,15 @@ fn the_settings_screen_sets_client_keys_voice_and_server_values() {
     assert_eq!(link.master.get(), 150);
     set(&mut r, "voice", "master", "250");
     set(&mut r, "voice", "master", "\"x\"");
+    assert_eq!(last_result(&r)["ok"], false);
+    link.speaking.borrow_mut().extend(["p1".to_string(), "p2".to_string()]);
+    link.names.borrow_mut().push(("p1".into(), "ALICE".into()));
+    set(&mut r, "voice", "player:p1", "40");
+    set(&mut r, "voice", "mute:p2", "true");
+    let players = ui_of(&r, "settings").last().unwrap()["voice"]["players"].clone();
+    assert_eq!((players[0]["name"].as_str(), players[0]["volume"].as_u64()), (Some("ALICE"), Some(40)));
+    assert_eq!((players[1]["name"].as_str(), players[1]["muted"].as_bool()), (Some("p2"), Some(true)));
+    set(&mut r, "voice", "mute:p2", "3");
     assert_eq!(last_result(&r)["ok"], false);
     set(&mut r, "other", "x", "1");
     assert_eq!(last_result(&r)["message"], "unknown section");

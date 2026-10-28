@@ -190,7 +190,10 @@ pub(crate) mod fake {
             self.icons.get().ok_or(ApiError::Unsupported)
         }
         fn set_default_mode(&self, mode: Mode) -> Result<(), ApiError> {
-            self.default_mode.set(Some(mode));
+            // Like the real client: a change fires `voice:mode`.
+            if self.default_mode.replace(Some(mode)) != Some(mode) {
+                self.events.borrow_mut().push(VoiceEvent::Mode(mode));
+            }
             Ok(())
         }
         fn set_activation(&self, _a: Activation) -> Result<(), ApiError> {
@@ -309,6 +312,8 @@ mod tests {
         assert_eq!(slot.state("p"), Ok(VoiceState::Ready));
         assert_eq!(slot.icons(), Err(ApiError::Unsupported));
         slot.set_default_mode(Mode::Global).unwrap();
+        slot.set_default_mode(Mode::Global).unwrap();
+        assert_eq!(link.take_events(), vec![VoiceEvent::Mode(Mode::Global)]);
         slot.set_activation(Activation::Vad).unwrap();
         slot.talk(None, true).unwrap();
         slot.set_mic(true).unwrap();

@@ -257,6 +257,7 @@ final class Strings {
         p("settings_none", "This mod has no settings.", "Bu modun ayarı yok.", "У этого мода нет настроек.", "Бұл модтың баптауы жоқ.");
         p("settings_saved", "Saved", "Kaydedildi", "Сохранено", "Сақталды");
         p("settings_restart", "Applies after a restart", "Yeniden başlatınca geçerli", "Применится после перезапуска", "Қайта іске қосқанда қолданылады");
+        p("settings_mute", "Mute {name}", "{name} sessiz", "Заглушить {name}", "{name} дыбысын өшіру");
         p("key_none", "None", "Yok", "Нет", "Жоқ");
         p("key_press", "Press a key…", "Bir tuşa bas…", "Нажми клавишу…", "Пернені бас…");
         p("key_default", "Default", "Varsayılan", "По умолчанию", "Әдепкі");

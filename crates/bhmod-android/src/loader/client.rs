@@ -243,10 +243,22 @@ impl<P: Platform + 'static> Loader<P> {
                 default_key,
             })
             .collect();
-        let master = if self.voice_mods.contains(mod_id) { self.slot.master().ok() } else { None };
+        let voice = self.slot.get().filter(|_| self.voice_mods.contains(mod_id)).map(|l| ui::VoiceSection {
+            master: l.master().unwrap_or(100),
+            players: l
+                .speakers()
+                .into_iter()
+                .map(|id| ui::PlayerVolume {
+                    name: l.alias(&id).unwrap_or_else(|| id.clone()),
+                    volume: l.player_volume(&id).unwrap_or(100),
+                    muted: l.player_muted(&id).unwrap_or(false),
+                    id,
+                })
+                .collect(),
+        });
         let server = self.server_forms.get(mod_id);
         self.settings_open = Some(mod_id.to_string());
-        self.p.ui(ui::settings_screen(mod_id, client.as_ref(), &keys, master, server));
+        self.p.ui(ui::settings_screen(mod_id, client.as_ref(), &keys, voice.as_ref(), server));
     }
 
     fn setting_failed(&self, mod_id: &str, message: &str) {
@@ -288,23 +300,31 @@ impl<P: Platform + 'static> Loader<P> {
                     Err(e) => self.setting_failed(mod_id, &e.to_string()),
                 }
             }
-            "voice" => {
-                let r = value
-                    .as_u64()
-                    .and_then(|n| u16::try_from(n).ok())
-                    .ok_or(ApiError::InvalidArgument("volume must be 0 to 200".into()));
-                match r.and_then(|n| {
-                    if n > bhmod_core::voice::MAX_PERCENT {
-                        return Err(ApiError::InvalidArgument("volume must be 0 to 200".into()));
-                    }
-                    self.slot.set_master(n)
-                }) {
-                    Ok(()) => self.open_settings(mod_id),
-                    Err(e) => self.setting_failed(mod_id, &e.to_string()),
-                }
-            }
+            "voice" => match self.set_voice(key, &value) {
+                Ok(()) => self.open_settings(mod_id),
+                Err(e) => self.setting_failed(mod_id, &e.to_string()),
+            },
             _ => self.setting_failed(mod_id, "unknown section"),
         }
+    }
+
+    /// A voice volume from the settings screen: `master`, `player:<id>` (0-200) or `mute:<id>` (bool).
+    fn set_voice(&self, key: &str, value: &Value) -> Result<(), ApiError> {
+        let percent = || {
+            value
+                .as_u64()
+                .filter(|n| *n <= u64::from(bhmod_core::voice::MAX_PERCENT))
+                .map(|n| n as u16)
+                .ok_or(ApiError::InvalidArgument("volume must be 0 to 200".into()))
+        };
+        if let Some(p) = key.strip_prefix("player:") {
+            return self.slot.set_player_volume(p, percent()?);
+        }
+        if let Some(p) = key.strip_prefix("mute:") {
+            let on = value.as_bool().ok_or(ApiError::InvalidArgument("mute is true or false".into()))?;
+            return self.slot.mute_player(p, on);
+        }
+        self.slot.set_master(percent()?)
     }
 
     /// `SETTINGS_SCHEMA`: the server's settings of a mod (this player is an admin).
