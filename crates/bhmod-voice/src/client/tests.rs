@@ -159,6 +159,30 @@ fn talk_hear_and_mix() {
 }
 
 #[test]
+fn a_filling_jitter_buffer_does_not_split_a_spurt() {
+    let (mut s, mut a, mut b, mut sink) = pair();
+    a.set_mic(true);
+    a.talk(None, true);
+    let mut out = vec![0.0; 2 * FRAME_SAMPLES];
+    // b mixes after every frame: the first mixes find the buffer still filling (idle, not empty)
+    for t in 0..8 {
+        assert!(say(&mut s, &mut a, &mut b, &mut sink, 20 + t * 20));
+        b.mix(&mut out);
+    }
+    for _ in 0..20 {
+        b.mix(&mut out);
+    }
+    assert_eq!(
+        b.take_events(),
+        vec![
+            VoiceEvent::TalkStart { player: "a".into(), mode: Mode::Proximity },
+            VoiceEvent::TalkStop { player: "a".into(), mode: Mode::Proximity },
+        ],
+        "one start and one stop per spurt"
+    );
+}
+
+#[test]
 fn activation_and_allowed() {
     let (_s, mut a, _b, _) = pair();
     a.set_mic(true);

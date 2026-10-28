@@ -320,7 +320,9 @@ impl VoiceClient {
                 }
                 Playout::Lost => s.decoder.decode(None, &mut s.pcm).is_ok() && s.last.is_some(),
                 Playout::Idle => {
-                    if let Some(mode) = s.talking.take().filter(|_| !s.jitter.playing() && s.jitter.is_empty()) {
+                    // Idle while the buffer is still filling is not the end of a spurt: keep `talking` then.
+                    if s.talking.is_some() && !s.jitter.playing() && s.jitter.is_empty() {
+                        let mode = s.talking.take().expect("checked above");
                         self.events.push(VoiceEvent::TalkStop { player: s.player.clone(), mode });
                     }
                     false
