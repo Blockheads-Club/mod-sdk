@@ -61,7 +61,9 @@ pub use wit::types::{ApiError, Pos, Priority, Side};
 pub mod prelude {
     pub use crate::commands::{self, Command, Reply, Sender};
     pub use crate::events::{self, EventCtx, EventKind};
-    pub use crate::{channels, content, host, input, log, players, scheduler, services, settings, storage, terrain, ui, voice};
+    pub use crate::{
+        channels, content, host, input, log, players, scheduler, services, settings, storage, terrain, ui, voice,
+    };
     pub use crate::{ApiError, Mod, Player, Priority, Role, Side};
 }
 
@@ -393,9 +395,9 @@ pub mod ui {
     use crate::{events, ApiError};
 
     pub use crate::wit::ui::{
-        clear_overhead, close_dialog, has_touch, notice, open_settings, remove_button, remove_widget, set_button, set_overhead,
-        set_widget, show_dialog, toast, Button, ButtonKind, Dialog, DialogButton, Field, NoticeLevel, OverheadIcon, Slot,
-        Widget, WidgetKind,
+        clear_overhead, close_dialog, has_touch, notice, open_settings, remove_button, remove_widget, set_button,
+        set_overhead, set_widget, show_dialog, toast, Button, ButtonKind, Dialog, DialogButton, Field, NoticeLevel,
+        OverheadIcon, Slot, Widget, WidgetKind,
     };
 
     /// The `button` of an answer when the dialog went away without one (back, leaving the world).
