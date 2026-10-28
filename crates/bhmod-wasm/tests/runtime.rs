@@ -717,3 +717,34 @@ fn newer_than_0_2_components(old_wasm: Vec<u8>) {
     h.disable_all();
     assert!(b.has_log("old disabled"));
 }
+
+#[test]
+fn api_0_3_4_imports() {
+    let (_t, b, mut h) = one("vox", "[permissions]\nvoice = true\n", "[vox]\ngrant = [\"voice\"]\n");
+    b.has_voice.set(true);
+    b.solid.borrow_mut().push((2, 0));
+    b.join("p1", "ALICE", Role::Admin);
+    b.join("p2", "BOB", Role::Player);
+    h.enable("World", "wid");
+    let log = b.log_text();
+    assert_eq!(h.mods()[0].state, ModState::Enabled, "{log}");
+    for line in [
+        "state = Ok(VoiceState::SelfMuted)",
+        "icons = Ok(IconVisibility { speaking: true, no-voice: false",
+        "routes = Ok(())",
+        "unmute = Ok(true)",
+        "allowed = Ok(())",
+        "talk = Err(ApiError::Unsupported)",
+        "master = (Err(ApiError::Unsupported), Err(ApiError::Unsupported))",
+        "solid = Ok(1)",
+        "bind = (Err(ApiError::Unsupported), false, None)",
+        "overhead = (Ok(()), true)",
+        "button = (Ok(()), true)",
+        "settings-screen = Ok(())",
+    ] {
+        assert!(log.contains(line), "missing {line:?} in\n{log}");
+    }
+    let calls = b.voice.take();
+    assert!(calls.contains(&"allowed p1 6 2".to_string()), "{calls:?}");
+    assert!(calls.iter().any(|c| c.starts_with("routes p1 [Route { listener: \"p2\", modes: 9")), "{calls:?}");
+}

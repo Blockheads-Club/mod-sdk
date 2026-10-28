@@ -15,6 +15,7 @@ fn perms(o: &Offer) -> Value {
         "players": p.players,
         "netHttp": p.net_http,
         "channels": p.channels,
+        "voice": p.voice,
         "native": p.native,
     })
 }

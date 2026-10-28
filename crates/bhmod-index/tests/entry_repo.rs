@@ -31,12 +31,21 @@ fn schema_errors_for_index() {
 #[test]
 fn permission_labels_cover_everything() {
     let p: Permissions = serde_json::from_value(json!({
-        "world": "write", "players": ["kick", "chat"], "net-http": ["b.com", "a.com"], "channels": true, "native": true
+        "world": "write", "players": ["kick", "chat"], "net-http": ["b.com", "a.com"], "channels": true, "voice": true, "native": true
     }))
     .unwrap();
     assert_eq!(
         permission_labels(&p),
-        ["world:write", "players:chat", "players:kick", "net-http:a.com", "net-http:b.com", "channels", "native"]
+        [
+            "world:write",
+            "players:chat",
+            "players:kick",
+            "net-http:a.com",
+            "net-http:b.com",
+            "channels",
+            "voice",
+            "native"
+        ]
     );
     let p: Permissions = serde_json::from_value(json!({ "world": "read" })).unwrap();
     assert_eq!(permission_labels(&p), ["world:read"]);
