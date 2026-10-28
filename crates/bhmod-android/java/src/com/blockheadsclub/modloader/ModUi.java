@@ -215,6 +215,23 @@ final class ModUi {
             field.setHint(f.optString("placeholder"));
             field.setFilters(new InputFilter[] {new InputFilter.LengthFilter(Math.max(1, f.optInt("max", 200)))});
             field.setText(f.optString("initial"));
+            // The dialog does not take the window focus (the game would pause); typing needs it.
+            field.setOnTouchListener(new View.OnTouchListener() {
+                public boolean onTouch(final View v, android.view.MotionEvent e) {
+                    if (e.getActionMasked() == android.view.MotionEvent.ACTION_DOWN) {
+                        Overlay.focusDialog();
+                        v.post(new Runnable() {
+                            public void run() {
+                                v.requestFocus();
+                                android.view.inputmethod.InputMethodManager im = (android.view.inputmethod.InputMethodManager)
+                                    v.getContext().getSystemService(android.content.Context.INPUT_METHOD_SERVICE);
+                                if (im != null) im.showSoftInput(v, 0);
+                            }
+                        });
+                    }
+                    return false;
+                }
+            });
             body.addView(field, Kit.margins(Kit.fill(), 0, Kit.u(a, 3), 0, 0));
         } else {
             field = null;
@@ -246,7 +263,7 @@ final class ModUi {
         View panel = Overlay.frame(c.optString("title"), null, body, footer);
         dialogId = id;
         dialogMod = mod;
-        Overlay.show(Overlay.onBack(panel, new Runnable() { public void run() { closeDialog(true); } }));
+        Overlay.show(Overlay.onBack(panel, new Runnable() { public void run() { closeDialog(true); } }), false);
     }
 
     private static void answer(final int id, final int button, final String text) {

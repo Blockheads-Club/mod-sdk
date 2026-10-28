@@ -95,8 +95,9 @@ x wrapping the short way round the world, unloaded tiles not solid, cut after 25
   fires the custom events `player:sleep`, `player:wake` and `player:respawn` with `{player}` to every subscriber.
 - `players.local-player() -> option<player>` (client; `local` is a Luau keyword), `players.has-mod(who, mod-id) -> bool`
   (server: the player's client runs that mod; tells vanilla from "modded, voice not started").
-- `ui.has-touch() -> bool`; `<mod-id>:ui-pick {player}` to every client mod when the player taps or clicks a
-  blockhead (per-player volume by clicking someone); dialogs take up to **four** buttons.
+- `ui.has-touch() -> bool`; `<mod-id>:ui-pick {player}` to every client mod when the player **middle-clicks** a blockhead
+  (PC; the right button pans the camera) or **long-presses** one (Android: held 500 ms without moving; a plain tap stays the game's) — per-player volume by
+  picking someone; dialogs take up to **four** buttons.
 
 ### `input` (client, no permission)
 

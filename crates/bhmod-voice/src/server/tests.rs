@@ -344,3 +344,27 @@ fn random_keys_and_a_poisoned_lock() {
 fn uc_alias(p: &str) -> String {
     p.to_uppercase()
 }
+
+#[test]
+fn a_join_for_a_player_still_here_keeps_the_allowance_and_speaker_id() {
+    let mut s = server();
+    let mut sink = Sink::default();
+    let mut a = connect(&mut s, &mut sink, "a", 1);
+    s.set_allowed("a", 0b0101, 0b001);
+    s.tick(1, &mut sink);
+    for (_, _, b) in sink.take() {
+        a.on_packet(&b);
+    }
+    assert_eq!(a.allowed().modes, 0b0101);
+    let peer = s.peer_of("a");
+    // the reconnect's join arrives before the old session's quit (`connect` joins once more)
+    s.join("a", "A", &features());
+    assert_eq!(s.peer_of("a"), peer, "the speaker id stays");
+    let mut b = connect(&mut s, &mut sink, "a", 3);
+    assert_eq!(s.peer_of("a"), peer);
+    s.tick(2, &mut sink);
+    for (_, _, p) in sink.take() {
+        b.on_packet(&p);
+    }
+    assert_eq!(b.allowed().modes, 0b0101, "the new session is told the allowance the mod set");
+}

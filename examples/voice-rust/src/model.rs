@@ -242,9 +242,44 @@ pub enum Icon {
     AdminMute,
 }
 
+/// The players that had a voice session at the last routing pass. A player whose session (re)starts — first
+/// `VOICE_KEY`, or a reconnect with the same id — must get everything the mod sends per player again (allowed modes,
+/// routes, mute, gain): the host may have started them from scratch.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct VoiceSeen(std::collections::BTreeSet<String>);
+
+impl VoiceSeen {
+    /// Records whether `id` has a voice session now; true when it just started (the per-player caches are stale).
+    pub fn update(&mut self, id: &str, voice: bool) -> bool {
+        if voice {
+            self.0.insert(id.to_string())
+        } else {
+            self.0.remove(id);
+            false
+        }
+    }
+
+    /// The player joined or left: the next session counts as new.
+    pub fn forget(&mut self, id: &str) {
+        self.0.remove(id);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_voice_session_that_starts_again_is_new() {
+        let mut v = VoiceSeen::default();
+        assert!(!v.update("a", false), "no session yet");
+        assert!(v.update("a", true), "the session started");
+        assert!(!v.update("a", true), "still the same session");
+        assert!(!v.update("a", false), "the session ended");
+        assert!(v.update("a", true), "a new session");
+        v.forget("a");
+        assert!(v.update("a", true), "rejoined with the same id: new again");
+    }
 
     #[test]
     fn modes() {

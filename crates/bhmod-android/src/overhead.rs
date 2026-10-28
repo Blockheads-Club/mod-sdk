@@ -16,8 +16,9 @@ use serde_json::{json, Value};
 /// Icon names in the order a player's icons are shown (most important first).
 pub const ICONS: [&str; 5] = ["admin-mute", "deafen", "self-mute", "speaking", "no-voice"];
 
-/// How far above `renderPos` the icon sits, in tiles.
-pub const HEAD_TILES: f32 = 2.4;
+/// How far above `renderPos` the icon sits, in tiles: above the name labels the game draws over a blockhead
+/// (2.4 put it on the player's name on the emulator).
+pub const HEAD_TILES: f32 = 3.2;
 
 /// A blockhead not updated for this long is gone (milliseconds).
 pub const STALE_MS: u64 = 1000;

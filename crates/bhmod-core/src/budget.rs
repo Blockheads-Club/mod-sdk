@@ -3,14 +3,18 @@
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 
-/// Budget settings. Defaults follow the design: 5 ms soft / 25 ms hard per handler, 20 ms of mod time per world
-/// step, 3 strikes within 60 s disable a mod, 32 MiB of guest memory.
+/// Budget settings. Defaults follow the design: 5 ms soft / 25 ms hard per handler, 1 s hard for `on-enable` and a
+/// mod's first call, 20 ms of mod time per world step, 3 strikes within 60 s disable a mod, 32 MiB of guest memory.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Budgets {
     /// A call longer than this is logged as a warning.
     pub soft: Duration,
     /// A call is stopped at this point (a strike).
     pub hard: Duration,
+    /// The hard limit of `on-enable` and of the first call into a freshly loaded mod: a cold start (lazy
+    /// compilation, first allocations, an interpreter on a slow 32-bit phone) can take far longer than an event.
+    /// Never below `hard`.
+    pub cold: Duration,
     /// Mod time per world step before scheduled tasks are postponed to the next step.
     pub step: Duration,
     /// Strikes that disable a mod...
@@ -26,10 +30,22 @@ impl Default for Budgets {
         Budgets {
             soft: Duration::from_millis(5),
             hard: Duration::from_millis(25),
+            cold: Duration::from_secs(1),
             step: Duration::from_millis(20),
             strikes: 3,
             window: Duration::from_secs(60),
             memory_bytes: 32 * 1024 * 1024,
+        }
+    }
+}
+
+impl Budgets {
+    /// The hard limit of a call: [`Budgets::cold`] for `on-enable` and a mod's first call, else [`Budgets::hard`].
+    pub fn hard_for(&self, cold: bool) -> Duration {
+        if cold {
+            self.cold.max(self.hard)
+        } else {
+            self.hard
         }
     }
 }
@@ -75,6 +91,15 @@ impl Strikes {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cold_calls_get_the_wider_limit() {
+        let b = Budgets::default();
+        assert_eq!(b.hard_for(false), b.hard);
+        assert_eq!(b.hard_for(true), Duration::from_secs(1));
+        let tight = Budgets { cold: Duration::from_millis(1), ..b };
+        assert_eq!(tight.hard_for(true), b.hard, "never below the event limit");
+    }
 
     #[test]
     fn strikes_window() {

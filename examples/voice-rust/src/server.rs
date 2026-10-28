@@ -12,7 +12,7 @@ use crate::command::{self, format_duration, VoiceCmd};
 use crate::config::ServerConfig;
 use crate::glue::{log_err, now_ms, on_custom, role_of, wit_activation, wit_mode};
 use crate::ledger::{Ledger, Mute};
-use crate::model::{ModeSet, Role as R};
+use crate::model::{ModeSet, Role as R, VoiceSeen};
 use crate::payload::changed_keys;
 use crate::roles;
 use crate::routing::{routes_for, Peer};
@@ -32,6 +32,8 @@ struct Server {
     allowed: BTreeMap<String, (u8, u8)>,
     /// Speakers whose routes are empty already.
     silent: BTreeSet<String>,
+    /// Players with a voice session at the last pass (a new session invalidates the per-player caches).
+    seen: VoiceSeen,
     tick: u64,
 }
 
@@ -154,6 +156,22 @@ fn tick() {
 fn route_all() {
     let online = players::online();
     let states: Vec<wv::VoiceState> = online.iter().map(|p| wv::state(p).unwrap_or(wv::VoiceState::None)).collect();
+    // A voice session that (re)starts gets everything again: allowed modes, routes, mute and gain.
+    let fresh: Vec<usize> = with(|s| {
+        let mut fresh = Vec::new();
+        for (i, (p, st)) in online.iter().zip(&states).enumerate() {
+            let id = p.id();
+            if s.seen.update(&id, *st != wv::VoiceState::None) {
+                s.allowed.remove(&id);
+                s.silent.remove(&id);
+                fresh.push(i);
+            }
+        }
+        fresh
+    });
+    for i in fresh {
+        apply_player(&online[i]);
+    }
     let peers: Vec<Peer> = with(|s| {
         online
             .iter()
@@ -216,6 +234,7 @@ fn forget(id: &str) {
         s.groups.remove(id);
         s.allowed.remove(id);
         s.silent.remove(id);
+        s.seen.forget(id);
     });
 }
 

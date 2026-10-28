@@ -142,7 +142,7 @@ same (like a Luau `error`), an `Error` (out of memory, stack overflow, assertion
 - **Everything runs on the game thread**, one call at a time. The API objects only work inside a call the host made; from
   another thread of your own they throw `IllegalStateException` ("the host API can only be used while the host runs
   the mod"). Do slow work on your own threads and hand the result back with `api.runNextPoll(...)` from a handler.
-- **Budgets.** Soft 5 ms (a warning in the log), hard 25 ms. A JVM cannot be stopped from outside, so the hard
+- **Budgets.** Soft 5 ms (a warning in the log), hard 25 ms (1 s for `on-enable` and the first call after a load). A JVM cannot be stopped from outside, so the hard
   deadline plus a grace period (250 ms; 5 s extra for `onEnable`, which loads your classes) wakes a watchdog that
   *interrupts* the thread: `Thread.sleep`, `wait`, blocking I/O end with `InterruptedException` and the call counts as
   a hard trap. A loop that never blocks cannot be stopped. Three traps in 60 s disable the mod, as for every runtime.

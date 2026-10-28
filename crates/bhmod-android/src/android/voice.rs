@@ -47,7 +47,10 @@ pub fn audio() -> Option<AudioIo> {
         bhmod_core::types::LogLevel::Info,
         &format!("voice: {:?} backend, RECORD_AUDIO {}", b.kind(), if granted { "granted" } else { "not granted" }),
     );
-    Some(AudioIo::new(b, if granted { Permission::Granted } else { Permission::Unknown }))
+    // Without the lifecycle guard the system dialog would end the connection: the player allows the microphone
+    // from the Mods screen in the main menu instead.
+    let io = AudioIo::new(b, if granted { Permission::Granted } else { Permission::Unknown });
+    Some(io.asking(super::lifecycle::available()))
 }
 
 /// Shows the system `RECORD_AUDIO` dialog (first opt-in); the answer comes back through `Native.micPermission`.
@@ -63,6 +66,21 @@ pub extern "system" fn Java_com_blockheadsclub_modloader_Native_micPermission(
     granted: jboolean,
 ) {
     push_ui(UiEvent::MicPermission(granted != JNI_FALSE));
+}
+
+/// `Native.micGuardAvailable()`: the lifecycle guard is hooked (in-world requests allowed).
+#[no_mangle]
+pub extern "system" fn Java_com_blockheadsclub_modloader_Native_micGuardAvailable(
+    _env: JNIEnv,
+    _c: JClass,
+) -> jboolean {
+    jboolean::from(super::lifecycle::available())
+}
+
+/// `Native.micGuard(on)`: arms or drops the lifecycle guard around our dialog.
+#[no_mangle]
+pub extern "system" fn Java_com_blockheadsclub_modloader_Native_micGuard(_env: JNIEnv, _c: JClass, on: jboolean) {
+    super::lifecycle::arm(on != JNI_FALSE);
 }
 
 /// `Native.ptt(down)`: the host's push-to-talk seam (talks in the default mode).

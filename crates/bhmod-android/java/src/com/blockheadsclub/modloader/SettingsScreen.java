@@ -117,7 +117,7 @@ final class SettingsScreen {
         }
         if (!any) body.addView(Kit.body(a, Strings.t("settings_none")), Kit.fill());
         View.OnClickListener close = new View.OnClickListener() { public void onClick(View v) { close(); } };
-        View panel = Overlay.frame(Strings.t("settings_title", "mod", c.optString("name", mod)), null, body,
+        View panel = Overlay.frame(Strings.t("settings_title", "mod", c.optJSONObject("name") != null ? Strings.pick(c.optJSONObject("name"), mod) : c.optString("name", mod)), null, body,
             Kit.footer(a, Kit.button(a, Strings.t("done"), Kit.Kind.PRI, close)));
         Overlay.show(Overlay.onBack(panel, new Runnable() { public void run() { close(); } }));
         open = true;
@@ -156,13 +156,20 @@ final class SettingsScreen {
     private static void form(Activity a, LinearLayout body, String scope, JSONObject schema) {
         JSONArray fields = schema.optJSONArray("fields");
         JSONObject values = schema.optJSONObject("values");
+        // Group ids are headings only when a form has several groups ("modes", "talk_matrix" → "Modes", "Talk matrix").
+        java.util.Set<String> groups = new java.util.HashSet<>();
+        for (int i = 0; fields != null && i < fields.length(); i++) {
+            JSONObject f = fields.optJSONObject(i);
+            if (f != null && !f.optString("group", "").isEmpty()) groups.add(f.optString("group"));
+        }
         String group = null;
         for (int i = 0; fields != null && i < fields.length(); i++) {
             JSONObject f = fields.optJSONObject(i);
             if (f == null) continue;
             String g = f.optString("group", "");
-            if (!g.isEmpty() && !g.equals(group)) {
-                body.addView(Kit.small(a, g), Kit.margins(Kit.fill(), 0, Kit.u(a, 2), 0, 0));
+            if (groups.size() > 1 && !g.isEmpty() && !g.equals(group)) {
+                String h = g.replace('_', ' ').replace('-', ' ');
+                body.addView(Kit.small(a, Character.toUpperCase(h.charAt(0)) + h.substring(1)), Kit.margins(Kit.fill(), 0, Kit.u(a, 2), 0, 0));
                 group = g;
             }
             Object v = values == null ? f.opt("default") : values.opt(f.optString("key"));

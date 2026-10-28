@@ -257,6 +257,15 @@ fn single(main: &str) -> (tempfile::TempDir, std::rc::Rc<FakeBridge>, ModHost) {
 }
 
 #[test]
+fn a_slow_cold_start_is_not_a_fault() {
+    // 60 ms in `on_enable` is over the 25 ms event limit but inside the 1 s cold-start limit.
+    let (_t, b, h) =
+        single("return { on_enable = function() local t = os.clock() while os.clock() - t < 0.06 do end end }");
+    assert_eq!(h.mods()[0].state, ModState::Enabled, "{}", b.log_text());
+    assert!(!b.has_log("hard time budget"), "{}", b.log_text());
+}
+
+#[test]
 fn entry_point_outcomes() {
     let (_t, b, h) = single("return 5");
     assert!(

@@ -72,6 +72,8 @@ pub fn kinds() -> Vec<Kind> {
 /// call of a mod also compiles it, so the hard limit is wider than the server's 25 ms. Measured on a Galaxy Z Fold4
 /// (a 20k-step workload took Luau 14.7 ms median / 20.5 ms worst, Pulley 2 ms; `on-enable` 10 to 20 ms for Luau),
 /// so 100 ms leaves room for a slower phone without letting a mod stall a frame for a quarter of a second.
+/// `on-enable` and a mod's first call keep bhmod-core's 1 s cold-start limit (the voice mod's cold `on-enable` took
+/// 145 to 257 ms on the emulator).
 pub fn budgets() -> bhmod_core::budget::Budgets {
     use std::time::Duration;
     bhmod_core::budget::Budgets {
@@ -147,6 +149,7 @@ mod tests {
         assert!(o.runtimes.contains(&"lua".to_string()));
         assert_eq!(super::caps().runtimes.len(), o.runtimes.len());
         assert!(super::budgets().hard > bhmod_core::budget::Budgets::default().hard);
+        assert!(super::budgets().hard_for(true) >= std::time::Duration::from_secs(1));
         let t = tempfile::tempdir().unwrap();
         assert_eq!(super::runtimes(t.path()).len(), o.runtimes.len());
         assert_eq!(super::features(), vec!["voice", "settings"]);

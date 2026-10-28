@@ -111,7 +111,7 @@ The SDK has no TinyGo example yet because no TinyGo toolchain was available wher
 | | |
 | --- | --- |
 | Engine | wasmtime 50, component model. Cranelift (native code) on x86_64 / aarch64 / riscv64 / s390x; the **Pulley** interpreter on every other host (armv7, i686, …), whose bytecode Cranelift also emits. `WasmConfig.backend` forces one. |
-| Time | Epoch interruption: a helper thread advances the epoch every 1 ms while a guest call runs; the store traps at the host's hard deadline (25 ms) → `CallError::Timeout`. Fuel is off. |
+| Time | Epoch interruption: a helper thread advances the epoch every 1 ms while a guest call runs; the store traps at the host's hard deadline (25 ms; 1 s for `on-enable` and the first call after a load, a cold start) → `CallError::Timeout`. Fuel is off. |
 | Memory | `InstanceLimits.memory_bytes` (32 MiB by default) caps the instance's linear memories through `StoreLimits`; a failed `memory.grow` makes Rust's allocator abort, which is a trap. |
 | WASI | p2 with an empty context: no files, network, environment or arguments; clocks and random work; stdout/stderr go to the log. |
 | Versions | Components of `blockheads:api@0.3.4`, `@0.3.3`, `@0.3.2`, `@0.3.1`, `@0.3.0`, `@0.2.0` and `@0.1.0` load side by side (three bindings, one implementation; every 0.3.x shares the 0.3 binding: wasmtime links the 0.3.0-0.3.3 names of a component to the 0.3.4 definitions); a 0.1 mod never receives the 0.2-only events. The 0.3 bindings are generated for the `client-mod` world (a superset of the imports), so server and client mods share them; `ui` calls on a host without UI return `unsupported`, and only 0.3 components import `content`. |

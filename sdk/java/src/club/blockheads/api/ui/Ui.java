@@ -15,7 +15,7 @@ package club.blockheads.api.ui;
  * 
  * (0.3.4) Overhead icons, on-screen buttons and the settings screen. Button input arrives as the custom event
  * `&lt;mod-id&gt;:ui-button` with the payload `{"id": text, "action": "press" | "release" | "long-press"}`, delivered to
- * the mod that owns the button only. When the player taps or clicks a blockhead, every client mod gets the custom
+ * the mod that owns the button only. When the player picks a blockhead (middle click on PC, 500 ms long press on Android), every client mod gets the custom
  * event `&lt;its-mod-id&gt;:ui-pick` with `{"player": id}` (for example to open a per-player volume dialog).
  */
 public interface Ui {

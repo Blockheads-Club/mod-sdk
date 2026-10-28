@@ -144,9 +144,9 @@ pub fn mic_indicator(mode: Option<Mode>) -> String {
     json!({"t": "voice-mic", "on": mode.is_some(), "mode": mode.map(Mode::name)}).to_string()
 }
 
-/// The modes the server allows this player (the long-press picker of a `mic` button).
-pub fn voice_modes(modes: &[Mode]) -> String {
-    json!({"t": "voice-modes", "modes": modes.iter().map(|m| m.name()).collect::<Vec<_>>()}).to_string()
+/// The microphone is not allowed and may not be asked in a connection: allow it from the Mods screen.
+pub fn mic_needs_menu() -> String {
+    json!({"t": "voice-needs-mic"}).to_string()
 }
 
 /// The player refused the microphone.
@@ -200,6 +200,7 @@ fn form(f: &Form) -> Value {
 /// and, for an admin, the server's settings of it.
 pub fn settings_screen(
     mod_id: &str,
+    name: Option<&std::collections::BTreeMap<String, String>>,
     client: Option<&Form>,
     keys: &[KeyRow],
     voice: Option<&VoiceSection>,
@@ -210,7 +211,7 @@ pub fn settings_screen(
         .map(|k| json!({"action": k.action, "key": k.key, "default": k.default_key, "isDefault": k.is_default}))
         .collect();
     json!({
-        "t": "settings", "mod": mod_id, "name": mod_id,
+        "t": "settings", "mod": mod_id, "name": name.map_or_else(|| json!(mod_id), |n| json!(n)),
         "client": client.map(form), "server": server.map(form), "keys": keys,
         "voice": voice.map(|v| json!({
             "master": v.master,
@@ -327,20 +328,23 @@ mod tests {
     fn voice_and_settings_shapes() {
         assert_eq!(v(mic_indicator(Some(Mode::Global)))["mode"], "global");
         assert_eq!(v(mic_indicator(None))["on"], false);
-        assert_eq!(v(voice_modes(&[Mode::Proximity, Mode::Channel]))["modes"][1], "channel");
         assert_eq!(v(mic_denied())["t"], "voice-denied");
+        assert_eq!(v(mic_needs_menu())["t"], "voice-needs-mic");
         let form: Form = (json!({"fields": [{"key": "a"}]}), json!({"a": 1}));
         let keys = [KeyRow { action: "talk".into(), key: None, default_key: "v".into(), is_default: false }];
         let pv = PlayerVolume { id: "p1".into(), name: "ALICE".into(), volume: 50, muted: true };
         let vs = VoiceSection { master: 120, players: vec![pv] };
-        let s = v(settings_screen("voice", Some(&form), &keys, Some(&vs), None));
+        let names = [("en".to_string(), "Voice chat".to_string())].into_iter().collect();
+        let s = v(settings_screen("voice", Some(&names), Some(&form), &keys, Some(&vs), None));
+        assert_eq!(s["name"]["en"], "Voice chat");
         assert_eq!(s["voice"]["players"][0]["name"], "ALICE");
         assert_eq!(s["client"]["fields"][0]["key"], "a");
         assert_eq!(s["client"]["values"]["a"], 1);
         assert!(s["server"].is_null());
         assert!(s["keys"][0]["key"].is_null());
         assert_eq!(s["voice"]["master"], 120);
-        let s = v(settings_screen("m", None, &[], None, Some(&(json!({}), json!({})))));
+        let s = v(settings_screen("m", None, None, &[], None, Some(&(json!({}), json!({})))));
+        assert_eq!(s["name"], "m");
         assert_eq!(s["server"]["fields"], json!([]));
         assert!(s["voice"].is_null());
         let r = v(settings_result("m", Some("k"), false, Some("bad"), false));

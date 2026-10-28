@@ -20,15 +20,20 @@ final class Native {
     static native boolean remove(String id);
     /** The answer of the RECORD_AUDIO dialog (voice chat). */
     static native void micPermission(boolean granted);
+    /**
+     * True when the loader can keep an online world through the RECORD_AUDIO dialog (its lifecycle guard is hooked
+     * into the game); without it the dialog is never shown while connected.
+     */
+    static native boolean micGuardAvailable();
+    /** Arms (true) or drops the lifecycle guard around our RECORD_AUDIO dialog. */
+    static native void micGuard(boolean on);
     /** Push-to-talk down / up (host seam: talks in the default mode without going through a mod). */
     static native void ptt(boolean down);
     /** An on-screen button of a mod: `action` = press, long-press or release. */
     static native void uiButton(String mod, String id, String action);
     /** The player dropped a button at screen fractions `x`, `y` (stored on the device). */
     static native void buttonMoved(String mod, String id, float x, float y);
-    /** The player picked a voice mode in the long-press picker. */
-    static native void voiceMode(String mode);
-    /** A touch on the game started at screen fractions `x`, `y` (the blockhead there is picked). */
+    /** A long press on the game at screen fractions `x`, `y` (the blockhead there is picked). */
     static native void tap(float x, float y);
     /** A hardware key went down or up (key name of the `input` interface). */
     static native void key(String name, boolean down);

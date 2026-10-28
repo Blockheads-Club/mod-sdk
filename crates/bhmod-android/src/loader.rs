@@ -146,8 +146,6 @@ pub enum UiEvent {
         /// Centre, fraction of the height.
         y: f32,
     },
-    /// The player picked a voice mode in the long-press picker.
-    VoiceMode(String),
     /// A hardware key went down (`true`) or up.
     Key(String, bool),
     /// Open the settings screen of a mod (the Mods screen).
@@ -167,7 +165,8 @@ pub enum UiEvent {
     MicPermission(bool),
     /// The host's push-to-talk seam (`Native.ptt`): talk in the default mode.
     Ptt(bool),
-    /// A tap on the game at screen fractions `x`, `y` (a blockhead there is picked: `<mod-id>:ui-pick`).
+    /// A long press (500 ms, still) on the game at screen fractions `x`, `y` (a blockhead there is picked:
+    /// `<mod-id>:ui-pick`).
     Tap(f32, f32),
 }
 
@@ -304,8 +303,6 @@ pub struct Loader<P: Platform + 'static> {
     /// Audio and packets of the voice client, while one runs.
     pipeline: Option<Pipeline>,
     udp: Option<UdpLink>,
-    /// The modes the server allows (`VOICE_STATE.modes`), as last posted to the picker.
-    modes: Option<u8>,
     /// The voice preferences as last saved, and when they were last compared.
     prefs_saved: String,
     prefs_at: u64,
@@ -319,6 +316,8 @@ pub struct Loader<P: Platform + 'static> {
     settings_open: Option<String>,
     /// Mods granted `voice` in the running host.
     voice_mods: BTreeSet<String>,
+    /// Display names (`mod.toml` `name`) of the mods of the running host.
+    mod_names: BTreeMap<String, BTreeMap<String, String>>,
 }
 
 impl<P: Platform + 'static> Loader<P> {
@@ -348,7 +347,6 @@ impl<P: Platform + 'static> Loader<P> {
             voice_factory: None,
             pipeline: None,
             udp: None,
-            modes: None,
             prefs_saved: String::new(),
             prefs_at: 0,
             tracker: Arc::new(Tracker::new()),
@@ -356,6 +354,7 @@ impl<P: Platform + 'static> Loader<P> {
             server_forms: BTreeMap::new(),
             settings_open: None,
             voice_mods: BTreeSet::new(),
+            mod_names: BTreeMap::new(),
         }
     }
 
@@ -493,11 +492,6 @@ impl<P: Platform + 'static> Loader<P> {
                     self.p.log(LogLevel::Warn, &format!("button position not saved: {e}"));
                 }
             }
-            UiEvent::VoiceMode(m) => {
-                if let Some(mode) = bhmod_core::voice::Mode::parse(&m) {
-                    let _ = self.slot.set_default_mode(mode);
-                }
-            }
             UiEvent::Key(name, down) => self.on_key(&name, down),
             UiEvent::OpenSettings(id) => self.open_settings(&id),
             UiEvent::Setting { mod_id, scope, key, json } => self.set_setting(&mod_id, &scope, &key, &json),
@@ -542,11 +536,13 @@ impl<P: Platform + 'static> Loader<P> {
                 }
                 let id =
                     if self.server.is_empty() { format!("local:{name}") } else { format!("server:{}", self.server) };
+                // Voice first: mods apply their client voice settings (master volume, VAD, default mode) in
+                // `on-enable`, which fails as `unsupported` while there is no voice client yet.
+                self.start_voice();
                 if let Some(h) = self.host.as_mut() {
                     h.enable(name, &id);
                 }
                 self.flush_outbox();
-                self.start_voice();
                 let n =
                     self.host.as_ref().map_or(0, |h| h.mods().iter().filter(|m| m.state == ModState::Enabled).count());
                 let settings = self.settings_mods();
@@ -634,6 +630,7 @@ impl<P: Platform + 'static> Loader<P> {
         self.hud.borrow_mut().clear();
         self.settings_open = None;
         self.voice_mods.clear();
+        self.mod_names.clear();
         *self.content_lock() = Content::new();
         self.last_tick = 0;
     }
@@ -827,13 +824,11 @@ impl<P: Platform + 'static> Loader<P> {
             return Ok(Vec::new());
         }
         let installed = self.installed().list();
-        self.voice_mods = server_mods
-            .iter()
-            .map(|a| &a.manifest)
-            .chain(installed.iter().filter(|m| m.enabled).map(|m| &m.manifest))
-            .filter(|m| m.permissions.voice)
-            .map(|m| m.id.clone())
-            .collect();
+        let manifests = || {
+            server_mods.iter().map(|a| &a.manifest).chain(installed.iter().filter(|m| m.enabled).map(|m| &m.manifest))
+        };
+        self.voice_mods = manifests().filter(|m| m.permissions.voice).map(|m| m.id.clone()).collect();
+        self.mod_names = manifests().map(|m| (m.id.clone(), m.name.clone())).collect();
         let mut opts = HostOptions::new(&self.dirs.run, Side::Client);
         // The host writes the client settings file but does not make its folder.
         let _ = fs::create_dir_all(&self.dirs.device);

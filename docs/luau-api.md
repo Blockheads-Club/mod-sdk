@@ -235,7 +235,7 @@ snake_case keys, missing optional fields take the defaults.
   `<mod-id>:input { action, pressed }`.
 - `bh.ui.set_overhead(p, icon)`, `clear_overhead(p)`, `set_button(id, { icon, label, x, y, size, opacity })`,
   `remove_button(id)`, `open_settings(mod_id)`, `has_touch()`; button input as `<mod-id>:ui-button { id, action }`,
-  taps on blockheads as `<mod-id>:ui-pick { player }`. Dialogs take up to four buttons.
+  picks of blockheads (a middle click on PC, a 500 ms long press on Android) as `<mod-id>:ui-pick { player }`. Dialogs take up to four buttons.
 - `bh.host.platform()`, `player:sleeping()`, `player:alive()` (server; events `player:sleep`, `player:wake`,
   `player:respawn` with `{ player }`), `bh.players.local_player()` (client), `bh.players.has_mod(p, mod_id)` (server).
 
@@ -256,7 +256,8 @@ frozen 0.2 and 0.1 WIT in [`../wit/compat/blockheads-api-0.2.0/`](../wit/compat/
 ## Host behaviour (M1)
 
 - One Luau VM per mod, sandbox mode (globals and every `bh` table are read-only), 32 MiB memory limit.
-- Each call into the mod has a 25 ms hard deadline enforced by the Luau interrupt (a `pcall` cannot swallow it:
+- Each call into the mod has a 25 ms hard deadline (1 s for `on_enable` and the first call after a load: a cold
+  start) enforced by the Luau interrupt (a `pcall` cannot swallow it:
   the interrupt keeps firing until the call unwinds) and a 5 ms soft limit that logs a warning. A Luau error, a
   timeout, running out of memory or a host panic is a fault; 3 faults within 60 s disable the mod.
 - `main.luau` runs once, when the world has loaded, then `on_enable`. An error there disables the mod.

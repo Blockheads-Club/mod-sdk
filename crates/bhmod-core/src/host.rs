@@ -147,6 +147,8 @@ struct Slot {
     values: Map<String, Json>,
     /// Whether players must run the client half (manifest and the admin's `client-required`).
     client_required: bool,
+    /// A call into this instance finished (until then calls get the cold-start limit, [`Budgets::cold`]).
+    warm: bool,
 }
 
 /// The mod host.
@@ -404,6 +406,7 @@ impl ModHost {
             settings: Rc::new(pkg.manifest.settings.clone()),
             values,
             client_required: crate::config::client_required(&pkg.manifest, &self.config.get(id)),
+            warm: false,
         }
     }
 
@@ -489,7 +492,8 @@ impl ModHost {
         // A mod on the call stack has its instance taken out, so it cannot be entered twice.
         let mut instance = self.slots[owner].instance.take()?;
         let start = self.clock.now();
-        let own = start + self.budgets.hard;
+        let cold = kind == HandlerKind::Lifecycle || !self.slots[owner].warm;
+        let own = start + self.budgets.hard_for(cold);
         let deadline = self.stack.last().map_or(own, |&(_, outer)| own.min(outer));
         self.stack.push((owner, deadline));
         let result = {
@@ -503,6 +507,7 @@ impl ModHost {
         let slot = &mut self.slots[owner];
         let id = slot.info.id.clone();
         slot.instance = Some(instance);
+        slot.warm = true;
         slot.timings.record(kind, start, elapsed, self.budgets.soft, result.as_ref().err());
         slot.timings.prune(end, self.budgets.window);
         if elapsed > self.budgets.soft {

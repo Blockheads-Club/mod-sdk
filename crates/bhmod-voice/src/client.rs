@@ -70,6 +70,8 @@ pub struct VoiceClient {
     codec: Arc<dyn Codec>,
     keypair: Option<KeyPair>,
     link: Option<ClientLink>,
+    /// This client's speaker id (from `VOICE_KEY`).
+    me: Option<PeerId>,
     udp_port: Option<u16>,
     /// The server answered `VOICE_KEY` without a voice UDP port: voice is off.
     no_port: bool,
@@ -105,6 +107,7 @@ impl VoiceClient {
             codec,
             keypair: None,
             link: None,
+            me: None,
             udp_port: None,
             no_port: false,
             last_auth: None,
@@ -180,6 +183,7 @@ impl VoiceClient {
             self.events.push(VoiceEvent::Mic(MicState::Unavailable));
             return;
         }
+        self.me = Some(peer);
         self.link = Some(ClientLink::new(session, peer));
         self.encoder = self.codec.encoder(self.bitrate).ok();
     }
@@ -272,7 +276,7 @@ impl VoiceClient {
     /// One 20 ms microphone frame (48 kHz mono, [`FRAME_SAMPLES`] samples; other lengths are ignored). Runs VAD and
     /// the activation; while transmitting, encodes and seals it for [`VoiceClient::poll_send`].
     pub fn on_mic_frame(&mut self, pcm: &[f32]) {
-        if pcm.len() != FRAME_SAMPLES || !self.mic_wanted {
+        if pcm.len() != FRAME_SAMPLES || !self.mic_wanted() {
             return;
         }
         let active = self.vad.process(pcm);
@@ -320,7 +324,9 @@ impl VoiceClient {
                 }
                 Playout::Lost => s.decoder.decode(None, &mut s.pcm).is_ok() && s.last.is_some(),
                 Playout::Idle => {
-                    if let Some(mode) = s.talking.take().filter(|_| !s.jitter.playing() && s.jitter.is_empty()) {
+                    // Idle while the buffer is still filling is not the end of a spurt: keep `talking` then.
+                    if s.talking.is_some() && !s.jitter.playing() && s.jitter.is_empty() {
+                        let mode = s.talking.take().expect("checked above");
                         self.events.push(VoiceEvent::TalkStop { player: s.player.clone(), mode });
                     }
                     false
@@ -346,9 +352,16 @@ impl VoiceClient {
         std::mem::take(&mut self.events)
     }
 
-    /// True while a mod wants the microphone open.
+    /// True while a mod wants the microphone open and the server has not muted this player (an admin mute closes
+    /// the microphone: nothing is captured, encoded or sent until the unmute).
     pub fn mic_wanted(&self) -> bool {
-        self.mic_wanted
+        self.mic_wanted && !self.admin_muted()
+    }
+
+    /// True while the server lists this player as admin-muted (`VOICE_STATE`).
+    pub fn admin_muted(&self) -> bool {
+        let me = self.me.and_then(|p| self.player_of(p));
+        me.is_some_and(|p| self.state(&p) == State::AdminMuted)
     }
 
     /// The loader reports the microphone device (`voice:mic` to the mods). `denied` and `unavailable` also turn the
@@ -366,7 +379,7 @@ impl VoiceClient {
 
     /// The mode the microphone transmits in now (the loader draws the mic-on indicator while `Some`).
     pub fn transmitting(&self) -> Option<Mode> {
-        self.transmitting.filter(|_| self.mic_wanted).map(mode_of)
+        self.transmitting.filter(|_| self.mic_wanted()).map(mode_of)
     }
 
     // ---- volumes ----

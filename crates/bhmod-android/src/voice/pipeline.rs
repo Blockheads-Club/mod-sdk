@@ -58,6 +58,9 @@ pub trait Net {
 pub enum Notice {
     /// Show the system `RECORD_AUDIO` dialog.
     AskPermission,
+    /// The permission is missing and may not be asked in a connection: tell the player to allow the microphone from
+    /// the Mods screen in the main menu (the driver hears `denied`).
+    NeedsPermission,
     /// The microphone changed (also told to the driver).
     Mic(MicState),
     /// The host-owned mic-on indicator: `Some(mode)` while transmitting.
@@ -107,6 +110,11 @@ impl Pipeline {
                 return;
             }
             Mic::Waiting => return,
+            Mic::NeedsPermission => {
+                d.mic_state(MicState::Denied);
+                out.push(Notice::NeedsPermission);
+                return;
+            }
             Mic::Failed(e) => {
                 out.push(Notice::Failed(format!("microphone: {e}")));
                 MicState::Off
@@ -273,6 +281,16 @@ mod tests {
         assert_eq!(to_i16(-2.0), -32768);
         assert_eq!(to_i16(0.5), 16383);
         assert_eq!((BLOCK, TARGET), (1920, 5760));
+    }
+
+    #[test]
+    fn without_asking_the_driver_hears_denied_and_the_player_is_sent_to_the_menu() {
+        let fake = FakeBackend::default();
+        let mut p = Pipeline::new(AudioIo::new(Box::new(fake), Permission::Unknown).asking(false));
+        let (mut d, mut n) = (FakeDriver::default(), FakeNet::default());
+        d.want = true;
+        assert_eq!(p.frame(0, &mut d, &mut n), vec![Notice::NeedsPermission]);
+        assert_eq!(d.mic, [MicState::Denied]);
     }
 
     #[test]

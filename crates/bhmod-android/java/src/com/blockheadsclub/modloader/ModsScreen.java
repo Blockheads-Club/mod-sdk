@@ -57,6 +57,10 @@ final class ModsScreen {
         body.addView(ts, Kit.margins(Kit.fill(), 0, 0, 0, Kit.u(a, 3)));
         content = Kit.column(a);
         body.addView(content, Kit.fill());
+        if (which == INSTALLED) {
+            body.addView(Voice.modsBox(a, new Runnable() { public void run() { if (tab == INSTALLED && Overlay.dialog != null) show(INSTALLED); } }),
+                Kit.margins(Kit.fill(), 0, Kit.u(a, 3), 0, 0));
+        }
         if (Overlay.inWorld) body.addView(Kit.small(a, Strings.t("online_note")), Kit.margins(Kit.fill(), 0, Kit.u(a, 3), 0, 0));
         Runnable close = new Runnable() { public void run() { Overlay.dismiss(); } };
         View panel = Overlay.frame(Strings.t("mods"), new View.OnClickListener() { public void onClick(View v) { Overlay.dismiss(); } }, body, null);

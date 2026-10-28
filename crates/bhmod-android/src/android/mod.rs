@@ -15,6 +15,7 @@
 pub mod aaudio;
 pub mod cosmetics;
 pub mod items;
+pub mod lifecycle;
 pub mod menus;
 pub mod native;
 pub mod objc;
@@ -485,6 +486,7 @@ fn install_hooks() -> bool {
     let disconnect = objc::swizzle("BHNetClientMatch", "disconnect", hook_disconnect as Imp);
     let ok = [draw_frame, receive, send_info, disconnect].iter().all(|p| !p.is_null());
     menus::install();
+    lifecycle::install();
     let _ = ORIG.set(Originals { draw_frame, receive, send_info, disconnect });
     if !ok {
         log(LogLevel::Error, "a game method was not found; this game version is not supported, mods may not work");
@@ -769,13 +771,6 @@ pub extern "system" fn Java_com_blockheadsclub_modloader_Native_buttonMoved(
 ) {
     let ev = UiEvent::ButtonMoved { mod_id: push_str(&mut env, &mod_id), id: push_str(&mut env, &id), x, y };
     push_ui(ev);
-}
-
-/// `Native.voiceMode(mode)`: picked in the long-press picker.
-#[no_mangle]
-pub extern "system" fn Java_com_blockheadsclub_modloader_Native_voiceMode(mut env: JNIEnv, _c: JClass, mode: JString) {
-    let m = push_str(&mut env, &mode);
-    push_ui(UiEvent::VoiceMode(m));
 }
 
 /// `Native.key(name, down)`: a hardware key.

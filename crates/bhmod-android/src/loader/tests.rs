@@ -25,6 +25,8 @@ struct Fake {
     backend: RefCell<Option<crate::voice::audio::fake::FakeBackend>>,
     permission: Cell<crate::voice::audio::Permission>,
     asked: Cell<u32>,
+    /// The phone may not show the RECORD_AUDIO dialog in a connection (no lifecycle guard).
+    no_ask: Cell<bool>,
     camera: Cell<Option<Camera>>,
 }
 
@@ -60,7 +62,7 @@ impl Platform for Fake {
     }
     fn audio(&self) -> Option<AudioIo> {
         let b = self.backend.borrow().clone()?;
-        Some(AudioIo::new(Box::new(b), self.permission.get()))
+        Some(AudioIo::new(Box::new(b), self.permission.get()).asking(!self.no_ask.get()))
     }
     fn ask_mic(&self) {
         self.asked.set(self.asked.get() + 1);
@@ -760,6 +762,7 @@ const VOICE_CLIENT: &str = r#"
 local mod = {}
 function mod.on_enable()
     bh.input.bind("talk", "v")
+    bh.voice.set_default_mode("channel")
     bh.ui.set_button("ptt", { icon = "mic", label = "Talk" })
     bh.events.on_custom("vtest:ui-button", function(ev)
         bh.log.info("button " .. ev.payload.action)
@@ -848,6 +851,9 @@ fn voice_flows_through_the_pipeline_and_the_mods() {
     // VOICE_KEY went out reliably, the prefs were loaded, the button was drawn and the mod's settings can open
     assert!(r.p.sent.borrow().iter().any(|p| p == &[0xBC, 0x15]));
     assert_eq!(link.prefs(), "master=90");
+    // the voice client existed before `on-enable`, so the mod's voice settings applied
+    assert_eq!(link.default_mode.get(), Some(Mode::Channel));
+    assert!(!r.p.logged("unsupported"), "{:?}", r.p.logs.borrow());
     assert_eq!(ui_of(&r, "btn-set")[0]["icon"], "mic");
     assert_eq!(ui_of(&r, "world")[0]["settings"][0], "vtest");
     // the player presses the button: the mod opens the mic (first time: the system dialog), talks
@@ -891,7 +897,7 @@ fn voice_flows_through_the_pipeline_and_the_mods() {
         std::thread::sleep(std::time::Duration::from_millis(5));
     }
     assert_eq!(*link.udp_in.borrow(), [vec![7]]);
-    // VOICE_STATE: the allowed modes go to the picker once, players become known, the client gets the message
+    // VOICE_STATE: players become known, the client gets the message (mods own their buttons: no host picker)
     let state = |full, players: &[(&str, &str)], modes| {
         Output::Voice(Message::VoiceState(VoiceState {
             full,
@@ -902,8 +908,7 @@ fn voice_flows_through_the_pipeline_and_the_mods() {
     };
     r.l.handle(vec![state(true, &[("p1", "ready")], Some(0b0101)), state(false, &[], Some(0b0101))]);
     r.l.handle(vec![Output::Voice(Message::ListRequest)]);
-    assert_eq!(ui_of(&r, "voice-modes").len(), 1);
-    assert_eq!(ui_of(&r, "voice-modes")[0]["modes"], serde_json::json!(["proximity", "channel"]));
+    assert!(ui_of(&r, "voice-modes").is_empty());
     assert_eq!(link.messages.borrow().len(), 3);
     // a state event: the mod puts an icon over p1 and asks for its settings screen
     link.names.borrow_mut().push(("p1".into(), "ALICE".into()));
@@ -937,12 +942,8 @@ fn voice_flows_through_the_pipeline_and_the_mods() {
     r.p.now.set(300);
     r.l.on_frame();
     assert!(ui_of(&r, "overhead").last().unwrap()["items"].as_array().unwrap().is_empty());
-    // the long-press mode picker sets the default mode; a bad name is ignored; the ptt seam talks directly
-    r.l.on_ui(UiEvent::VoiceMode("global".into()));
-    r.l.on_ui(UiEvent::VoiceMode("shout".into()));
-    assert_eq!(link.default_mode.get(), Some(Mode::Global));
-    r.l.on_frame();
-    assert!(r.p.logged("mode global"), "the picker fires voice:mode");
+    // the mod's own default mode reached it as voice:mode; the ptt seam talks directly
+    assert!(r.p.logged("mode channel"), "set_default_mode fires voice:mode");
     r.l.on_ui(UiEvent::Ptt(false));
     assert_eq!(link.talks.borrow().last(), Some(&(None, false)));
     // a dropped button is remembered on the device
@@ -969,6 +970,20 @@ fn voice_flows_through_the_pipeline_and_the_mods() {
     r.l.on_frame();
     r.l.on_frame();
     assert_eq!(ui_of(&r, "overhead").len(), before + 1);
+}
+
+#[test]
+fn without_the_dialog_in_a_world_the_player_is_sent_to_the_mods_screen() {
+    let (mut r, _link) = voice_rig(&["voice", "settings"], true);
+    r.p.no_ask.set(true);
+    r.l.on_world(Some("w"));
+    r.l.on_ui(UiEvent::Button { mod_id: "vtest".into(), id: "ptt".into(), action: "press".into() });
+    r.p.now.set(10);
+    r.l.on_frame();
+    assert_eq!(r.p.asked.get(), 0, "no system dialog in a connection");
+    assert_eq!(ui_of(&r, "voice-needs-mic").len(), 1);
+    assert!(r.p.logged("mic denied"), "the mod hears denied: {:?}", r.p.logs.borrow());
+    assert!(ui_of(&r, "voice-denied").is_empty());
 }
 
 fn last_result(r: &Rig) -> Value {
