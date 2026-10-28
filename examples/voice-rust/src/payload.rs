@@ -73,7 +73,7 @@ pub fn player_text(alias: &str, percent: u16, muted: bool) -> String {
     format!("{alias}: volume {percent} % ({state}) on this device. Type 0-200 and press Apply.")
 }
 
-/// The modes the long-press picker offers: the allowed ones except the current default (at most three, so a Cancel
+/// The modes the talk-mode picker offers: the allowed ones except the current default (at most three, so a Cancel
 /// button fits in a four-button dialog).
 pub fn picker_modes(allowed: ModeSet, current: Mode) -> Vec<Mode> {
     allowed.modes().into_iter().filter(|m| *m != current).take(3).collect()

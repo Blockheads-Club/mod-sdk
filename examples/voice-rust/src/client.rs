@@ -29,6 +29,8 @@ struct Client {
     held: bool,
     consent_dialog: Option<u32>,
     picker_dialog: Option<(u32, Vec<Mode>)>,
+    /// The headphones button's menu (talk mode, deafen, volumes).
+    hub_dialog: Option<u32>,
     menu_dialog: Option<u32>,
     /// The per-player volume dialog and its player id.
     player_dialog: Option<(u32, String)>,
@@ -166,6 +168,28 @@ fn open_picker() {
     with(|c| c.picker_dialog = id.map(|id| (id, modes)));
 }
 
+/// The headphones button's menu: talk mode, deafen, volumes.
+fn open_hub() {
+    let deafened = wv::deafened().unwrap_or(false);
+    let mode = with(|c| c.cfg.default_mode);
+    let text = format!("Talking to: {}.{}", mode.label(), if deafened { " Voice chat is deafened." } else { "" });
+    let deafen = if deafened { "Undeafen" } else { "Deafen" };
+    let buttons = [
+        ("Talk mode", ButtonKind::Secondary),
+        (deafen, ButtonKind::Secondary),
+        ("Volumes", ButtonKind::Secondary),
+        ("Close", ButtonKind::Secondary),
+    ];
+    let id = dialog("Voice chat", &text, None, &buttons);
+    with(|c| c.hub_dialog = id);
+}
+
+fn toggle_deafen() {
+    let on = !wv::deafened().unwrap_or(false);
+    log_err("deafen", wv::set_deafen(on));
+    let _ = ui::toast(if on { "Voice chat deafened." } else { "Voice chat audible." });
+}
+
 /// The volume dialog of one player (a tapped or clicked blockhead).
 fn open_player(id: &str) {
     let Some(p) = players::get(id).filter(|p| !is_me(&p.id())) else { return };
@@ -229,6 +253,7 @@ fn on_answer(a: Answer) {
     enum Which {
         Consent,
         Picker(Vec<Mode>),
+        Hub,
         Menu,
         Player(String),
         Other,
@@ -239,6 +264,9 @@ fn on_answer(a: Answer) {
             Which::Consent
         } else if c.picker_dialog.as_ref().is_some_and(|(id, _)| *id == a.dialog) {
             Which::Picker(c.picker_dialog.take().map(|(_, m)| m).unwrap_or_default())
+        } else if c.hub_dialog == Some(a.dialog) {
+            c.hub_dialog = None;
+            Which::Hub
         } else if c.menu_dialog == Some(a.dialog) {
             c.menu_dialog = None;
             Which::Menu
@@ -265,6 +293,12 @@ fn on_answer(a: Answer) {
                 let _ = ui::toast(&format!("Talking to: {}", m.label()));
             }
         }
+        Which::Hub => match a.button {
+            0 => open_picker(),
+            1 => toggle_deafen(),
+            2 => open_menu(),
+            _ => {}
+        },
         Which::Menu => match a.button {
             0 => {
                 let line = apply_volume(a.text.as_deref().unwrap_or_default());
@@ -307,11 +341,7 @@ fn on_input(action: &str, pressed: bool) {
             log_err("self mute", wv::set_self_mute(on));
             let _ = ui::toast(if on { "Microphone muted." } else { "Microphone on." });
         }
-        DEAFEN_ACTION => {
-            let on = !wv::deafened().unwrap_or(false);
-            log_err("deafen", wv::set_deafen(on));
-            let _ = ui::toast(if on { "Voice chat deafened." } else { "Voice chat audible." });
-        }
+        DEAFEN_ACTION => toggle_deafen(),
         _ => {}
     }
 }
@@ -322,17 +352,14 @@ fn on_button(id: &str, action: ButtonAction) {
             with(|c| c.held = true);
             log_err("talk", wv::talk(None, true));
         }
-        (PTT, ButtonAction::LongPress) => {
-            with(|c| c.held = false);
-            log_err("talk", wv::talk(None, false));
-            open_picker();
-        }
+        // Push-to-talk is hold-to-talk only: a long hold keeps talking until the release. The talk mode is in the
+        // headphones button's menu.
         (PTT, ButtonAction::Release) => {
             if with(|c| std::mem::take(&mut c.held)) {
                 log_err("talk", wv::talk(None, false));
             }
         }
-        (MENU, ButtonAction::Release) => open_menu(),
+        (MENU, ButtonAction::Release) => open_hub(),
         _ => {}
     }
 }
@@ -392,15 +419,12 @@ pub fn enable() -> Result<(), String> {
     })?;
     // What the server allows changed: fall back to push-to-talk if the chosen activation is not allowed any more.
     on_custom("voice:allowed", |_| apply_activation(&with(|c| c.cfg.clone())))?;
-    on_custom("voice:mic", |v| match mic_event(v).as_deref() {
-        Some("denied") => {
-            let _ = ui::toast("The microphone was refused. Allow it in the system settings to talk.");
-        }
-        Some("unavailable") => {
+    // `denied`: the host explains where to allow the microphone (on Android: the loader's Mods screen).
+    on_custom("voice:mic", |v| {
+        if mic_event(v).as_deref() == Some("unavailable") {
             let _ =
                 ui::toast("Voice chat is off: this server's voice UDP port is not open (or there is no microphone).");
         }
-        _ => {}
     })?;
     commands::register(
         Command::new("voicevol").usage("/voicevol <player> <0-200|mute|unmute> | master <0-200>"),

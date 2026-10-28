@@ -3,8 +3,8 @@
 //! - **Server** (`src/server.rs`): talk modes, the role × mode matrix (with permission groups of the `perms` mod), routes
 //!   at 5 Hz (proximity falloff, pan, muffling; global; channels; broadcast), channels, `/voice` admin commands,
 //!   persisted mutes and gains, caps, the voice UDP port, icon visibility.
-//! - **Client** (`src/client.rs`): push-to-talk keys per mode, the Android push-to-talk button with a long-press mode
-//!   picker, overhead icons, the microphone opt-in, the volume dialog and `/voicevol`.
+//! - **Client** (`src/client.rs`): push-to-talk keys per mode, the Android hold-to-talk button and a headphones
+//!   button menu (talk mode, deafen, volumes), overhead icons, the microphone opt-in, the volume dialog and `/voicevol`.
 //!
 //! The host does audio, Opus, encryption and relaying; this mod only decides policy (API `blockheads:api@0.3.4`).
 //! The policy itself lives in plain modules ([`routing`], [`roles`], [`channels`], [`command`], [`config`],

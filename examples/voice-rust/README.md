@@ -13,12 +13,12 @@ License: GPL-3.0-or-later.
 | Action | PC (rebindable) | Touch screen (Android) |
 | --- | --- | --- |
 | Talk nearby | hold `V` | hold the round mic button |
-| Talk to your channel | hold `B` | long-press the mic button, pick a mode |
+| Talk to your channel | hold `B` | headphones button → Talk mode, then hold the mic button |
 | Talk to everyone (if allowed) | hold `G` | same |
 | Admin broadcast (staff) | hold `J` | same |
-| Volumes, local mutes | `F8` or `/voicemenu` (`/vm`) | the headphones button |
+| Volumes, local mutes | `F8` or `/voicemenu` (`/vm`) | headphones button → Volumes |
 | One player's volume or mute | click their blockhead | tap their blockhead |
-| Mute your microphone / deafen | `F9` / `F10` | the voice settings |
+| Mute your microphone / deafen | `F9` / `F10` | the voice settings / headphones button → Deafen |
 
 - The microphone stays **off** until you say yes in the first dialog (setting `mic`: ask / on / off).
 - `/voicevol <player> <0-200|mute|unmute>` and `/voicevol master <0-200>` change volumes on your device only; the
@@ -90,7 +90,8 @@ Other mods (clans, teams) can put players into channels through the `voice` serv
   Proximity distance and pan go the short way round the world (`terrain.world-width`); dead (`player.alive`) and
   sleeping (`player.sleeping`) speakers follow the admin's rules, re-routed at once on `player:sleep|wake|respawn`.
 - **Client**: binds the push-to-talk keys, shows the on-screen button on touch screens (`ui.has-touch`), offers the
-  modes the server allows (`voice.allowed`, `voice:allowed`) in the long-press picker, opens the volume dialogs
+  modes the server allows (`voice.allowed`, `voice:allowed`) in the headphones button's menu (talk mode, deafen,
+  volumes; the mic button is hold-to-talk only), opens the volume dialogs
   (also for a tapped or clicked blockhead, `ui-pick`), draws overhead icons from the `voice:*` events (never above the
   local player) and keeps the default-mode setting in step with `voice:mode`.
 
