@@ -19,14 +19,15 @@ pub struct UdpLink {
 impl UdpLink {
     /// Opens a socket towards `host` (the game server's address, without its port) and `port`.
     pub fn open(host: &str, port: u16) -> Result<UdpLink, String> {
-        let server = (host, port)
-            .to_socket_addrs()
-            .map_err(|e| e.to_string())?
-            .next()
-            .ok_or_else(|| format!("{host} has no address"))?;
+        Self::try_open(host, port).map_err(|e| format!("{host}: {e}"))
+    }
+
+    fn try_open(host: &str, port: u16) -> std::io::Result<UdpLink> {
+        let none = std::io::Error::from(ErrorKind::NotFound);
+        let server = (host, port).to_socket_addrs()?.next().ok_or(none)?;
         let any: SocketAddr = if server.is_ipv4() { "0.0.0.0:0" } else { "[::]:0" }.parse().expect("literal");
-        let sock = UdpSocket::bind(any).map_err(|e| e.to_string())?;
-        sock.set_nonblocking(true).map_err(|e| e.to_string())?;
+        let sock = UdpSocket::bind(any)?;
+        sock.set_nonblocking(true)?;
         Ok(UdpLink { sock, server })
     }
 
