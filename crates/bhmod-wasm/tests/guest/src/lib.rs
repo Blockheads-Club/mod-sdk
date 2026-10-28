@@ -1,6 +1,7 @@
 //! The bhmod-wasm test guest. `host::mod_id()` picks the behaviour:
 //! - `tour`: calls every import once in `on-enable` and logs the results; prints to stdout/stderr.
-//! - `gear`: calls every `content` import (API 0.3) with the mod's own cosmetic `gear:cap`.
+//! - `gear`: calls every `content` import (API 0.3) with the mod's own cosmetic `gear:cap`, and the `settings`
+//!   imports (API 0.3.3) with its setting `level`.
 //! - `fail`: `on-enable` returns an error.
 //! - `trap`: commands panic; events after the trap are refused by the host.
 //! - `spin`: the tick handler never returns (host deadline).
@@ -33,6 +34,12 @@ fn gear() -> Result<(), String> {
     show("give-other", content::give_item(&p, "other:lamp", 1).map_err(String::from));
     show("place-block", content::place_block(4, -5, "gear:brick"));
     show("block-at", (content::block_at(4, -5), content::block_at(0, 0)));
+    use blockheads_mod::settings;
+    show("setting", (settings::get("level"), settings::get("nope")));
+    show("settings-all", settings::all());
+    show("setting-set", settings::set("level", &cbor::Value::Int(7)));
+    show("setting-bad", settings::set("level", &cbor::Value::from("x")).map_err(String::from));
+    show("setting-after", settings::get("level"));
     Ok(())
 }
 

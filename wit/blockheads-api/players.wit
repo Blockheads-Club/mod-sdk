@@ -1,4 +1,4 @@
-package blockheads:api@0.3.2;
+package blockheads:api@0.3.3;
 
 /// Connected players.
 interface players {

@@ -317,6 +317,23 @@ pub trait HostApi {
         None
     }
 
+    /// `settings.get` (API 0.3.3): the current value of one of the calling mod's settings as canonical CBOR, `None`
+    /// for a key the mod does not declare.
+    fn settings_get(&mut self, key: &str) -> Option<Vec<u8>> {
+        let _ = key;
+        None
+    }
+    /// `settings.all` (API 0.3.3): every setting of the calling mod as a CBOR map.
+    fn settings_all(&mut self) -> Vec<u8> {
+        crate::value::Value::Map(Vec::new()).encode()
+    }
+    /// `settings.set` (API 0.3.3): changes one of the calling mod's settings (`value` is CBOR), validated against the
+    /// schema and stored in `mods.toml`.
+    fn settings_set(&mut self, key: &str, value: &[u8]) -> Result<(), ApiError> {
+        let _ = (key, value);
+        Err(ApiError::Unsupported)
+    }
+
     /// `channels.open`.
     fn channel_open(&mut self, name: &str) -> Result<ChannelId, ApiError> {
         let _ = name;

@@ -61,7 +61,7 @@ pub use wit::types::{ApiError, Pos, Priority, Side};
 pub mod prelude {
     pub use crate::commands::{self, Command, Reply, Sender};
     pub use crate::events::{self, EventCtx, EventKind};
-    pub use crate::{channels, content, host, log, players, scheduler, services, storage, ui};
+    pub use crate::{channels, content, host, log, players, scheduler, services, settings, storage, ui};
     pub use crate::{ApiError, Mod, Player, Priority, Role, Side};
 }
 
@@ -341,6 +341,31 @@ pub mod content {
     pub use crate::wit::content::{
         block_at, cosmetics, equip, equipped, give_item, id_of, key_of, place_block, unequip, CosmeticInfo, Kind,
     };
+}
+
+/// The mod's own settings from `[settings]` in `mod.toml` (API 0.3.3). Values are [`crate::cbor::Value`]s; after
+/// every change the host fires the custom event `<mod-id>:settings-changed` with `{"keys": [...]}`.
+pub mod settings {
+    use crate::cbor::Value;
+    use crate::ApiError;
+
+    /// The raw imports (values as CBOR bytes).
+    pub use crate::wit::settings as raw;
+
+    /// The current value of `key`; `None` for a key the mod does not declare.
+    pub fn get(key: &str) -> Option<Value> {
+        raw::get(key).and_then(|b| Value::decode(&b).ok())
+    }
+
+    /// Every setting as a map.
+    pub fn all() -> Value {
+        Value::decode(&raw::all()).unwrap_or(Value::Map(Vec::new()))
+    }
+
+    /// Changes `key` (validated by the host, stored in `mods.toml`).
+    pub fn set(key: &str, value: &Value) -> Result<(), ApiError> {
+        raw::set(key, &value.encode())
+    }
 }
 
 /// HUD widgets, toasts, notices and dialogs on the client (API 0.3). A host without UI (the server) answers every call

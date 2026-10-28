@@ -58,6 +58,9 @@ pub struct Manifest {
     /// New blocks, items and cosmetics.
     #[serde(default)]
     pub content: Content,
+    /// (API 0.3.3) Settings the admin (or the player, `scope = "client"`) can change, in declaration order.
+    #[serde(default)]
+    pub settings: crate::settings::Settings,
 }
 
 /// `[sides]`.
@@ -405,6 +408,7 @@ impl Manifest {
         self.validate_permissions(&mut v);
         self.validate_provides(&mut v);
         self.validate_content(&mut v);
+        v.extend(self.settings.issues().iter().cloned());
         v
     }
 

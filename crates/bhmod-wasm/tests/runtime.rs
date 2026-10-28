@@ -64,7 +64,7 @@ fn tour_calls_every_import() {
     let log = b.log_text();
     assert_eq!(h.mods()[0].state, ModState::Enabled, "{log}");
     for line in [
-        "api = \"0.3.2\"",
+        "api = \"0.3.3\"",
         "id = \"tour\"",
         "version = \"1.2.3\"",
         "side = Side::Server",
@@ -342,7 +342,7 @@ fn bad_components_are_refused() {
     // A component without the guest export.
     f.files.insert("server/missing.wasm".into(), b"(component)".to_vec());
     let e = rt.instantiate("m", &f, LIMITS).err().unwrap();
-    assert!(e.contains("no exported instance named `blockheads:api/guest@0.3.2`"), "{e}");
+    assert!(e.contains("no exported instance named `blockheads:api/guest@0.3.3`"), "{e}");
 }
 
 #[test]
@@ -515,7 +515,7 @@ fn old_components(old_wasm: Vec<u8>) {
         assert_eq!(info.state, ModState::Enabled, "{}: {log}", info.id);
     }
     for line in [
-        "old: api = (\"0.3.2\", \"old\", \"1.0.0\", Side::Server, \"fake-host 1.0\")",
+        "old: api = (\"0.3.3\", \"old\", \"1.0.0\", Side::Server, \"fake-host 1.0\")",
         "[trace] old: lvl",
         "old: p = (\"p1\", \"ALICE\", true, Role::Player, Ok(()), Ok(()))",
         "old: find = Some(\"p1\")",
@@ -592,7 +592,7 @@ fn content_imports() {
     fs::write(d.join("assets/cap.png"), include_bytes!("../../bhmod-core/tests/cap.png")).unwrap();
     let toml = WASM_TOML
         .replace("ID", "gear")
-        .replace("api = \"^0.1\"", "api = \"^0.3.2\"")
+        .replace("api = \"^0.1\"", "api = \"^0.3.3\"")
         .replace("client = false", "client = true")
         .replace("[entry]\n", "[entry]\nclient = { runtime = \"wasm\", path = \"client/mod.wasm\" }\n");
     fs::write(
@@ -600,7 +600,8 @@ fn content_imports() {
         format!(
             "{toml}[content]\ncosmetics = [{{ key = \"gear:cap\", slot = \"hat\", texture = \"assets/cap.png\" }}]\n\
              items = [{{ key = \"gear:lamp\", texture = \"assets/cap.png\" }}]\n\
-             blocks = [{{ key = \"gear:brick\", texture = \"assets/cap.png\", base = \"red-bricks\" }}]\n"
+             blocks = [{{ key = \"gear:brick\", texture = \"assets/cap.png\", base = \"red-bricks\" }}]\n\
+             [settings.level]\ntype = \"int\"\ndefault = 3\nmin = 0\nlabel = \"Level\"\n"
         ),
     )
     .unwrap();
@@ -618,6 +619,11 @@ fn content_imports() {
         "gear: give-item = Ok(())",
         "gear: give-other = Err(\"invalid argument",
         "gear: place-block = Ok(())",
+        "gear: setting = (Some(Int(3)), None)",
+        "gear: settings-all = Map([(\"level\", Int(3))])",
+        "gear: setting-set = Ok(())",
+        "gear: setting-bad = Err(\"invalid argument: level: expected an integer, got a text\")",
+        "gear: setting-after = Some(Int(7))",
         "gear: block-at = (Some(\"gear:brick\"), None)",
         "gear: cosmetics = [CosmeticInfo { key: \"gear:cap\", mod-id: \"gear\", slot: \"hat\", id: Some(1) }]",
         "gear: id-of = (Some(1), None)",
@@ -678,7 +684,7 @@ fn newer_than_0_2_components(old_wasm: Vec<u8>) {
         assert_eq!(info.state, ModState::Enabled, "{}: {log}", info.id);
     }
     for line in [
-        "old: api = (\"0.3.2\", \"old\"",
+        "old: api = (\"0.3.3\", \"old\"",
         "old: pos = (Some(Pos { x: 7, y: 9 }), true, Some(\"p1\"))",
         "old: call = Ok([129, 1])",
         "old: send = Ok(())",

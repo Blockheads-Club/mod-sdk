@@ -1,4 +1,4 @@
-package blockheads:api@0.3.2;
+package blockheads:api@0.3.3;
 
 /// Mod UI on the client (IG-HUD, IG-ModUI): HUD widgets, toasts, notices and dialogs. Mods send data, the loader
 /// draws it with its own kit: mods cannot restyle it, place widgets freely or take focus away from the game. Needs

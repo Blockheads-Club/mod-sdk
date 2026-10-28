@@ -45,6 +45,7 @@ pub mod resolve;
 pub mod runtime;
 pub mod scheduler;
 pub mod services;
+pub mod settings;
 pub mod storage;
 pub mod timings;
 pub mod types;
@@ -58,7 +59,7 @@ pub use remote::{RemoteCall, RemoteCaller, RemoteError, RemoteLimits, RemoteTarg
 pub use runtime::{CallError, HostApi, Instance, Runtime};
 
 /// The `blockheads:api` version this host implements.
-pub const API_VERSION: &str = "0.3.2";
+pub const API_VERSION: &str = "0.3.3";
 
 /// The runtimes compiled into this build.
 pub fn default_runtimes() -> Vec<Box<dyn Runtime>> {

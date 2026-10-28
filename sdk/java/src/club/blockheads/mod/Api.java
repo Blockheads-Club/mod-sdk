@@ -26,6 +26,8 @@ import club.blockheads.api.services.RemoteCaller;
 import club.blockheads.api.services.RemoteTarget;
 import club.blockheads.api.services.Services;
 import club.blockheads.api.services.ServicesImpl;
+import club.blockheads.api.settings.Settings;
+import club.blockheads.api.settings.SettingsImpl;
 import club.blockheads.api.storage.Storage;
 import club.blockheads.api.storage.StorageImpl;
 import club.blockheads.api.types.Priority;
@@ -56,6 +58,7 @@ public final class Api implements EventHandlers {
     private final Services services;
     private final Channels channels;
     private final Ui ui;
+    private final Settings settings;
 
     final Map<Long, Handler<Object>> handlers = new HashMap<Long, Handler<Object>>();
     final Map<Long, CommandHandler> commandHandlers = new HashMap<Long, CommandHandler>();
@@ -78,6 +81,7 @@ public final class Api implements EventHandlers {
         services = new ServicesImpl(b);
         channels = new ChannelsImpl(b);
         ui = new UiImpl(b);
+        settings = new SettingsImpl(b);
     }
 
     /**
@@ -129,6 +133,14 @@ public final class Api implements EventHandlers {
     /** HUD widgets, toasts, notices and dialogs (API 0.3, client mods; servers answer {@code unsupported}). */
     public Ui ui() {
         return ui;
+    }
+
+    /**
+     * (0.3.3) The mod's own settings from {@code [settings]} in {@code mod.toml}. Values are decoded CBOR (Boolean, Long,
+     * Double, String, List, Map); every change fires the custom event {@code <mod-id>:settings-changed}.
+     */
+    public Settings settings() {
+        return settings;
     }
 
     // -- logging -----------------------------------------------------------------------------------------------

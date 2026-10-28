@@ -702,6 +702,9 @@ fn call_host(h: &mut dyn HostApi, f: &str, a: &[Value]) -> Result<Value, String>
         "scheduler.run-next-poll" => api_result(h.run_next_poll(), |id| Value::Int(id as i64)),
         "scheduler.cancel" => Value::Bool(h.cancel_task(int(a, 0)? as TaskId)),
 
+        "settings.get" => h.settings_get(text(a, 0)?).map_or(Value::Null, Value::Bytes),
+        "settings.all" => Value::Bytes(h.settings_all()),
+        "settings.set" => api_result(h.settings_set(text(a, 0)?, bytes_arg(a, 1)?), |()| Value::Null),
         "storage.get" => h.storage_get(text(a, 0)?).map_or(Value::Null, Value::Bytes),
         "storage.set" => api_result(h.storage_set(text(a, 0)?, bytes_arg(a, 1)?), |()| Value::Null),
         "storage.delete" => Value::Bool(h.storage_delete(text(a, 0)?)),
@@ -1267,6 +1270,15 @@ mod tests {
         fn storage_delete(&mut self, key: &str) -> bool {
             key == "k"
         }
+        fn settings_get(&mut self, key: &str) -> Option<Vec<u8>> {
+            (key == "radius").then(|| vec![0x18, 32])
+        }
+        fn settings_all(&mut self) -> Vec<u8> {
+            vec![0xa0]
+        }
+        fn settings_set(&mut self, key: &str, value: &[u8]) -> Result<(), ApiError> {
+            self.res(&format!("setting {key} {value:?}"), ())
+        }
         fn storage_keys(&mut self, prefix: &str) -> Vec<String> {
             vec![format!("{prefix}a")]
         }
@@ -1476,6 +1488,11 @@ mod tests {
         assert_eq!(call(&mut h, "storage.set", &[t("k"), Value::Bytes(vec![9])]), ok(Value::Null));
         assert_eq!(call(&mut h, "storage.delete", &[t("k")]), Value::Bool(true));
         assert_eq!(call(&mut h, "storage.keys", &[t("p")]), Value::List(vec![t("pa")]));
+        assert_eq!(call(&mut h, "settings.get", &[t("radius")]), Value::Bytes(vec![0x18, 32]));
+        assert_eq!(call(&mut h, "settings.get", &[t("z")]), Value::Null);
+        assert_eq!(call(&mut h, "settings.all", &[]), Value::Bytes(vec![0xa0]));
+        assert_eq!(call(&mut h, "settings.set", &[t("radius"), Value::Bytes(vec![1])]), ok(Value::Null));
+        assert!(h.calls.contains(&"setting radius [1]".to_string()));
     }
 
     #[test]

@@ -1,0 +1,19 @@
+schema = 1
+id = "voice-demo"
+version = "1.0.0"
+name = { en = "Voice demo" }
+authors = ["me"]
+license = "MIT"
+api = "^0.3"
+
+[sides]
+server = true
+
+[entry]
+server = { runtime = "lua", path = "server/main.luau" }
+
+[settings.x]
+type = "list"
+default = []
+label = "X"
+item = { inner = { type = "list", default = [], label = "Inner" } }
