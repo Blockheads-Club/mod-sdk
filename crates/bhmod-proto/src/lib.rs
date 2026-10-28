@@ -48,6 +48,9 @@ pub mod feature {
     pub const VOICE: &str = "voice";
     /// Mod settings ops `SETTINGS_*` (0x19-0x1b).
     pub const SETTINGS: &str = "settings";
+    /// The client can send unsequenced in-band `VOICE_FRAME`s (ENet channel 0). A `voice` client without it uses
+    /// the dedicated UDP port only.
+    pub const VOICE_INBAND: &str = "voice-inband";
 }
 
 /// `SETTINGS_RESULT` failure codes.

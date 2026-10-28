@@ -104,7 +104,7 @@ Ops `09`, `0a`-`0f` and `1c`-`ff` are reserved.
 | `api` | text | Highest `blockheads:api` version the loader implements, e.g. `0.1.0`. |
 | `runtimes` | array of text | Available runtimes: `wasm`, `lua`, `jvm`, `native`. |
 | `cached` | array of bytes(32) | SHA-256 of packages already in the client cache (may be empty; servers may use it to skip transfers). |
-| `features` | array of text, optional | Optional op groups the loader speaks: `voice` (0x15-0x18), `settings` (0x19-0x1b). Omitted when empty. |
+| `features` | array of text, optional | Optional op groups the loader speaks: `voice` (0x15-0x18), `settings` (0x19-0x1b), `voice-inband` (it can send unsequenced in-band `VOICE_FRAME`s; without it a `voice` client uses the UDP port only). Omitted when empty. |
 
 ### 01 SERVER_HELLO (server -> client)
 
@@ -306,7 +306,8 @@ client may pin the server's voice key per server address (trust on first use).
 
 ### 16 VOICE_FRAME (both directions, unreliable + unsequenced)
 
-Raw: `bc 16`, `nonce` (u64 LE), `sealed` = ChaCha20-Poly1305(key of the direction, nonce = `00000000 ||
+Sent in-band as an ENet `SEND_UNSEQUENCED` on **channel 0** (the vanilla client opens 8 channels; the per-peer
+channel of the reliable ops does not apply). Raw: `bc 16`, `nonce` (u64 LE), `sealed` = ChaCha20-Poly1305(key of the direction, nonce = `00000000 ||
 nonce:u64le`, no associated data) of the plaintext, 16-byte tag included (16..=1024 bytes). The nonce counts up from
 1 per direction and key; a receiver keeps a 64-frame replay window and drops repeats, too old nonces and frames that do
 not open. Plaintexts:
@@ -319,6 +320,8 @@ S->C: speaker:u16le mode:u8 seq:u16le gain:u8 pan:i8 muffle:u8 opus[..]
 - `mode`: `0` proximity, `1` global, `2` channel, `3` admin broadcast. `seq` counts the speaker's 20 ms frames.
 - `gain`: server speaker gain x route gain in percent, `0..=200`. `pan`: `-127` (left) ..= `127` (right).
   `muffle`: `0` (clear) ..= `255` (fully muffled, low-pass).
+- The Opus payload is at most **400 bytes** (an unsequenced packet over ENet's fragment threshold of 1364 bytes would
+  turn into reliable fragments); a relay may cap it lower from its bitrate cap (2 × the CBR size).
 - The server never decodes the Opus payload; it opens the client's frame, checks caps (bitrate, speakers, rate,
   mutes) and seals one copy per listener of the mod's route table.
 
@@ -330,9 +333,11 @@ AUTH   (C->S): 01 peer:u16le token[32]     server answers 02 peer:u16le (AUTH_OK
 FRAME  (both): 03 peer:u16le nonce:u64le sealed
 ```
 
-The frame bytes and replay window are shared with the in-band path (one nonce counter per direction). `auto` starts
-in-band and moves a peer to UDP when its frames do not fit the in-band budget or the measured loss is high, and only
-once that peer authenticated on UDP.
+The client sends first (NAT) and repeats `AUTH` every 15 s as a keepalive. The frame bytes and replay window are
+shared with the in-band path (one nonce counter per direction). With no port configured everything stays in-band.
+`auto` starts in-band and moves a peer to UDP (and keeps it there) only once that peer authenticated on UDP and: it
+did not list `voice-inband`, a frame does not fit the in-band budget (200 bytes per 0xBC packet), the measured loss
+is over 10 % or the server's poll lag is over 30 ms.
 
 ### 17 VOICE_STATE (server -> client)
 
