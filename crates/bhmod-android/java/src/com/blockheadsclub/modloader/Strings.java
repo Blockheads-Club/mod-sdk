@@ -235,6 +235,30 @@ final class Strings {
             "Çoğu mod zaman ve bellek sınırları olan korumalı bir alanda çalışır. Oyunu sürekli yavaşlatan bir mod kendiliğinden kapanır.",
             "Большинство модов работают в песочнице с ограничениями времени и памяти. Мод, который тормозит игру, отключается сам.",
             "Көп мод уақыт пен жад шектеулері бар құмсалғышта жұмыс істейді. Ойынды үнемі баяулататын мод өздігінен өшеді.");
+        // voice chat and mod settings (API 0.3.4)
+        p("mode_proximity", "Nearby", "Yakındakiler", "Рядом", "Жақын маң");
+        p("mode_global", "Everyone", "Herkes", "Все", "Барлығы");
+        p("mode_channel", "Channel", "Kanal", "Канал", "Арна");
+        p("mode_broadcast", "Broadcast", "Duyuru", "Объявление", "Хабарландыру");
+        p("pick_mode", "Talk to", "Kime konuş", "Говорить", "Кімге сөйлеу");
+        p("mic_on", "Mic on: {mode}", "Mikrofon açık: {mode}", "Микрофон включён: {mode}", "Микрофон қосулы: {mode}");
+        p("mic_denied", "Voice chat needs the microphone. You can allow it in the Android settings.",
+            "Sesli sohbet için mikrofon gerekir. Android ayarlarından izin verebilirsin.",
+            "Голосовому чату нужен микрофон. Разреши его в настройках Android.",
+            "Дауыстық чатқа микрофон керек. Android баптауларында рұқсат бере аласың.");
+        p("settings", "Settings", "Ayarlar", "Настройки", "Баптаулар");
+        p("settings_title", "{mod} settings", "{mod} ayarları", "Настройки: {mod}", "{mod} баптаулары");
+        p("settings_mine", "On this phone", "Bu telefonda", "На этом телефоне", "Осы телефонда");
+        p("settings_server", "Server (admin)", "Sunucu (yönetici)", "Сервер (админ)", "Сервер (әкімші)");
+        p("settings_keys", "Keys", "Tuşlar", "Клавиши", "Пернелер");
+        p("settings_voice", "Voice volume", "Ses düzeyi", "Громкость голоса", "Дауыс деңгейі");
+        p("settings_none", "This mod has no settings.", "Bu modun ayarı yok.", "У этого мода нет настроек.", "Бұл модтың баптауы жоқ.");
+        p("settings_saved", "Saved", "Kaydedildi", "Сохранено", "Сақталды");
+        p("settings_restart", "Applies after a restart", "Yeniden başlatınca geçerli", "Применится после перезапуска", "Қайта іске қосқанда қолданылады");
+        p("key_none", "None", "Yok", "Нет", "Жоқ");
+        p("key_press", "Press a key…", "Bir tuşa bas…", "Нажми клавишу…", "Пернені бас…");
+        p("key_default", "Default", "Varsayılan", "По умолчанию", "Әдепкі");
+        p("save", "Save", "Kaydet", "Сохранить", "Сақтау");
         p("skip", "Skip", "Geç", "Пропустить", "Өткізу");
         p("next", "Next", "İleri", "Далее", "Келесі");
         p("play", "Play", "Oyna", "Играть", "Ойнау");

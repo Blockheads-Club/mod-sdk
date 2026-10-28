@@ -4,6 +4,8 @@
 
 pub mod audio;
 pub mod net;
+pub mod pipeline;
+pub mod udp;
 
 use audio::{AudioIo, Mic};
 

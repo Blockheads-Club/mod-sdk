@@ -29,7 +29,16 @@ public final class Bridge {
 
     static void activity(final Activity a) {
         activity = new WeakReference<>(a);
-        ui.post(new Runnable() { public void run() { Overlay.attach(a); } });
+        ui.post(new Runnable() {
+            public void run() {
+                Overlay.attach(a);
+                try {
+                    Keys.attach(a);
+                } catch (Throwable t) {
+                    Log.w(TAG, "key bindings unavailable", t);
+                }
+            }
+        });
     }
 
     static void activityGone(final Activity a) {

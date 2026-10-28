@@ -34,6 +34,8 @@ final class Overlay {
     static View dialog;
     static boolean ready, inWorld, welcomeChecked;
     static String version = "?";
+    /** Running mods that have a settings screen (ids), from the last `world` command. */
+    static org.json.JSONArray running;
 
     private Overlay() {}
 
@@ -171,11 +173,18 @@ final class Overlay {
                 break;
             case "world":
                 inWorld = c.optBoolean("open");
+                running = c.optJSONArray("settings");
+                if (!inWorld) {
+                    VoiceUi.clearAll();
+                    if (SettingsScreen.open) SettingsScreen.close();
+                }
                 updateMark();
                 raise();
                 break;
             default:
                 if (ModUi.handles(t)) ModUi.command(t, c);
+                else if (VoiceUi.handles(t)) VoiceUi.command(t, c);
+                else if (SettingsScreen.handles(t)) SettingsScreen.command(t, c);
                 else JoinFlow.command(t, c);
         }
     }

@@ -9,10 +9,12 @@
 #![warn(missing_docs)]
 
 pub mod api;
+pub mod device;
 pub mod fonts;
 pub mod inbox;
 pub mod loader;
 pub mod menus;
+pub mod overhead;
 pub mod ui;
 pub mod voice;
 pub mod weapons;
