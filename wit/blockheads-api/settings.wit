@@ -1,4 +1,4 @@
-package blockheads:api@0.3.3;
+package blockheads:api@0.3.4;
 
 /// (0.3.3) The calling mod's settings, declared in `[settings.<key>]` of `mod.toml`. The admin sets the values in
 /// `mods.toml` (`[<mod-id>.settings]`), the host app, `/mod set <mod> <key> <value>` or the in-game admin screen; edits

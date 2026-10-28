@@ -1,5 +1,5 @@
 //! Mod settings at run time (API 0.3.3): the values of every mod's `[settings]` live in `mods.toml`
-//! (`[<mod-id>.settings]`), are validated against the manifest, change through the admin (`/mod set`, the host app,
+//! (`[<mod-id>.settings]`), are validated against the manifest, change through the admin (`/mods set`, the host app,
 //! the in-game admin screen) or the mod itself (`settings.set`), and every change fires the custom event
 //! `<mod-id>:settings-changed` with the payload `{"keys": [...]}`.
 //!

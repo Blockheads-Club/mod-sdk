@@ -522,6 +522,9 @@ impl<P: Platform + 'static> Loader<P> {
                     self.p.abort_join();
                 }
                 Output::Reject(r) => self.p.ui(ui::reject(&self.server, &r)),
+                // The voice host and the admin settings screen are not wired yet: the loader lists neither `voice`
+                // nor `settings` in `HELLO`, so the session never yields these (dropped if it did).
+                Output::Voice(_) | Output::SettingsSchema(_) | Output::SettingsResult(_) => {}
                 Output::Cosmetics(c) => {
                     let changed = self.content_lock().apply(&c);
                     self.p.log(

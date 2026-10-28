@@ -291,6 +291,8 @@ pub struct ModPermissions {
     pub channels: bool,
     /// Native / unsandboxed code.
     pub native: bool,
+    /// Voice chat (API 0.3.4); omitted on the wire when false.
+    pub voice: bool,
 }
 
 /// One entry of `MOD_LIST`.
@@ -487,9 +489,20 @@ pub struct VoiceState {
     pub players: BTreeMap<String, String>,
     /// Vanilla `playerID` -> speaker id of the `VOICE_FRAME`s (omitted on the wire when empty).
     pub speakers: BTreeMap<String, u16>,
-    /// Which icons the admin shows: `speaking`, `no_voice`, `self_mute`, `admin_mute` -> visible (omitted when
-    /// empty).
+    /// Which icons the admin shows: `speaking`, `no_voice`, `self_mute`, `deafen`, `admin_mute` -> visible (omitted
+    /// when empty).
     pub icons: BTreeMap<String, bool>,
+    /// (API 0.3.4) The talk modes the receiving player may use: bit 0 proximity, 1 global, 2 channel, 3 broadcast
+    /// (omitted when `None`).
+    pub modes: Option<u8>,
+    /// (API 0.3.4) The activations the receiving player may use: bit 0 push-to-talk, 1 voice activation, 2 toggle
+    /// (omitted when `None`).
+    pub activations: Option<u8>,
+    /// (API 0.3.4) The encoder bitrate in bits per second (omitted when `None`).
+    pub bitrate: Option<u32>,
+    /// (API 0.3.4) Vanilla `playerID` -> alias of the players listed for the first time (omitted when empty), so a
+    /// client knows every player's name.
+    pub names: BTreeMap<String, String>,
 }
 
 /// `VOICE_CTRL` (C->S): the player's own mute switches.
@@ -538,6 +551,10 @@ pub struct SettingsFailure {
 pub struct SettingsResult {
     /// `Ok(())` when the value was stored.
     pub outcome: Result<(), SettingsFailure>,
+    /// (API 0.3.4) The `mod` of the answered `SETTINGS_SET` (omitted when `None`).
+    pub mod_id: Option<String>,
+    /// (API 0.3.4) The `key` of the answered `SETTINGS_SET` (omitted when `None`).
+    pub key: Option<String>,
 }
 
 /// A decoded 0xBC packet.
@@ -784,6 +801,18 @@ impl Message {
                 if !v.icons.is_empty() {
                     e.push(("icons", Value::Map(v.icons.iter().map(|(k, b)| (text(k), Value::Bool(*b))).collect())));
                 }
+                if !v.names.is_empty() {
+                    e.push(("names", Value::Map(v.names.iter().map(|(k, n)| (text(k), text(n))).collect())));
+                }
+                for (k, n) in [
+                    ("modes", v.modes.map(u32::from)),
+                    ("activations", v.activations.map(u32::from)),
+                    ("bitrate", v.bitrate),
+                ] {
+                    if let Some(n) = n {
+                        e.push((k, Value::Uint(u64::from(n))));
+                    }
+                }
                 map(e)
             }
             Message::VoiceCtrl(c) => {
@@ -797,16 +826,24 @@ impl Message {
             Message::SettingsSet(s) => {
                 map(vec![("mod", text(&s.mod_id)), ("key", text(&s.key)), ("value", Value::Bytes(s.value.clone()))])
             }
-            Message::SettingsResult(r) => match &r.outcome {
-                Ok(()) => map(vec![("ok", Value::Bool(true))]),
-                Err(f) => {
-                    let mut e = vec![("ok", Value::Bool(false)), ("code", Value::Uint(u64::from(f.code)))];
-                    if let Some(m) = &f.message {
-                        e.push(("message", text(m)));
+            Message::SettingsResult(r) => {
+                let mut e = match &r.outcome {
+                    Ok(()) => vec![("ok", Value::Bool(true))],
+                    Err(f) => {
+                        let mut e = vec![("ok", Value::Bool(false)), ("code", Value::Uint(u64::from(f.code)))];
+                        if let Some(m) = &f.message {
+                            e.push(("message", text(m)));
+                        }
+                        e
                     }
-                    map(e)
+                };
+                for (k, v) in [("mod", &r.mod_id), ("key", &r.key)] {
+                    if let Some(v) = v {
+                        e.push((k, text(v)));
+                    }
                 }
-            },
+                map(e)
+            }
             Message::VoiceFrame(f) => {
                 let mut raw = f.nonce.to_le_bytes().to_vec();
                 raw.extend(&f.sealed);
@@ -965,6 +1002,11 @@ fn decode_cbor(op: Op, f: &Fields) -> Result<Message, Error> {
                         "icons",
                     )
                 })?,
+                names: opt_map("names")?
+                    .map_or(Ok(BTreeMap::new()), |m| m.entries(|v| as_text(v, "names"), "names"))?,
+                modes: f.opt_u8("modes")?,
+                activations: f.opt_u8("activations")?,
+                bitrate: f.opt_u32("bitrate")?,
             })
         }
         Op::VoiceCtrl => Message::VoiceCtrl(VoiceCtrl { self_mute: f.bool("selfMute")?, deafen: f.bool("deafen")? }),
@@ -985,6 +1027,8 @@ fn decode_cbor(op: Op, f: &Fields) -> Result<Message, Error> {
                 let code = u8::try_from(f.uint("code")?).map_err(|_| Error::Type("code"))?;
                 Err(SettingsFailure { code, message: f.opt_text("message")? })
             },
+            mod_id: f.opt_text("mod")?,
+            key: f.opt_text("key")?,
         }),
         // FILE_CHUNK, CHANNEL and VOICE_FRAME never reach here; CHANNEL_REGISTER is the remaining CBOR message.
         _ => Message::ChannelRegister(ChannelRegister { name: f.text("name")?, id: f.u16("id")? }),
@@ -1014,7 +1058,10 @@ fn mod_info(m: &ModInfo) -> Value {
                 ("netHttp", texts(&p.net_http)),
                 ("channels", Value::Bool(p.channels)),
                 ("native", Value::Bool(p.native)),
-            ]),
+            ]
+            .into_iter()
+            .chain(p.voice.then_some(("voice", Value::Bool(true))))
+            .collect()),
         ),
         ("indexListed", Value::Bool(m.index_listed)),
     ];
@@ -1136,6 +1183,18 @@ impl Fields {
         self.texts(key)
     }
 
+    fn opt_bool(&self, key: &'static str) -> Result<Option<bool>, Error> {
+        self.get(key).map(|_| self.bool(key)).transpose()
+    }
+
+    fn opt_u32(&self, key: &'static str) -> Result<Option<u32>, Error> {
+        self.get(key).map(|_| self.u32(key)).transpose()
+    }
+
+    fn opt_u8(&self, key: &'static str) -> Result<Option<u8>, Error> {
+        self.get(key).map(|v| u8::try_from(as_uint(v, key)?).map_err(|_| Error::Type(key))).transpose()
+    }
+
     fn opt_u16(&self, key: &'static str) -> Result<Option<u16>, Error> {
         self.get(key).map(|v| as_u16(v, key)).transpose()
     }
@@ -1209,6 +1268,7 @@ impl Fields {
                 net_http: p.texts("netHttp")?,
                 channels: p.bool("channels")?,
                 native: p.bool("native")?,
+                voice: p.opt_bool("voice")?.unwrap_or(false),
             },
             source_url: self.opt_text("sourceUrl")?,
             index_listed: self.bool("indexListed")?,

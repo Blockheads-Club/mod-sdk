@@ -30,4 +30,10 @@ public interface Host {
      * A short host name and version, for logs only (for example `blockheads-server 0.2.0`).
      */
     String hostName();
+
+    /**
+     * (0.3.4) The platform: `server-linux-x86_64`, `pc-windows-x86_64`, `pc-linux-x86_64`, `pc-macos-aarch64`,
+     * `android-armv7`, ... (`&lt;host&gt;-&lt;os&gt;-&lt;arch&gt;`; `unknown` when the host does not say).
+     */
+    String platform();
 }

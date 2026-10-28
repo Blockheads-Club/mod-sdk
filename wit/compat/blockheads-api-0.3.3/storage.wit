@@ -1,0 +1,21 @@
+package blockheads:api@0.3.3;
+
+/// A small per-mod, per-world key-value store. It never touches the vanilla world save.
+///
+/// Limits: keys 1-256 bytes of UTF-8, values up to 1 MiB, 64 MiB per mod per world. Writes are durable after the
+/// next `world-save` post phase (hosts may flush sooner).
+interface storage {
+    use types.{api-error};
+
+    /// Reads a value.
+    get: func(key: string) -> option<list<u8>>;
+
+    /// Writes a value, replacing any old one.
+    set: func(key: string, value: list<u8>) -> result<_, api-error>;
+
+    /// Deletes a value. Returns false if the key did not exist.
+    delete: func(key: string) -> bool;
+
+    /// Lists keys starting with `prefix` in byte order ("" lists all keys).
+    keys: func(prefix: string) -> list<string>;
+}

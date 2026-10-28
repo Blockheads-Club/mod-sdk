@@ -23,6 +23,8 @@
 //!   ([`budget`]); cross-mod interop through services ([`services`]), custom events, channels ([`channels`]) and
 //!   host handles ([`handles`]), with values as canonical CBOR ([`value`]).
 //! - A host program implements [`GameBridge`] and calls the `ModHost` at its hook points.
+//! - Voice chat, key bindings and the 0xBC settings ops (API 0.3.4): [`voice`] ([`VoiceHost`]), [`input`],
+//!   [`netsettings`].
 //! - Languages plug in through [`Runtime`] / [`Instance`] / [`HostApi`] ([`runtime`]); Luau ships in `lua`.
 #![warn(missing_docs)]
 #![deny(unsafe_code)]
@@ -36,10 +38,12 @@ pub mod config;
 pub mod discover;
 pub mod handles;
 pub mod host;
+pub mod input;
 #[cfg(feature = "jvm")]
 pub mod jvm;
 #[cfg(feature = "luau")]
 pub mod lua;
+pub mod netsettings;
 pub mod remote;
 pub mod resolve;
 pub mod runtime;
@@ -51,15 +55,17 @@ pub mod timings;
 pub mod types;
 pub mod ui;
 pub mod value;
+pub mod voice;
 pub mod watch;
 
 pub use bridge::GameBridge;
-pub use host::{HostOptions, ModHost, ModInfo, ModState, ReloadOutcome, ReloadResult};
+pub use host::{HostOptions, ModHost, ModInfo, ModState, PlayerEvent, ReloadOutcome, ReloadResult};
 pub use remote::{RemoteCall, RemoteCaller, RemoteError, RemoteLimits, RemoteTarget};
 pub use runtime::{CallError, HostApi, Instance, Runtime};
+pub use voice::VoiceHost;
 
 /// The `blockheads:api` version this host implements.
-pub const API_VERSION: &str = "0.3.3";
+pub const API_VERSION: &str = "0.3.4";
 
 /// The runtimes compiled into this build.
 pub fn default_runtimes() -> Vec<Box<dyn Runtime>> {

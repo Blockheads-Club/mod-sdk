@@ -1,0 +1,44 @@
+package blockheads:api@0.3.3;
+
+/// Named byte channels between mods, and between a server mod and its client half. Local delivery works since 0.2
+/// (messages are queued and delivered on the next poll or tick, never during `send`); the network targets travel
+/// as 0xBC `CHANNEL` packets from milestone M5 and report `unsupported` until then.
+interface channels {
+    use types.{mod-id, api-error};
+    use players.{player};
+
+    /// A channel opened by the calling mod.
+    type channel-id = u32;
+
+    /// Where a message goes.
+    variant target {
+        /// Every mod on this side that opened the same channel name.
+        local,
+        /// The server (from a client mod).
+        server,
+        /// One player's client (from a server mod).
+        player(borrow<player>),
+        /// Every connected client running the mod (from a server mod).
+        all-players,
+    }
+
+    /// Where a received message came from.
+    variant source {
+        /// Another mod on the same side.
+        local(mod-id),
+        /// The server.
+        server,
+        /// A player's client.
+        player(borrow<player>),
+    }
+
+    /// Opens (or joins) the channel `name`, which must be `<mod-id>:<name>` of a mod the caller is or depends on.
+    /// Needs the `channels` permission.
+    open: func(name: string) -> result<channel-id, api-error>;
+
+    /// Sends up to 32 KiB of bytes.
+    send: func(channel: channel-id, to: target, data: list<u8>) -> result<_, api-error>;
+
+    /// Closes a channel. Returns false if it was not open.
+    close: func(channel: channel-id) -> bool;
+}

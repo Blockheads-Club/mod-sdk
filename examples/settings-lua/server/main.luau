@@ -1,6 +1,6 @@
 --!strict
 -- Greets players who join. Everything it says comes from its settings: change them with
--- `/mod set settings-lua greeting Hello {name}`, in mods.toml or in the host app.
+-- `/mods set settings-lua greeting Hello {name}`, in mods.toml or in the host app.
 
 local mod = {}
 
@@ -47,7 +47,7 @@ function mod.on_enable()
 	end)
 	bh.commands.register({ name = "quiet", usage = "/quiet", min_role = "admin" }, function()
 		bh.settings.set("enabled", false)
-		return "Greetings are off. /mod set settings-lua enabled true turns them on."
+		return "Greetings are off. /mods set settings-lua enabled true turns them on."
 	end)
 end
 

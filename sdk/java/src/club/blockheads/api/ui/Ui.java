@@ -12,6 +12,11 @@ package club.blockheads.api.ui;
  * delivered to the mod that opened the dialog only; the payload is a `types.value` map
  * `{"dialog": u32, "button": u32, "text": string or null}` (`button` counts from 0, `null` text when the dialog
  * has no field). Closing the dialog from the loader side (back, the game leaving the world) is `button` 4294967295.
+ * 
+ * (0.3.4) Overhead icons, on-screen buttons and the settings screen. Button input arrives as the custom event
+ * `&lt;mod-id&gt;:ui-button` with the payload `{"id": text, "action": "press" | "release" | "long-press"}`, delivered to
+ * the mod that owns the button only. When the player taps or clicks a blockhead, every client mod gets the custom
+ * event `&lt;its-mod-id&gt;:ui-pick` with `{"player": id}` (for example to open a per-player volume dialog).
  */
 public interface Ui {
     /**
@@ -45,4 +50,37 @@ public interface Ui {
      * Closes a dialog of the mod without an answer. Returns false if it was not open.
      */
     boolean closeDialog(long id);
+
+    /**
+     * (0.3.4) Shows `icon` above a player's blockhead (one icon per player and mod; a new one replaces it). The
+     * loader hides voice icons the server's admin turned off (`voice.icons`).
+     */
+    void setOverhead(club.blockheads.api.players.Player who, club.blockheads.api.ui.OverheadIcon icon);
+
+    /**
+     * (0.3.4) Removes the mod's icon from a player. False when there was none.
+     */
+    boolean clearOverhead(club.blockheads.api.players.Player who);
+
+    /**
+     * (0.3.4) Shows or updates a button. `id` follows the widget id rules; a mod has up to 4 buttons.
+     */
+    void setButton(String id, club.blockheads.api.ui.Button button);
+
+    /**
+     * (0.3.4) Removes a button. False if it did not exist.
+     */
+    boolean removeButton(String id);
+
+    /**
+     * (0.3.4) Opens the loader's settings screen for mod `mod-id` (any loaded mod with settings or key bindings):
+     * its `scope = "client"` settings (stored on this device), its key bindings and, for an admin of a server that
+     * sent the mod's schema (0xBC `SETTINGS_SCHEMA`), its server settings. `invalid-argument` for an unknown mod.
+     */
+    void openSettings(String modId);
+
+    /**
+     * (0.3.4) True when the device has a touch screen (draw on-screen buttons, expect taps instead of keys).
+     */
+    boolean hasTouch();
 }

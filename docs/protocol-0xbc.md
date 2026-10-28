@@ -86,11 +86,11 @@ client                                   modded server                  vanilla 
 | `14` | both | `SERVICE_RESULT` | `{id, ok, value}` or `{id, ok, code, message}` |
 | `15` | both | `VOICE_KEY` | `{pub[, peer, udpPort]}` |
 | `16` | both | `VOICE_FRAME` | raw, unreliable: `nonce:u64le sealed[16..=1024]` |
-| `17` | S->C | `VOICE_STATE` | `{full, players[, speakers, icons]}` |
+| `17` | S->C | `VOICE_STATE` | `{full, players[, speakers, icons, modes, activations, bitrate, names]}` |
 | `18` | C->S | `VOICE_CTRL` | `{selfMute, deafen}` |
 | `19` | S->C | `SETTINGS_SCHEMA` | `{mod, schema, values}` |
 | `1a` | C->S | `SETTINGS_SET` | `{mod, key, value}` |
-| `1b` | S->C | `SETTINGS_RESULT` | `{ok}` or `{ok, code[, message]}` |
+| `1b` | S->C | `SETTINGS_RESULT` | `{ok[, mod, key]}` or `{ok, code[, message, mod, key]}` |
 
 Ops `09`, `0a`-`0f` and `1c`-`ff` are reserved.
 
@@ -148,7 +148,7 @@ Mod entry:
 | `clientRequired` | bool | Whether this mod's client half is required to join. |
 | `sha256` | bytes(32) | SHA-256 of the `.bhmod`. |
 | `size` | uint | Size of the `.bhmod` in bytes. |
-| `permissions` | map | `{world: text, players: [text], netHttp: [text], channels: bool, native: bool}` |
+| `permissions` | map | `{world: text, players: [text], netHttp: [text], channels: bool, native: bool[, voice: bool]}` (`voice`, API 0.3.4, only when true) |
 | `indexListed` | bool | The public index lists this id, version **and** sha256. |
 | `sourceUrl` | text, optional | A URL the client may download from instead (the hash must match). |
 
@@ -346,7 +346,15 @@ is over 10 % or the server's poll lag is over 30 ms.
 | `full` | bool | `true` replaces everything the client knew; `false` is a delta for the listed players. |
 | `players` | map playerID -> text | `none` (no voice: vanilla or mod off), `ready`, `talking`, `self_muted`, `deafened`, `admin_muted`; in a delta `gone` = left. |
 | `speakers` | map playerID -> uint ≤ 65535, optional | The speaker id the player's frames carry. |
-| `icons` | map text -> bool, optional | Overhead icon visibility set by the admin: `speaking`, `no_voice`, `self_mute`, `admin_mute`. |
+| `icons` | map text -> bool, optional | Overhead icon visibility set by the admin: `speaking`, `no_voice`, `self_mute`, `deafen`, `admin_mute`. |
+| `modes` | uint ≤ 255, optional | (API 0.3.4) Talk modes the **receiving** player may use: bit 0 proximity, 1 global, 2 channel, 3 broadcast. |
+| `activations` | uint ≤ 255, optional | (API 0.3.4) Activations the receiving player may use: bit 0 push-to-talk, 1 voice activation, 2 toggle. |
+| `bitrate` | uint, optional | (API 0.3.4) Encoder bitrate (bits per second) the server's cap asks for. |
+| `names` | map playerID -> text, optional | (API 0.3.4) Aliases of players listed for the first time (the full state names everyone), so clients know every player. |
+
+Absent `modes` / `activations` / `bitrate` keep the last value (a delta) or mean the defaults (a full state: no
+modes, all activations, 24000). The reference server is `bhmod_voice::server` (sends a full state when a player's
+voice session starts, then deltas).
 
 ### 18 VOICE_CTRL (client -> server)
 
@@ -364,7 +372,7 @@ Server-scope mod settings, for the in-game admin form. Only between the server a
 - `SETTINGS_SET {mod: text, key: text, value: bytes}` (C->S): `value` is canonical CBOR, at most 32768 bytes. The
   server checks admin rights and validates against the schema.
 - `SETTINGS_RESULT` (S->C), one per `SETTINGS_SET` in order: `{ok: true}` or `{ok: false, code: uint ≤ 255,
-  message?: text}`; codes `1` NOT_PERMITTED, `2` UNKNOWN_MOD, `3` UNKNOWN_KEY, `4` INVALID_VALUE, `5` BUSY,
+  message?: text}`, since API 0.3.4 with optional `mod` and `key` naming the answered set; codes `1` NOT_PERMITTED, `2` UNKNOWN_MOD, `3` UNKNOWN_KEY, `4` INVALID_VALUE, `5` BUSY,
   `6` INTERNAL (unknown codes read as INTERNAL).
 
 ## 6. Join after acceptance

@@ -1,4 +1,4 @@
-package blockheads:api@0.3.3;
+package blockheads:api@0.3.4;
 
 /// Connected players.
 interface players {
@@ -37,6 +37,12 @@ interface players {
         /// Disconnects the player with a reason text (shown to modded clients; vanilla clients see the generic
         /// kick message). Needs the `players:kick` permission.
         kick: func(reason: string) -> result<_, api-error>;
+        /// (0.3.4) True while the player's blockhead sleeps (in a bed or tent). Server only; false elsewhere and for a
+        /// player who left. The host fires the custom events `player:sleep` and `player:wake` with `{"player": id}`.
+        sleeping: func() -> bool;
+        /// (0.3.4) True while the player's blockhead is alive (not dead and waiting to respawn). Server only; false
+        /// elsewhere and for a player who left. After a respawn the host fires `player:respawn` with `{"player": id}`.
+        alive: func() -> bool;
     }
 
     /// Looks up a connected player by id.
@@ -53,4 +59,12 @@ interface players {
 
     /// Sends a chat line to every player, shown as a server message. Needs the `players:chat` permission.
     broadcast: func(text: string) -> result<_, api-error>;
+
+    /// (0.3.4) The player of this game client (named `local-player` because `local` is a Luau keyword); `none` on the
+    /// server and before the client knows its own id.
+    local-player: func() -> option<player>;
+
+    /// (0.3.4) True when the player's client runs mod `mod-id` (it accepted the join with it, or has it installed).
+    /// Server only (clients answer false). Tells a vanilla client from a modded one that has not started voice yet.
+    has-mod: func(who: borrow<player>, mod-id: string) -> bool;
 }

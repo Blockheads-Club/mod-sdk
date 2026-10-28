@@ -14,6 +14,7 @@ fn perms(o: &Offer) -> Value {
         "players": p.players,
         "netHttp": p.net_http,
         "channels": p.channels,
+        "voice": p.voice,
         "native": p.native,
     })
 }
@@ -102,6 +103,15 @@ pub fn mod_ui(mod_id: &str, c: &UiCommand) -> String {
             "buttons": dialog.buttons.iter().map(|b| json!({"label": b.label, "kind": b.kind.name()})).collect::<Vec<_>>(),
         }),
         UiCommand::CloseDialog { id } => json!({"t": "ui-close", "id": id}),
+        // API 0.3.4; the Java side ignores types it does not draw yet.
+        UiCommand::SetOverhead { player, icon } => json!({"t": "ui-overhead", "player": player, "icon": icon.name()}),
+        UiCommand::ClearOverhead { player } => json!({"t": "ui-overhead", "player": player, "icon": null}),
+        UiCommand::SetButton { id, button: b } => json!({
+            "t": "ui-button", "id": id, "icon": b.icon, "label": b.label, "x": b.x, "y": b.y,
+            "size": b.size, "opacity": b.opacity,
+        }),
+        UiCommand::RemoveButton { id } => json!({"t": "ui-button-remove", "id": id}),
+        UiCommand::OpenSettings { mod_id } => json!({"t": "ui-settings", "target": mod_id}),
         UiCommand::ClearMod => json!({"t": "ui-clear"}),
     };
     v["mod"] = json!(mod_id);
@@ -169,6 +179,14 @@ mod tests {
             (Some("ui-close"), Some(3), Some("m"))
         );
         assert_eq!(v(mod_ui("m", &UiCommand::ClearMod))["t"], "ui-clear");
+        let p = || "p1".to_string();
+        let icon = bhmod_core::ui::OverheadIcon::NoVoice;
+        assert_eq!(v(mod_ui("m", &UiCommand::SetOverhead { player: p(), icon }))["icon"], "no-voice");
+        assert!(v(mod_ui("m", &UiCommand::ClearOverhead { player: p() }))["icon"].is_null());
+        let button = bhmod_core::ui::Button { icon: "mic".into(), label: None, x: 0.5, y: 0.5, size: 64, opacity: 80 };
+        assert_eq!(v(mod_ui("m", &UiCommand::SetButton { id: "ptt".into(), button }))["size"], 64);
+        assert_eq!(v(mod_ui("m", &UiCommand::RemoveButton { id: "ptt".into() }))["t"], "ui-button-remove");
+        assert_eq!(v(mod_ui("m", &UiCommand::OpenSettings { mod_id: "voice".into() }))["target"], "voice");
         let d = Dialog {
             title: "T".into(),
             text: "x".into(),

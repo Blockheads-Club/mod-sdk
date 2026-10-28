@@ -422,6 +422,31 @@ fn trait_defaults_for_0_1_code() {
     assert_eq!(nb.player_pos("p"), None);
     assert_eq!(nb.channel_send("m", "m:x", &ChannelTarget::Server, b""), Err(ApiError::Unsupported));
     assert_eq!(nb.ui("m", &bhmod_core::ui::UiCommand::ClearMod), Err(ApiError::Unsupported));
+    // API 0.3.4 defaults: no voice, no world, no keyboard
+    assert!(nb.voice().is_none());
+    assert_eq!((nb.tile_solid(1, 2), nb.world_width()), (None, None));
+    assert_eq!(nb.input("m", &bhmod_core::input::InputCommand::ClearMod), Err(ApiError::Unsupported));
+    assert_eq!(nb.input_key("m", "ptt", "v").as_deref(), Some("v"));
+    use bhmod_core::voice::VoiceCall;
+    assert_eq!(api.voice(VoiceCall::Master), Err(ApiError::Unsupported));
+    assert_eq!(api.terrain_solid_count(0, 0, 1, 1), Err(ApiError::Unsupported));
+    assert_eq!(api.input_bind("a", "v"), Err(ApiError::Unsupported));
+    assert!(!api.input_unbind("a"));
+    assert_eq!(api.input_key_of("a"), None);
+    assert_eq!(api.ui_set_overhead("p", bhmod_core::ui::OverheadIcon::Speaking), Err(ApiError::Unsupported));
+    assert!(!api.ui_clear_overhead("p"));
+    let button = bhmod_core::ui::Button { icon: "mic".into(), label: None, x: 0.5, y: 0.5, size: 64, opacity: 80 };
+    assert_eq!(api.ui_set_button("b", button), Err(ApiError::Unsupported));
+    assert!(!api.ui_remove_button("b"));
+    assert_eq!(api.ui_open_settings("m"), Err(ApiError::Unsupported));
+    assert_eq!((nb.platform(), nb.player_sleeping("p"), nb.player_alive("p")), ("unknown".to_string(), false, false));
+    assert_eq!((nb.local_player(), nb.player_has_mod("p", "m"), nb.has_touch()), (None, false, false));
+    assert_eq!(
+        (api.host_platform(), api.player_sleeping("p"), api.player_alive("p")),
+        ("unknown".to_string(), false, false)
+    );
+    assert_eq!((api.players_local(), api.players_has_mod("p", "m")), (None, false));
+    assert_eq!((api.terrain_world_width(), api.ui_has_touch()), (None, false));
     let call = bhmod_core::RemoteCall {
         id: 1,
         target: bhmod_core::RemoteTarget::Server,

@@ -55,4 +55,24 @@ public final class PlayersImpl implements Players {
     public void broadcast(String text) {
         Wire.unwrap(b.call("players.broadcast", text), x -> new club.blockheads.api.types.ApiErrorException(club.blockheads.api.types.ApiError.fromWire(x, b)));
     }
+
+    /**
+     * (0.3.4) The player of this game client (named `local-player` because `local` is a Luau keyword); `none` on the
+     * server and before the client knows its own id.
+     */
+    @Override
+    public club.blockheads.api.players.Player localPlayer() {
+        Object r = b.call("players.local-player");
+        return Wire.optIn(r, x0 -> new club.blockheads.api.players.Player(b, Wire.text(x0)));
+    }
+
+    /**
+     * (0.3.4) True when the player's client runs mod `mod-id` (it accepted the join with it, or has it installed).
+     * Server only (clients answer false). Tells a vanilla client from a modded one that has not started voice yet.
+     */
+    @Override
+    public boolean hasMod(club.blockheads.api.players.Player who, String modId) {
+        Object r = b.call("players.has-mod", who.key(), modId);
+        return Wire.bool(r);
+    }
 }

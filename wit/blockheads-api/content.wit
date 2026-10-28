@@ -1,4 +1,4 @@
-package blockheads:api@0.3.3;
+package blockheads:api@0.3.4;
 
 /// (0.3) Content a mod declares in `[content]` of `mod.toml` and the numeric ids the world gave it, plus cosmetics:
 /// a server mod puts one of its own cosmetics on a player and the modded clients draw it.

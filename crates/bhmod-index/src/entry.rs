@@ -177,6 +177,9 @@ pub fn permission_labels(p: &Permissions) -> Vec<String> {
     if p.channels {
         v.push("channels".into());
     }
+    if p.voice {
+        v.push("voice".into());
+    }
     if p.native {
         v.push("native".into());
     }

@@ -76,7 +76,7 @@ fn routes_gain_pan_muffle() {
         ],
     );
     let (res, out) = r.talk(0, 1, VoiceMode::Proximity, &[7; 60]);
-    assert_eq!(res, Ok(Forwarded { started: true, copies: 2 }));
+    assert_eq!(res, Ok(Forwarded { started: true, copies: 2, mode: VoiceMode::Proximity }));
     assert_eq!(out.0.len(), 2);
     let (to, path, pkt) = &out.0[0];
     assert_eq!((*to, *path), (2, Path::InBand));
@@ -92,7 +92,7 @@ fn routes_gain_pan_muffle() {
 
     // Global: the proximity-only route does not match; the second route to 2 does.
     let (res, out) = r.talk(10, 1, VoiceMode::Global, &[1; 10]);
-    assert_eq!(res, Ok(Forwarded { started: false, copies: 2 }));
+    assert_eq!(res, Ok(Forwarded { started: false, copies: 2, mode: VoiceMode::Global }));
     let (n, sealed) = fields(&out.0[0].2);
     let f = r.client(2).open(n, &sealed).unwrap();
     assert_eq!((f.seq, f.gain, f.pan, f.muffle), (1, 150, 0, 0));

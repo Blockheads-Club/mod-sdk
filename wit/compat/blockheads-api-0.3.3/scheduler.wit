@@ -1,0 +1,23 @@
+package blockheads:api@0.3.3;
+
+/// Delayed and repeating tasks. Times are in ticks: one tick is one world step (0.2 s on the server).
+///
+/// The host calls `guest.run-task` on the main thread when a task is due.
+interface scheduler {
+    use types.{api-error};
+
+    /// Identifies one task of the calling mod.
+    type task-id = u64;
+
+    /// Runs once after `delay` ticks (0 = at the next tick).
+    run-later: func(delay: u32) -> result<task-id, api-error>;
+
+    /// Runs after `delay` ticks and then every `period` ticks (`period` >= 1) until cancelled.
+    run-every: func(delay: u32, period: u32) -> result<task-id, api-error>;
+
+    /// Runs once in the next network poll (about 16 ms), for quick replies to players.
+    run-next-poll: func() -> result<task-id, api-error>;
+
+    /// Cancels a task. Returns false if it did not exist or already ran.
+    cancel: func(id: task-id) -> bool;
+}

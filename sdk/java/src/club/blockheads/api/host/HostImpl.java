@@ -56,4 +56,14 @@ public final class HostImpl implements Host {
         Object r = b.call("host.host-name");
         return Wire.text(r);
     }
+
+    /**
+     * (0.3.4) The platform: `server-linux-x86_64`, `pc-windows-x86_64`, `pc-linux-x86_64`, `pc-macos-aarch64`,
+     * `android-armv7`, ... (`&lt;host&gt;-&lt;os&gt;-&lt;arch&gt;`; `unknown` when the host does not say).
+     */
+    @Override
+    public String platform() {
+        Object r = b.call("host.platform");
+        return Wire.text(r);
+    }
 }

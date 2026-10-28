@@ -18,7 +18,7 @@ pub mod settings;
 pub use manifest::Manifest;
 
 /// The `blockheads:api` version this SDK describes.
-pub const API_VERSION: &str = "0.3.3";
+pub const API_VERSION: &str = "0.3.4";
 
 /// Every `blockheads:api` version a host of this SDK serves (oldest first).
 ///
@@ -31,8 +31,9 @@ pub const API_VERSION: &str = "0.3.3";
 /// unchanged. A mod that uses the addition declares `api = "^0.3.1"`. 0.3.2 likewise only adds (`content.give-item`,
 /// `place-block`, `block-at`, and the `base`, `drops` and `name` of `[[content.blocks]]`); a mod that uses them
 /// declares `api = "^0.3.2"`. 0.3.3 adds the `settings` interface (and `[settings]` in `mod.toml`) the same way; a
-/// mod that uses it declares `api = "^0.3.3"`.
-pub const SUPPORTED_API_VERSIONS: &[&str] = &["0.1.0", "0.2.0", "0.3.0", "0.3.1", "0.3.2", "0.3.3"];
+/// mod that uses it declares `api = "^0.3.3"`. 0.3.4 adds `voice`, `input`, `terrain` and functions of `ui` (and the
+/// `voice` permission); a mod that uses them declares `api = "^0.3.4"`.
+pub const SUPPORTED_API_VERSIONS: &[&str] = &["0.1.0", "0.2.0", "0.3.0", "0.3.1", "0.3.2", "0.3.3", "0.3.4"];
 
 /// True when the requirement `req` (from `mod.toml` `api`) matches a version in [`SUPPORTED_API_VERSIONS`].
 pub fn api_supported(req: &semver::VersionReq) -> bool {

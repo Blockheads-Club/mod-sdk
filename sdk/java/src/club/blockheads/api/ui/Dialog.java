@@ -5,7 +5,7 @@ package club.blockheads.api.ui;
 import club.blockheads.mod.rt.Wire;
 
 /**
- * A dialog: title, text, an optional field and one to three buttons.
+ * A dialog: title, text, an optional field and one to three buttons (four since 0.3.4).
  */
 public final class Dialog {
     /**
