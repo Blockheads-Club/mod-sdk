@@ -1,0 +1,194 @@
+package blockheads:api@0.3.4;
+
+/// (0.3.4) Voice chat policy (permission `voice`). The host does capture, voice activity detection, Opus, encryption,
+/// the server relay and the client mix; a mod never sees audio. The server half of a voice mod decides who hears whom
+/// (`set-routes`, about 5 times a second), mutes, gains, caps and which modes each player may use; the client half
+/// drives the player's controls (push-to-talk, activation, local volumes) and the overhead icons.
+///
+/// Every function needs the `voice` permission (`not-permitted("voice")` otherwise). Functions marked *server* return
+/// `unsupported` on a client and vice versa; every function returns `unsupported` on a host without voice. Players
+/// who left give `stale-handle`.
+///
+/// Events: the host fires these custom events, delivered only to mods holding the `voice` permission (subscribe
+/// with `events.subscribe-custom`). `player` is the vanilla `playerID` text, `mode` a `mode` name:
+///
+/// - `voice:talk-start` `{"player": text, "mode": text}`: a player started talking (server: the first relayed
+///   frame; client: the first frame heard from that speaker).
+/// - `voice:talk-stop` `{"player": text, "mode": text}`: 300 ms without a frame.
+/// - `voice:state` `{"player": text, "state": text}`: a player's `voice-state` changed (server: from the relay,
+///   client: from the server's `VOICE_STATE`).
+/// - `voice:mic` `{"state": "off" | "on" | "denied"}` (client): the microphone opened, closed or the OS refused it.
+interface voice {
+    use types.{api-error};
+    use players.{player};
+
+    /// A talk mode (the `mode` byte of a voice frame).
+    enum mode {
+        /// Players nearby: distance falloff, stereo pan, muffling through blocks.
+        proximity,
+        /// Everyone.
+        global,
+        /// The speaker's channel (team).
+        channel,
+        /// Admin broadcast.
+        broadcast,
+    }
+
+    /// How a player starts talking.
+    enum activation {
+        /// Push to talk: talks while a key / the button is held.
+        ptt,
+        /// Voice activation: talks while the microphone hears speech (default mode).
+        vad,
+        /// Toggle: one press starts, the next stops (default mode).
+        toggle,
+    }
+
+    /// A player's voice state (`VOICE_STATE`), in this order of precedence.
+    enum voice-state {
+        /// No voice: a vanilla client, voice not loaded, or no voice session yet.
+        none,
+        /// Can talk and hear.
+        ready,
+        /// Talking now.
+        talking,
+        /// Muted their own microphone.
+        self-muted,
+        /// Hears nobody.
+        deafened,
+        /// Muted by an admin.
+        admin-muted,
+    }
+
+    /// One listener of a speaker.
+    record route {
+        /// Who hears.
+        listener: borrow<player>,
+        /// The modes this route applies to (empty = every mode); for a listener listed twice the first route
+        /// matching the frame's mode wins.
+        modes: list<mode>,
+        /// Distance / channel gain, 0.0 ..= 1.0 (clamped).
+        gain: f32,
+        /// Stereo position, -1.0 (left) ..= 1.0 (right) (clamped).
+        pan: f32,
+        /// Muffling through blocks, 0.0 (clear) ..= 1.0 (low-passed) (clamped).
+        muffle: f32,
+    }
+
+    /// Relay caps (`quality` settings). Frames over them are dropped by the host.
+    record caps {
+        /// Bitrate cap in bits per second, 6000 ..= 64000. Clients encode at this rate.
+        max-bitrate: u32,
+        /// Most players talking at once, 1 ..= 64.
+        max-speakers: u32,
+        /// Per-player frame rate limit, 50 ..= 200 (one frame is 20 ms).
+        max-frames-per-sec: u32,
+    }
+
+    /// How voice frames travel.
+    enum transport {
+        /// In-band first; a player moves to the UDP port when frames do not fit or the link is lossy.
+        auto,
+        /// Always inside the game connection.
+        inband,
+        /// The dedicated UDP port only.
+        udp,
+    }
+
+    /// Transport settings.
+    record transport-config {
+        mode: transport,
+        /// The dedicated voice UDP port the host opens; `none` = no port (everything in-band).
+        udp-port: option<u16>,
+    }
+
+    /// Which overhead icons modded clients may show (admin setting). Sent to every client.
+    record icon-visibility {
+        speaking: bool,
+        no-voice: bool,
+        self-mute: bool,
+        deafen: bool,
+        admin-mute: bool,
+    }
+
+    // ---- both sides ----
+
+    /// A player's current voice state.
+    state: func(who: borrow<player>) -> result<voice-state, api-error>;
+
+    /// The overhead icon visibility (server: as set; client: as the server sent it, all `true` before that).
+    icons: func() -> result<icon-visibility, api-error>;
+
+    // ---- server ----
+
+    /// *Server.* Replaces who hears `speaker` and how. An empty list silences the speaker for everyone. Listeners
+    /// without a voice session are skipped; listeners who left give `stale-handle`. At most 256 routes per speaker.
+    set-routes: func(speaker: borrow<player>, routes: list<route>) -> result<_, api-error>;
+
+    /// *Server.* Admin mute until `until-ms` (Unix time in milliseconds) or until `unmute` (`none`). The mute holds
+    /// across reconnects while the server runs; persisting it across restarts is up to the mod.
+    mute: func(who: borrow<player>, until-ms: option<u64>) -> result<_, api-error>;
+
+    /// *Server.* Lifts an admin mute. False when the player was not muted.
+    unmute: func(who: borrow<player>) -> result<bool, api-error>;
+
+    /// *Server.* Gain for everything `who` says, for every listener: percent 0 ..= 200 (default 100).
+    set-speaker-gain: func(who: borrow<player>, percent: u16) -> result<_, api-error>;
+
+    /// *Server.* Relay caps; the defaults are 24000 / 8 / 60.
+    set-caps: func(caps: caps) -> result<_, api-error>;
+
+    /// *Server.* Transport and UDP port (default `auto`, no port). Applies to players whose voice session starts
+    /// afterwards; the host opens or closes the port.
+    set-transport: func(config: transport-config) -> result<_, api-error>;
+
+    /// *Server.* What `who`'s client offers: the talk modes (PTT keys / mode picker) and activations. Default: no
+    /// modes, all activations. The routes decide what is actually heard.
+    set-allowed: func(who: borrow<player>, modes: list<mode>, activations: list<activation>) -> result<_, api-error>;
+
+    /// *Server.* Overhead icon visibility for every client (default: all `true`).
+    set-icons: func(icons: icon-visibility) -> result<_, api-error>;
+
+    /// *Server.* Whether admin broadcast reaches deafened players (default `false`: the player's choice wins).
+    set-broadcast-overrides-deafen: func(on: bool) -> result<_, api-error>;
+
+    // ---- client ----
+
+    /// *Client.* The mode used by voice activation, toggle and the main push-to-talk (default `proximity`).
+    set-default-mode: func(mode: mode) -> result<_, api-error>;
+
+    /// *Client.* The player's chosen activation; one the server does not allow gives `invalid-argument`.
+    set-activation: func(activation: activation) -> result<_, api-error>;
+
+    /// *Client.* Push-to-talk / toggle input: `pressed` true on key down or button press, false on release. `none`
+    /// is the default mode. Modes the server does not allow are ignored. Feed it from `input` or `ui` button events.
+    talk: func(mode: option<mode>, pressed: bool) -> result<_, api-error>;
+
+    /// *Client.* Turns the microphone on or off. The first `true` asks the OS for permission (Android); the outcome
+    /// arrives as `voice:mic`. The microphone is off until a mod turns it on.
+    set-mic: func(on: bool) -> result<_, api-error>;
+
+    /// *Client.* Self mute (nothing is sent) and deafen (nothing is heard); both are told to the server.
+    set-self-mute: func(on: bool) -> result<_, api-error>;
+    /// *Client.* See `set-self-mute`.
+    set-deafen: func(on: bool) -> result<_, api-error>;
+
+    /// *Client.* Voice activation threshold in dBFS, -80.0 ..= 0.0 (default -45.0).
+    set-vad-threshold: func(db: f32) -> result<_, api-error>;
+
+    /// *Client.* Voice chat master volume, percent 0 ..= 200 (default 100). Stored on this device by the host,
+    /// valid on every server; the server never learns it.
+    set-master: func(percent: u16) -> result<_, api-error>;
+    /// *Client.* The master volume.
+    master: func() -> result<u16, api-error>;
+
+    /// *Client.* Volume of one player, percent 0 ..= 200 (default 100), stored on this device by player id.
+    set-player-volume: func(who: borrow<player>, percent: u16) -> result<_, api-error>;
+    /// *Client.* The volume of one player.
+    player-volume: func(who: borrow<player>) -> result<u16, api-error>;
+
+    /// *Client.* Mutes one player locally (stored on this device by player id).
+    mute-player: func(who: borrow<player>, muted: bool) -> result<_, api-error>;
+    /// *Client.* True when the player is muted locally.
+    player-muted: func(who: borrow<player>) -> result<bool, api-error>;
+}

@@ -1,0 +1,21 @@
+package blockheads:api@0.3.3;
+
+/// Facts about the running host and the calling mod.
+interface host {
+    use types.{side};
+
+    /// The `blockheads:api` version the host implements, as semver text (for example `0.1.0`).
+    api-version: func() -> string;
+
+    /// The id of the calling mod (see `types.mod-id`).
+    mod-id: func() -> string;
+
+    /// The version of the calling mod, from its `mod.toml`.
+    mod-version: func() -> string;
+
+    /// Which side this code runs on.
+    current-side: func() -> side;
+
+    /// A short host name and version, for logs only (for example `blockheads-server 0.2.0`).
+    host-name: func() -> string;
+}

@@ -1,0 +1,89 @@
+package blockheads:api@0.3.3;
+
+/// Cross-mod services (shape only in 0.1; implemented since 0.2; across the network since 0.3.1).
+///
+/// A provider declares the service in `mod.toml` `[provides]` and registers it with `provide`. Consumers call it by
+/// name and a semver requirement; the host picks the highest compatible provider, converts values and calls the
+/// provider's `guest.call-service`. The SDK turns the provider's WIT into typed stubs, so authors rarely use
+/// `call` directly.
+///
+/// Rules: a consumer may only call providers it depends or soft-depends on. Calls are synchronous; a call that
+/// would re-enter a mod already on the call stack (A -> B -> A) fails with `reentrant`. Players inside values are
+/// host handles `{"$h": n}`; a handle of a player who left is stale.
+///
+/// (0.3.1) Remote calls: a client mod can call a service a server mod provides, and a server mod one a client mod
+/// provides, over the 0xBC `SERVICE_CALL` / `SERVICE_RESULT` ops. They are asynchronous: `call-remote` returns a
+/// call id at once and the answer arrives later as the custom event `<mod-id>:service-result` to the calling mod
+/// (subscribe with `events.subscribe-custom`). The payload is a canonical CBOR map
+/// `{"id": call-id, "ok": true, "value": <result>}` or
+/// `{"id": call-id, "ok": false, "error": {"kind": <kind>, "message": <text>}}`. The kinds are `not-found`,
+/// `version-mismatch`, `not-permitted`, `busy`, `provider-error`, `trap`, `bad-value`, `too-large`, `internal`
+/// (the other side's answer) and `unavailable`, `timeout`, `disconnected` (decided locally). The event reaches
+/// exactly one handler call per remote call, also for failures that are known at once (`unavailable`), and never
+/// during the `call-remote` that caused it. Calling needs the `channels` permission.
+///
+/// The providing side decides what may be called: only services declared with `remote = true` in `mod.toml`
+/// `[provides]` (optionally limited to `remote-methods`) are reachable, every caller peer has a rate limit, and the
+/// provider runs under its normal time budget. Inside the provider, `caller` tells who called.
+interface services {
+    use types.{value, api-error, mod-id};
+    use players.{player};
+
+    /// Why a service call failed.
+    variant call-error {
+        /// No provider with that name is loaded.
+        not-found,
+        /// Providers exist but none matches the version requirement.
+        version-mismatch,
+        /// The caller does not depend (or soft-depend) on the provider, or the method is admin-only.
+        not-permitted,
+        /// The call would re-enter a mod that is already on the call stack (A -> B -> A).
+        reentrant,
+        /// The provider returned an error; the payload is its message.
+        provider-error(string),
+        /// The provider trapped or ran over its time budget.
+        trap,
+        /// Arguments or result were not valid canonical CBOR for the method.
+        bad-value(string),
+    }
+
+    /// Registers the calling mod as provider of `name` at `version` (semver). Must match `mod.toml`.
+    provide: func(name: string, version: string) -> result<_, api-error>;
+
+    /// Calls `method` of the best provider matching `version-req` (a semver requirement such as `^1.1`).
+    /// `args` is a canonical CBOR array of the method's parameters.
+    call: func(name: string, version-req: string, method: string, args: value) -> result<value, call-error>;
+
+    /// (0.3.1) Where a remote call goes.
+    variant remote-target {
+        /// The server (from a client mod).
+        server,
+        /// One player's client (from a server mod).
+        player(borrow<player>),
+    }
+
+    /// (0.3.1) Identifies an open remote call; the `service-result` event carries it back.
+    type call-id = u32;
+
+    /// (0.3.1) Calls `method` of the best provider matching `version-req` on the other side. `args` is a canonical
+    /// CBOR array of at most 32 KiB. `timeout-ms` is how long to wait for the answer: 0 means 5000, the largest is
+    /// 30000. Fails at once with `invalid-argument` (bad names, requirement, arguments or timeout),
+    /// `limit-exceeded` (too many open calls, arguments too large), `not-permitted` (no `channels` permission),
+    /// `stale-handle` (the player left); everything else comes back as the `service-result` event.
+    call-remote: func(to: remote-target, name: string, version-req: string, method: string, args: value, timeout-ms: u32) -> result<call-id, api-error>;
+
+    /// (0.3.1) Forgets an open remote call: no event is delivered for it. False if it was not open.
+    cancel-remote: func(id: call-id) -> bool;
+
+    /// (0.3.1) Who made the remote call that `call-service` is serving.
+    record remote-caller {
+        /// The mod that called, on the other side.
+        mod-id: mod-id,
+        /// The calling player when a client called this server mod; none when the server called this client mod.
+        player: option<player>,
+    }
+
+    /// (0.3.1) The caller of the remote call being served right now (also inside services that provider calls),
+    /// or none when `call-service` was reached from a local call.
+    caller: func() -> option<remote-caller>;
+}

@@ -1,4 +1,4 @@
-package blockheads:api@0.3.3;
+package blockheads:api@0.3.4;
 
 /// Cross-mod services (shape only in 0.1; implemented since 0.2; across the network since 0.3.1).
 ///

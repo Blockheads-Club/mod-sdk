@@ -1,0 +1,45 @@
+package blockheads:api@0.3.3;
+
+/// Chat and console commands registered by mods.
+///
+/// A registered command is routed to its mod for every allowed sender, before the built-in commands. Vanilla only
+/// treats `/` lines from moderators and admins as commands; mod commands work for any player unless
+/// `min-role` says otherwise.
+interface commands {
+    use types.{api-error};
+    use players.{role};
+    use events.{command-sender};
+
+    /// Identifies one registered command of the calling mod.
+    type command-id = u32;
+
+    /// Describes a command.
+    record command-spec {
+        /// The name without `/`: `[a-z0-9_-]{1,32}`. Must not collide with built-in or other mods' commands.
+        name: string,
+        /// Extra names, same rules as `name`.
+        aliases: list<string>,
+        /// One line of help text.
+        description: string,
+        /// Usage text shown when the handler returns `handled = false`, for example `/home [name]`.
+        usage: string,
+        /// The lowest role allowed to run it from chat.
+        min-role: role,
+        /// Whether the console may run it.
+        console: bool,
+    }
+
+    /// What a command handler returns.
+    record command-outcome {
+        /// False shows the usage text to the sender.
+        handled: bool,
+        /// Lines sent back to the sender (chat for players, log for the console).
+        reply: list<string>,
+    }
+
+    /// Registers a command; the host calls `guest.run-command` when it is used.
+    register: func(spec: command-spec) -> result<command-id, api-error>;
+
+    /// Removes a command. Returns false if it did not exist.
+    unregister: func(id: command-id) -> bool;
+}

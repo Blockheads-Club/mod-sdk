@@ -1,4 +1,4 @@
-package blockheads:api@0.3.3;
+package blockheads:api@0.3.4;
 
 /// Mod UI on the client (IG-HUD, IG-ModUI): HUD widgets, toasts, notices and dialogs. Mods send data, the loader
 /// draws it with its own kit: mods cannot restyle it, place widgets freely or take focus away from the game. Needs
@@ -9,8 +9,13 @@ package blockheads:api@0.3.3;
 /// delivered to the mod that opened the dialog only; the payload is a `types.value` map
 /// `{"dialog": u32, "button": u32, "text": string or null}` (`button` counts from 0, `null` text when the dialog
 /// has no field). Closing the dialog from the loader side (back, the game leaving the world) is `button` 4294967295.
+///
+/// (0.3.4) Overhead icons, on-screen buttons and the settings screen. Button input arrives as the custom event
+/// `<mod-id>:ui-button` with the payload `{"id": text, "action": "press" | "release" | "long-press"}`, delivered to
+/// the mod that owns the button only.
 interface ui {
     use types.{api-error};
+    use players.{player};
 
     /// Where a HUD widget goes. The loader stacks the widgets of a slot, keeps the game's own HUD and the screen
     /// cutout clear and hides what does not fit.
@@ -103,4 +108,56 @@ interface ui {
 
     /// Closes a dialog of the mod without an answer. Returns false if it was not open.
     close-dialog: func(id: u32) -> bool;
+
+    /// (0.3.4) An icon drawn above a blockhead.
+    enum overhead-icon {
+        /// Talking (animated).
+        speaking,
+        /// The player has no voice chat (crossed headphones).
+        no-voice,
+        /// The player muted their microphone.
+        self-mute,
+        /// The player hears nobody.
+        deafen,
+        /// An admin muted the player.
+        admin-mute,
+    }
+
+    /// (0.3.4) Shows `icon` above a player's blockhead (one icon per player and mod; a new one replaces it). The
+    /// loader hides voice icons the server's admin turned off (`voice.icons`).
+    set-overhead: func(who: borrow<player>, icon: overhead-icon) -> result<_, api-error>;
+
+    /// (0.3.4) Removes the mod's icon from a player. False when there was none.
+    clear-overhead: func(who: borrow<player>) -> bool;
+
+    /// (0.3.4) A round on-screen button (touch screens; the PC draws it too and clicks work). The player can drag
+    /// it; the loader stores where it was dropped on the device, per mod and button id, and that position wins over
+    /// `x` / `y`. Touch down fires `press`, holding it 500 ms without moving fires `long-press` (the press stays
+    /// down), touch up fires `release`; moving more than a few points turns the touch into a drag (with a `release`
+    /// first if `press` fired).
+    record button {
+        /// A kit icon name (`mic`, `mic-off`, `headphones`, `info`, ...); unknown names draw no icon.
+        icon: string,
+        /// A short label under the icon, at most 24 bytes.
+        label: option<string>,
+        /// Default position of the centre as a fraction of the screen width, 0.0 ..= 1.0.
+        x: f32,
+        /// Default position of the centre as a fraction of the screen height from the top, 0.0 ..= 1.0.
+        y: f32,
+        /// Diameter in density-independent points, 32 ..= 160.
+        size: u16,
+        /// Opacity in percent, 10 ..= 100.
+        opacity: u8,
+    }
+
+    /// (0.3.4) Shows or updates a button. `id` follows the widget id rules; a mod has up to 4 buttons.
+    set-button: func(id: string, button: button) -> result<_, api-error>;
+
+    /// (0.3.4) Removes a button. False if it did not exist.
+    remove-button: func(id: string) -> bool;
+
+    /// (0.3.4) Opens the loader's settings screen for mod `mod-id` (any loaded mod with settings or key bindings):
+    /// its `scope = "client"` settings (stored on this device), its key bindings and, for an admin of a server that
+    /// sent the mod's schema (0xBC `SETTINGS_SCHEMA`), its server settings. `invalid-argument` for an unknown mod.
+    open-settings: func(mod-id: string) -> result<_, api-error>;
 }
