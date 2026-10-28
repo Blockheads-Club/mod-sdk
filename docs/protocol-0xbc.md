@@ -104,7 +104,7 @@ Ops `09`, `0a`-`0f` and `1c`-`ff` are reserved.
 | `api` | text | Highest `blockheads:api` version the loader implements, e.g. `0.1.0`. |
 | `runtimes` | array of text | Available runtimes: `wasm`, `lua`, `jvm`, `native`. |
 | `cached` | array of bytes(32) | SHA-256 of packages already in the client cache (may be empty; servers may use it to skip transfers). |
-| `features` | array of text, optional | Optional op groups the loader speaks: `voice` (0x15-0x18), `settings` (0x19-0x1b), `voice-inband` (it can send unsequenced in-band `VOICE_FRAME`s; without it a `voice` client uses the UDP port only). Omitted when empty. |
+| `features` | array of text, optional | Optional op groups the loader speaks: `voice` (0x15-0x18), `settings` (0x19-0x1b), `voice-unsequenced` (it can send unsequenced in-band `VOICE_FRAME`s; without it a `voice` client uses the UDP port only). Omitted when empty. |
 
 ### 01 SERVER_HELLO (server -> client)
 
@@ -336,7 +336,7 @@ FRAME  (both): 03 peer:u16le nonce:u64le sealed
 The client sends first (NAT) and repeats `AUTH` every 15 s as a keepalive. The frame bytes and replay window are
 shared with the in-band path (one nonce counter per direction). With no port configured everything stays in-band.
 `auto` starts in-band and moves a peer to UDP (and keeps it there) only once that peer authenticated on UDP and: it
-did not list `voice-inband`, a frame does not fit the in-band budget (200 bytes per 0xBC packet), the measured loss
+did not list `voice-unsequenced`, a frame does not fit the in-band budget (200 bytes per 0xBC packet), the measured loss
 is over 10 % or the server's poll lag is over 30 ms.
 
 ### 17 VOICE_STATE (server -> client)

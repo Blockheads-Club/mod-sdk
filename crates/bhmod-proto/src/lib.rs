@@ -50,7 +50,7 @@ pub mod feature {
     pub const SETTINGS: &str = "settings";
     /// The client can send unsequenced in-band `VOICE_FRAME`s (ENet channel 0). A `voice` client without it uses
     /// the dedicated UDP port only.
-    pub const VOICE_INBAND: &str = "voice-inband";
+    pub const VOICE_UNSEQUENCED: &str = "voice-unsequenced";
 }
 
 /// `SETTINGS_RESULT` failure codes.
