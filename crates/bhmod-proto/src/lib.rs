@@ -33,6 +33,41 @@ pub const HELLO_TIMEOUT_MS: u64 = 1500;
 pub const PLIST_KEY: &str = "bhcModLoader";
 /// The vanilla rejection reason (`0x26 <reason>`) used for clients without the mod loader: CLIENT_TOO_OLD.
 pub const REJECT_CLIENT_TOO_OLD: u8 = 3;
+/// Smallest sealed `VOICE_FRAME` ciphertext: the 16-byte Poly1305 tag of an empty plaintext.
+pub const VOICE_TAG_LEN: usize = 16;
+/// Largest sealed `VOICE_FRAME` ciphertext (tag included). Real frames are ~100 bytes; this only bounds garbage.
+pub const MAX_VOICE_SEALED: usize = 1024;
+/// Largest `SETTINGS_SCHEMA` `schema` / `values` byte strings (canonical CBOR).
+pub const MAX_SETTINGS_PAYLOAD: usize = 256 * 1024;
+/// Largest `SETTINGS_SET` `value` byte string (canonical CBOR).
+pub const MAX_SETTINGS_VALUE: usize = 32 * 1024;
+
+/// Feature names of `HELLO.features` / `SERVER_HELLO.features`.
+pub mod feature {
+    /// Voice chat ops `VOICE_*` (0x15-0x18).
+    pub const VOICE: &str = "voice";
+    /// Mod settings ops `SETTINGS_*` (0x19-0x1b).
+    pub const SETTINGS: &str = "settings";
+    /// The client can send unsequenced in-band `VOICE_FRAME`s (ENet channel 0). A `voice` client without it uses
+    /// the dedicated UDP port only.
+    pub const VOICE_UNSEQUENCED: &str = "voice-unsequenced";
+}
+
+/// `SETTINGS_RESULT` failure codes.
+pub mod settings_error {
+    /// The player may not change server settings (not an admin).
+    pub const NOT_PERMITTED: u8 = 1;
+    /// No loaded mod with that id, or it has no settings.
+    pub const UNKNOWN_MOD: u8 = 2;
+    /// The mod's schema has no such key (or it is client-scope).
+    pub const UNKNOWN_KEY: u8 = 3;
+    /// The value does not match the field's type or range.
+    pub const INVALID_VALUE: u8 = 4;
+    /// Rate limited; retry later.
+    pub const BUSY: u8 = 5;
+    /// Anything else (storing failed).
+    pub const INTERNAL: u8 = 6;
+}
 
 /// `FILE_ERROR` codes.
 pub mod file_error {
@@ -144,6 +179,20 @@ pub enum Op {
     ServiceCall = 0x13,
     /// Both directions, the answer to a `SERVICE_CALL` (M10).
     ServiceResult = 0x14,
+    /// Both directions, the X25519 public key of the voice session.
+    VoiceKey = 0x15,
+    /// Both directions, one encrypted voice frame (raw; sent unreliable + unsequenced).
+    VoiceFrame = 0x16,
+    /// S->C, voice state of the players (overhead icons).
+    VoiceState = 0x17,
+    /// C->S, the player's self mute / deafen.
+    VoiceCtrl = 0x18,
+    /// S->C, a mod's settings schema and current values (admins only).
+    SettingsSchema = 0x19,
+    /// C->S, change one server setting.
+    SettingsSet = 0x1a,
+    /// S->C, the answer to `SETTINGS_SET`.
+    SettingsResult = 0x1b,
 }
 
 impl Op {
@@ -164,8 +213,20 @@ impl Op {
             0x12 => Op::Cosmetics,
             0x13 => Op::ServiceCall,
             0x14 => Op::ServiceResult,
+            0x15 => Op::VoiceKey,
+            0x16 => Op::VoiceFrame,
+            0x17 => Op::VoiceState,
+            0x18 => Op::VoiceCtrl,
+            0x19 => Op::SettingsSchema,
+            0x1a => Op::SettingsSet,
+            0x1b => Op::SettingsResult,
             _ => return None,
         })
+    }
+
+    /// True for the one op that is sent unreliable + unsequenced (`VOICE_FRAME`); every other op is reliable.
+    pub fn is_unreliable(self) -> bool {
+        self == Op::VoiceFrame
     }
 }
 
@@ -184,6 +245,8 @@ pub struct Hello {
     pub runtimes: Vec<String>,
     /// SHA-256 of every package already in the client cache (may be empty).
     pub cached: Vec<Hash>,
+    /// Optional protocol features the loader speaks ([`feature`]); omitted on the wire when empty.
+    pub features: Vec<String>,
 }
 
 /// `SERVER_HELLO` (S->C).
@@ -200,6 +263,10 @@ pub struct ServerHello {
     /// Players in the game and the server's capacity at the time of the answer (optional; older servers omit it
     /// and older clients ignore it).
     pub players: Option<PlayerCount>,
+    /// Optional protocol features the server speaks ([`feature`]); omitted on the wire when empty.
+    pub features: Vec<String>,
+    /// The dedicated voice UDP port, when the admin opened one (`voiceUdpPort`).
+    pub voice_udp_port: Option<u16>,
 }
 
 /// The optional player count of `SERVER_HELLO` (CBOR keys `players` and `maxPlayers`).
@@ -389,6 +456,90 @@ pub struct ServiceResult {
     pub outcome: Result<Vec<u8>, ServiceFailure>,
 }
 
+/// `VOICE_KEY` (both): the sender's X25519 public key for the voice session.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VoiceKey {
+    /// X25519 public key.
+    pub public: [u8; 32],
+    /// S->C only: the client's own speaker id (S->C frames name speakers by it; part of the UDP token).
+    pub peer: Option<u16>,
+    /// S->C only: the dedicated voice UDP port, when one is open.
+    pub udp_port: Option<u16>,
+}
+
+/// `VOICE_FRAME` (both), raw: `nonce:u64le sealed`. `sealed` is the ChaCha20-Poly1305 ciphertext plus tag of the
+/// frame plaintext (layouts in `bhmod-voice`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VoiceFrame {
+    /// Per-direction counter, also the AEAD nonce.
+    pub nonce: u64,
+    /// Ciphertext and 16-byte tag ([`VOICE_TAG_LEN`]..=[`MAX_VOICE_SEALED`] bytes).
+    pub sealed: Vec<u8>,
+}
+
+/// `VOICE_STATE` (S->C): who can talk / is talking, for the overhead icons.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct VoiceState {
+    /// True: replaces everything the client knew; false: a delta for the listed players.
+    pub full: bool,
+    /// Vanilla `playerID` -> `none`, `ready`, `talking`, `self_muted`, `deafened`, `admin_muted` (or `gone` in a
+    /// delta: the player left).
+    pub players: BTreeMap<String, String>,
+    /// Vanilla `playerID` -> speaker id of the `VOICE_FRAME`s (omitted on the wire when empty).
+    pub speakers: BTreeMap<String, u16>,
+    /// Which icons the admin shows: `speaking`, `no_voice`, `self_mute`, `admin_mute` -> visible (omitted when
+    /// empty).
+    pub icons: BTreeMap<String, bool>,
+}
+
+/// `VOICE_CTRL` (C->S): the player's own mute switches.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct VoiceCtrl {
+    /// The player muted their microphone.
+    pub self_mute: bool,
+    /// The player hears nobody.
+    pub deafen: bool,
+}
+
+/// `SETTINGS_SCHEMA` (S->C, admins only): a mod's settings form.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SettingsSchema {
+    /// The mod id.
+    pub mod_id: String,
+    /// Canonical CBOR (full value profile: floats and negative integers allowed) of the JSON settings contract
+    /// `{fields: [...]}`. Opaque to this crate.
+    pub schema: Vec<u8>,
+    /// Canonical CBOR map key -> current value. Opaque to this crate.
+    pub values: Vec<u8>,
+}
+
+/// `SETTINGS_SET` (C->S): change one server-scope setting.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SettingsSet {
+    /// The mod id.
+    pub mod_id: String,
+    /// The setting key.
+    pub key: String,
+    /// Canonical CBOR of the new value. Opaque to this crate.
+    pub value: Vec<u8>,
+}
+
+/// Why a `SETTINGS_SET` failed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SettingsFailure {
+    /// One of [`settings_error`].
+    pub code: u8,
+    /// Optional detail text.
+    pub message: Option<String>,
+}
+
+/// `SETTINGS_RESULT` (S->C): the answer to the `SETTINGS_SET`s, in order.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SettingsResult {
+    /// `Ok(())` when the value was stored.
+    pub outcome: Result<(), SettingsFailure>,
+}
+
 /// A decoded 0xBC packet.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Message {
@@ -420,6 +571,20 @@ pub enum Message {
     ServiceCall(ServiceCall),
     /// 0x14.
     ServiceResult(ServiceResult),
+    /// 0x15.
+    VoiceKey(VoiceKey),
+    /// 0x16.
+    VoiceFrame(VoiceFrame),
+    /// 0x17.
+    VoiceState(VoiceState),
+    /// 0x18.
+    VoiceCtrl(VoiceCtrl),
+    /// 0x19.
+    SettingsSchema(SettingsSchema),
+    /// 0x1a.
+    SettingsSet(SettingsSet),
+    /// 0x1b.
+    SettingsResult(SettingsResult),
 }
 
 fn text(s: &str) -> Value {
@@ -460,6 +625,13 @@ impl Message {
             Message::Cosmetics(_) => Op::Cosmetics,
             Message::ServiceCall(_) => Op::ServiceCall,
             Message::ServiceResult(_) => Op::ServiceResult,
+            Message::VoiceKey(_) => Op::VoiceKey,
+            Message::VoiceFrame(_) => Op::VoiceFrame,
+            Message::VoiceState(_) => Op::VoiceState,
+            Message::VoiceCtrl(_) => Op::VoiceCtrl,
+            Message::SettingsSchema(_) => Op::SettingsSchema,
+            Message::SettingsSet(_) => Op::SettingsSet,
+            Message::SettingsResult(_) => Op::SettingsResult,
         }
     }
 
@@ -473,17 +645,28 @@ impl Message {
         out
     }
 
-    /// The CBOR body, or `Err(raw bytes)` for the two raw messages.
+    /// True when the packet must be sent unreliable + unsequenced (see [`Op::is_unreliable`]).
+    pub fn is_unreliable(&self) -> bool {
+        self.op().is_unreliable()
+    }
+
+    /// The CBOR body, or `Err(raw bytes)` for the three raw messages.
     fn body(&self) -> Result<Value, Vec<u8>> {
         Ok(match self {
-            Message::Hello(h) => map(vec![
-                ("proto", Value::Uint(h.proto)),
-                ("loader", text(&h.loader)),
-                ("platform", text(&h.platform)),
-                ("api", text(&h.api)),
-                ("runtimes", texts(&h.runtimes)),
-                ("cached", Value::Array(h.cached.iter().map(hash).collect())),
-            ]),
+            Message::Hello(h) => {
+                let mut e = vec![
+                    ("proto", Value::Uint(h.proto)),
+                    ("loader", text(&h.loader)),
+                    ("platform", text(&h.platform)),
+                    ("api", text(&h.api)),
+                    ("runtimes", texts(&h.runtimes)),
+                    ("cached", Value::Array(h.cached.iter().map(hash).collect())),
+                ];
+                if !h.features.is_empty() {
+                    e.push(("features", texts(&h.features)));
+                }
+                map(e)
+            }
             Message::ServerHello(s) => {
                 let mut e = vec![
                     ("proto", Value::Uint(s.proto)),
@@ -494,6 +677,12 @@ impl Message {
                 if let Some(p) = &s.players {
                     e.push(("players", Value::Uint(u64::from(p.online))));
                     e.push(("maxPlayers", Value::Uint(u64::from(p.capacity))));
+                }
+                if !s.features.is_empty() {
+                    e.push(("features", texts(&s.features)));
+                }
+                if let Some(port) = s.voice_udp_port {
+                    e.push(("voiceUdpPort", Value::Uint(u64::from(port))));
                 }
                 map(e)
             }
@@ -573,6 +762,56 @@ impl Message {
                     ("message", text(&f.message)),
                 ]),
             },
+            Message::VoiceKey(k) => {
+                let mut e = vec![("pub", Value::Bytes(k.public.to_vec()))];
+                if let Some(p) = k.peer {
+                    e.push(("peer", Value::Uint(u64::from(p))));
+                }
+                if let Some(p) = k.udp_port {
+                    e.push(("udpPort", Value::Uint(u64::from(p))));
+                }
+                map(e)
+            }
+            Message::VoiceState(v) => {
+                let mut e = vec![
+                    ("full", Value::Bool(v.full)),
+                    ("players", Value::Map(v.players.iter().map(|(k, s)| (text(k), text(s))).collect())),
+                ];
+                if !v.speakers.is_empty() {
+                    let m = v.speakers.iter().map(|(k, id)| (text(k), Value::Uint(u64::from(*id)))).collect();
+                    e.push(("speakers", Value::Map(m)));
+                }
+                if !v.icons.is_empty() {
+                    e.push(("icons", Value::Map(v.icons.iter().map(|(k, b)| (text(k), Value::Bool(*b))).collect())));
+                }
+                map(e)
+            }
+            Message::VoiceCtrl(c) => {
+                map(vec![("selfMute", Value::Bool(c.self_mute)), ("deafen", Value::Bool(c.deafen))])
+            }
+            Message::SettingsSchema(s) => map(vec![
+                ("mod", text(&s.mod_id)),
+                ("schema", Value::Bytes(s.schema.clone())),
+                ("values", Value::Bytes(s.values.clone())),
+            ]),
+            Message::SettingsSet(s) => {
+                map(vec![("mod", text(&s.mod_id)), ("key", text(&s.key)), ("value", Value::Bytes(s.value.clone()))])
+            }
+            Message::SettingsResult(r) => match &r.outcome {
+                Ok(()) => map(vec![("ok", Value::Bool(true))]),
+                Err(f) => {
+                    let mut e = vec![("ok", Value::Bool(false)), ("code", Value::Uint(u64::from(f.code)))];
+                    if let Some(m) = &f.message {
+                        e.push(("message", text(m)));
+                    }
+                    map(e)
+                }
+            },
+            Message::VoiceFrame(f) => {
+                let mut raw = f.nonce.to_le_bytes().to_vec();
+                raw.extend(&f.sealed);
+                return Err(raw);
+            }
             Message::FileChunk(c) => {
                 let mut raw = c.sha256.to_vec();
                 raw.extend(c.offset.to_le_bytes());
@@ -599,6 +838,7 @@ impl Message {
         match op {
             Op::FileChunk => decode_chunk(body),
             Op::Channel => decode_channel(body),
+            Op::VoiceFrame => decode_voice_frame(body),
             _ if body.len() > MAX_BODY => Err(Error::TooLarge("body")),
             _ => decode_cbor(op, &Fields::from(cbor::decode(body)?)?),
         }
@@ -614,6 +854,7 @@ fn decode_cbor(op: Op, f: &Fields) -> Result<Message, Error> {
             api: f.text("api")?,
             runtimes: f.texts("runtimes")?,
             cached: f.array("cached")?.iter().map(|v| as_hash(v, "cached")).collect::<Result<_, _>>()?,
+            features: f.opt_texts("features")?,
         }),
         Op::ServerHello => Message::ServerHello(ServerHello {
             proto: f.uint("proto")?,
@@ -621,6 +862,8 @@ fn decode_cbor(op: Op, f: &Fields) -> Result<Message, Error> {
             client_required: f.bool("clientRequired")?,
             count: f.uint("count")?,
             players: f.player_count()?,
+            features: f.opt_texts("features")?,
+            voice_udp_port: f.opt_u16("voiceUdpPort")?,
         }),
         Op::ListRequest => Message::ListRequest,
         Op::ModList => Message::ModList(ModList {
@@ -701,7 +944,49 @@ fn decode_cbor(op: Op, f: &Fields) -> Result<Message, Error> {
                 },
             })
         }
-        // FILE_CHUNK and CHANNEL never reach here; CHANNEL_REGISTER is the remaining CBOR message.
+        Op::VoiceKey => Message::VoiceKey(VoiceKey {
+            public: f.hash("pub")?,
+            peer: f.opt_u16("peer")?,
+            udp_port: f.opt_u16("udpPort")?,
+        }),
+        Op::VoiceState => {
+            let opt_map = |key| f.get(key).map(|v| Fields::of(v, key)).transpose();
+            Message::VoiceState(VoiceState {
+                full: f.bool("full")?,
+                players: f.localized("players")?,
+                speakers: opt_map("speakers")?
+                    .map_or(Ok(BTreeMap::new()), |m| m.entries(|v| as_u16(v, "speakers"), "speakers"))?,
+                icons: opt_map("icons")?.map_or(Ok(BTreeMap::new()), |m| {
+                    m.entries(
+                        |v| match v {
+                            Value::Bool(b) => Ok(*b),
+                            _ => Err(Error::Type("icons")),
+                        },
+                        "icons",
+                    )
+                })?,
+            })
+        }
+        Op::VoiceCtrl => Message::VoiceCtrl(VoiceCtrl { self_mute: f.bool("selfMute")?, deafen: f.bool("deafen")? }),
+        Op::SettingsSchema => Message::SettingsSchema(SettingsSchema {
+            mod_id: f.text("mod")?,
+            schema: f.bytes("schema", MAX_SETTINGS_PAYLOAD)?,
+            values: f.bytes("values", MAX_SETTINGS_PAYLOAD)?,
+        }),
+        Op::SettingsSet => Message::SettingsSet(SettingsSet {
+            mod_id: f.text("mod")?,
+            key: f.text("key")?,
+            value: f.bytes("value", MAX_SETTINGS_VALUE)?,
+        }),
+        Op::SettingsResult => Message::SettingsResult(SettingsResult {
+            outcome: if f.bool("ok")? {
+                Ok(())
+            } else {
+                let code = u8::try_from(f.uint("code")?).map_err(|_| Error::Type("code"))?;
+                Err(SettingsFailure { code, message: f.opt_text("message")? })
+            },
+        }),
+        // FILE_CHUNK, CHANNEL and VOICE_FRAME never reach here; CHANNEL_REGISTER is the remaining CBOR message.
         _ => Message::ChannelRegister(ChannelRegister { name: f.text("name")?, id: f.u16("id")? }),
     })
 }
@@ -768,6 +1053,21 @@ fn decode_channel(body: &[u8]) -> Result<Message, Error> {
     Ok(Message::Channel(Channel { channel_id: u16::from_le_bytes([body[0], body[1]]), payload }))
 }
 
+fn decode_voice_frame(body: &[u8]) -> Result<Message, Error> {
+    if body.len() < 8 {
+        return Err(Error::Truncated);
+    }
+    let sealed = body[8..].to_vec();
+    if sealed.len() > MAX_VOICE_SEALED {
+        return Err(Error::TooLarge("voice frame"));
+    }
+    if sealed.len() < VOICE_TAG_LEN {
+        return Err(Error::Invalid("voice frame shorter than its tag"));
+    }
+    let nonce = u64::from_le_bytes(body[..8].try_into().expect("8 bytes"));
+    Ok(Message::VoiceFrame(VoiceFrame { nonce, sealed }))
+}
+
 /// A CBOR map with typed accessors. Unknown keys are ignored.
 struct Fields(Vec<(Value, Value)>);
 
@@ -826,6 +1126,36 @@ impl Fields {
         }
         let n = |key: &'static str| u32::try_from(self.uint(key)?).map_err(|_| Error::Type(key));
         Ok(Some(PlayerCount { online: n("players")?, capacity: n("maxPlayers")? }))
+    }
+
+    /// An optional array of text; absent is empty.
+    fn opt_texts(&self, key: &'static str) -> Result<Vec<String>, Error> {
+        if self.get(key).is_none() {
+            return Ok(Vec::new());
+        }
+        self.texts(key)
+    }
+
+    fn opt_u16(&self, key: &'static str) -> Result<Option<u16>, Error> {
+        self.get(key).map(|v| as_u16(v, key)).transpose()
+    }
+
+    /// A byte string of at most `max` bytes.
+    fn bytes(&self, key: &'static str, max: usize) -> Result<Vec<u8>, Error> {
+        match self.req(key)? {
+            Value::Bytes(b) if b.len() > max => Err(Error::TooLarge(key)),
+            Value::Bytes(b) => Ok(b.clone()),
+            _ => Err(Error::Type(key)),
+        }
+    }
+
+    /// The entries of a text-keyed map, values converted by `val`.
+    fn entries<T>(
+        &self,
+        val: impl Fn(&Value) -> Result<T, Error>,
+        key: &'static str,
+    ) -> Result<BTreeMap<String, T>, Error> {
+        self.0.iter().map(|(k, v)| Ok((as_text(k, key)?, val(v)?))).collect()
     }
 
     fn opt_text(&self, key: &'static str) -> Result<Option<String>, Error> {
@@ -891,6 +1221,10 @@ fn as_uint(v: &Value, key: &'static str) -> Result<u64, Error> {
         Value::Uint(n) => Ok(*n),
         _ => Err(Error::Type(key)),
     }
+}
+
+fn as_u16(v: &Value, key: &'static str) -> Result<u16, Error> {
+    u16::try_from(as_uint(v, key)?).map_err(|_| Error::Type(key))
 }
 
 fn as_text(v: &Value, key: &'static str) -> Result<String, Error> {

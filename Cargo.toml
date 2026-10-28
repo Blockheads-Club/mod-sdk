@@ -11,6 +11,7 @@ members = [
     "crates/bhmod-content",
     "crates/bhmod-native",
     "crates/bhmod-android",
+    "crates/bhmod-voice",
 ]
 # Guest code builds for wasm32-wasip2 on its own (scripts/build-wasm.sh).
 exclude = [

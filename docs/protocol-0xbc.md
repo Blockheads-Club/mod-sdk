@@ -16,7 +16,8 @@ mod packages from the server to the client and then exchange mod channel traffic
    installed.
 4. One new packet type byte, `0xBC`, followed by a sub-opcode. ENet channels are **not** used to multiplex (the
    server sends on a channel chosen per peer and ignores the receive channel).
-5. All 0xBC packets are sent **reliable**, like the vanilla packets.
+5. All 0xBC packets are sent **reliable**, like the vanilla packets, except `VOICE_FRAME` (0x16), which is sent
+   **unreliable + unsequenced** (a late voice frame is worthless).
 
 ## 2. Packet layout
 
@@ -26,8 +27,8 @@ mod packages from the server to the client and then exchange mod channel traffic
 +------+--------+---------------------------+
 ```
 
-- `body` is a **canonical CBOR map** (section 3) for every op except `FILE_CHUNK` (0x05) and `CHANNEL` (0x10), which
-  use a fixed little-endian header plus raw bytes.
+- `body` is a **canonical CBOR map** (section 3) for every op except `FILE_CHUNK` (0x05), `CHANNEL` (0x10) and
+  `VOICE_FRAME` (0x16), which use a fixed little-endian header plus raw bytes.
 - A CBOR body is at most 1 MiB. Receivers drop larger packets.
 - Unknown ops are ignored (not an error for the connection). Unknown **keys** inside a known message are ignored, so
   minor additions do not need a new `proto`.
@@ -83,8 +84,15 @@ client                                   modded server                  vanilla 
 | `12` | S->C | `COSMETICS` | `{full, players}` |
 | `13` | both | `SERVICE_CALL` | `{id, mod, service, req, method, args}` |
 | `14` | both | `SERVICE_RESULT` | `{id, ok, value}` or `{id, ok, code, message}` |
+| `15` | both | `VOICE_KEY` | `{pub[, peer, udpPort]}` |
+| `16` | both | `VOICE_FRAME` | raw, unreliable: `nonce:u64le sealed[16..=1024]` |
+| `17` | S->C | `VOICE_STATE` | `{full, players[, speakers, icons]}` |
+| `18` | C->S | `VOICE_CTRL` | `{selfMute, deafen}` |
+| `19` | S->C | `SETTINGS_SCHEMA` | `{mod, schema, values}` |
+| `1a` | C->S | `SETTINGS_SET` | `{mod, key, value}` |
+| `1b` | S->C | `SETTINGS_RESULT` | `{ok}` or `{ok, code[, message]}` |
 
-Ops `09`, `0a`-`0f` and `15`-`ff` are reserved.
+Ops `09`, `0a`-`0f` and `1c`-`ff` are reserved.
 
 ### 00 HELLO (client -> server)
 
@@ -96,6 +104,7 @@ Ops `09`, `0a`-`0f` and `15`-`ff` are reserved.
 | `api` | text | Highest `blockheads:api` version the loader implements, e.g. `0.1.0`. |
 | `runtimes` | array of text | Available runtimes: `wasm`, `lua`, `jvm`, `native`. |
 | `cached` | array of bytes(32) | SHA-256 of packages already in the client cache (may be empty; servers may use it to skip transfers). |
+| `features` | array of text, optional | Optional op groups the loader speaks: `voice` (0x15-0x18), `settings` (0x19-0x1b), `voice-unsequenced` (it can send unsequenced in-band `VOICE_FRAME`s; without it a `voice` client uses the UDP port only). Omitted when empty. |
 
 ### 01 SERVER_HELLO (server -> client)
 
@@ -107,6 +116,8 @@ Ops `09`, `0a`-`0f` and `15`-`ff` are reserved.
 | `count` | uint | Number of entries the coming `MOD_LIST` will hold. |
 | `players` | uint ≤ 2^32-1, optional | Players in the game when the server answers. |
 | `maxPlayers` | uint ≤ 2^32-1, optional | The server's player capacity. Present exactly when `players` is (a lone `maxPlayers` is ignored; `players` without it is an error). |
+| `features` | array of text, optional | Optional op groups the server speaks (`voice`, `settings`). Omitted when empty. |
+| `voiceUdpPort` | uint ≤ 65535, optional | The dedicated voice UDP port, when the admin opened one (section 5, `VOICE_FRAME`). |
 
 `players` / `maxPlayers` are an additive extension (the join dialog shows "3 / 16 players"): the protocol version
 stays 1, a decoder ignores keys it does not know, so older clients simply do not see them; a server that does not know
@@ -264,6 +275,98 @@ Rules:
 - An older peer that does not know the ops ignores them (section 9), so the caller sees a timeout. Vanilla clients
   never receive a byte; a server without mods does not handle the ops.
 
+### Features (voice, settings)
+
+`HELLO.features` and `SERVER_HELLO.features` are additive keys (protocol stays 1; peers that do not know them ignore
+them, absent means none). A side sends the ops of a feature only when **both** listed it: the voice ops only to peers
+that listed `voice`, the settings ops only to peers that listed `settings`. A server without the voice mod lists no
+`voice` and sends no new byte.
+
+### 15 VOICE_KEY (both directions, after approval)
+
+| Key | Type | Meaning |
+| --- | --- | --- |
+| `pub` | bytes(32) | The sender's X25519 public key for this connection (a fresh key per connection). |
+| `peer` | uint ≤ 65535, S->C only | The client's own speaker id: S->C frames name speakers by it, and it is part of the UDP token. |
+| `udpPort` | uint ≤ 65535, S->C only | The dedicated voice UDP port, when open. |
+
+The client sends its `VOICE_KEY` once it is in the game and the server listed `voice`; the server answers with its
+own. Both derive the session (reference: `crates/bhmod-voice`, module `crypto`):
+
+```
+shared   = X25519(own secret, peer pub)                         (all-zero result: abort, low-order key)
+prk      = HKDF-SHA256-Extract(salt = "bhvoice-v1", ikm = shared)
+c2s key  = HKDF-Expand(prk, "bhvoice c2s" || client pub || server pub, 32)
+s2c key  = HKDF-Expand(prk, "bhvoice s2c" || client pub || server pub, 32)
+udp token = HMAC-SHA256(c2s key, "bhvoice-udp" || peer:u16le)  (32 bytes)
+```
+
+The server signs nothing: the exchange protects against passive listeners; the server is trusted as the relay. A
+client may pin the server's voice key per server address (trust on first use).
+
+### 16 VOICE_FRAME (both directions, unreliable + unsequenced)
+
+Sent in-band as an ENet `SEND_UNSEQUENCED` on **channel 0** (the vanilla client opens 8 channels; the per-peer
+channel of the reliable ops does not apply). Raw: `bc 16`, `nonce` (u64 LE), `sealed` = ChaCha20-Poly1305(key of the direction, nonce = `00000000 ||
+nonce:u64le`, no associated data) of the plaintext, 16-byte tag included (16..=1024 bytes). The nonce counts up from
+1 per direction and key; a receiver keeps a 64-frame replay window and drops repeats, too old nonces and frames that do
+not open. Plaintexts:
+
+```
+C->S: mode:u8 seq:u16le opus[..]
+S->C: speaker:u16le mode:u8 seq:u16le gain:u8 pan:i8 muffle:u8 opus[..]
+```
+
+- `mode`: `0` proximity, `1` global, `2` channel, `3` admin broadcast. `seq` counts the speaker's 20 ms frames.
+- `gain`: server speaker gain x route gain in percent, `0..=200`. `pan`: `-127` (left) ..= `127` (right).
+  `muffle`: `0` (clear) ..= `255` (fully muffled, low-pass).
+- The Opus payload is at most **400 bytes** (an unsequenced packet over ENet's fragment threshold of 1364 bytes would
+  turn into reliable fragments); a relay may cap it lower from its bitrate cap (2 × the CBR size).
+- The server never decodes the Opus payload; it opens the client's frame, checks caps (bitrate, speakers, rate,
+  mutes) and seals one copy per listener of the mod's route table.
+
+Dedicated UDP fallback (`transport = "auto" | "inband" | "udp"` on the server): when `voiceUdpPort`/`udpPort` is
+set the client may send the same `nonce || sealed` bytes as UDP datagrams to that port:
+
+```
+AUTH   (C->S): 01 peer:u16le token[32]     server answers 02 peer:u16le (AUTH_OK) and learns the address
+FRAME  (both): 03 peer:u16le nonce:u64le sealed
+```
+
+The client sends first (NAT) and repeats `AUTH` every 15 s as a keepalive. The frame bytes and replay window are
+shared with the in-band path (one nonce counter per direction). With no port configured everything stays in-band.
+`auto` starts in-band and moves a peer to UDP (and keeps it there) only once that peer authenticated on UDP and: it
+did not list `voice-unsequenced`, a frame does not fit the in-band budget (200 bytes per 0xBC packet), the measured loss
+is over 10 % or the server's poll lag is over 30 ms.
+
+### 17 VOICE_STATE (server -> client)
+
+| Key | Type | Meaning |
+| --- | --- | --- |
+| `full` | bool | `true` replaces everything the client knew; `false` is a delta for the listed players. |
+| `players` | map playerID -> text | `none` (no voice: vanilla or mod off), `ready`, `talking`, `self_muted`, `deafened`, `admin_muted`; in a delta `gone` = left. |
+| `speakers` | map playerID -> uint ≤ 65535, optional | The speaker id the player's frames carry. |
+| `icons` | map text -> bool, optional | Overhead icon visibility set by the admin: `speaking`, `no_voice`, `self_mute`, `admin_mute`. |
+
+### 18 VOICE_CTRL (client -> server)
+
+`{selfMute: bool, deafen: bool}`: the player's own switches. The server stops relaying a self-muted player's frames and
+sends nothing to a deafened one (admin broadcast too, unless the admin set `broadcast_overrides_deafen`).
+
+### 19 SETTINGS_SCHEMA / 1a SETTINGS_SET / 1b SETTINGS_RESULT
+
+Server-scope mod settings, for the in-game admin form. Only between the server and an admin's client that both listed
+`settings`.
+
+- `SETTINGS_SCHEMA {mod: text, schema: bytes, values: bytes}` (S->C): `schema` is the mod's settings contract
+  `{fields: [...]}` and `values` the map key -> current value, each as **canonical CBOR in the full value profile**
+  (floats and negative integers allowed, like `SERVICE_CALL.args`), at most 262144 bytes each.
+- `SETTINGS_SET {mod: text, key: text, value: bytes}` (C->S): `value` is canonical CBOR, at most 32768 bytes. The
+  server checks admin rights and validates against the schema.
+- `SETTINGS_RESULT` (S->C), one per `SETTINGS_SET` in order: `{ok: true}` or `{ok: false, code: uint ≤ 255,
+  message?: text}`; codes `1` NOT_PERMITTED, `2` UNKNOWN_MOD, `3` UNKNOWN_KEY, `4` INVALID_VALUE, `5` BUSY,
+  `6` INTERNAL (unknown codes read as INTERNAL).
+
 ## 6. Join after acceptance
 
 After `READY` the client sends its normal 0x1f player-information plist with **one extra key**:
@@ -337,7 +440,8 @@ registry = { "cosmetics": { "hats:crown": 1, "hats:ember-hair": 2 }, "items": { 
 
 ## 8. Test vectors
 
-`vectors/*.hex` hold one full packet each (lowercase hex + newline); `vectors/invalid/*.hex` must be rejected with
+`vectors/*.hex` hold one full packet each (`16-voice-frame.hex` carries arbitrary bytes in place of a real sealed
+frame; real frames are tested in `bhmod-voice`) (lowercase hex + newline); `vectors/invalid/*.hex` must be rejected with
 the error class named in `vectors.json` (`not-mod-packet`, `truncated`, `unknown-op`, `cbor`, `missing`, `type`,
 `too-large`, `not-map`, `invalid`). `vectors.json` also shows every CBOR body as JSON (byte strings as
 `{"$bytes": "<hex>"}`), the `modsHash` cases and the vanilla rejection packet.
@@ -351,8 +455,9 @@ Example, `02-list-request.hex`: `bc02a0`. `10-channel.hex` (channel 1, payload `
 
 ## 9. Versioning
 
-`proto` is bumped only for incompatible changes (`COSMETICS`, `SERVICE_CALL` and `SERVICE_RESULT` are compatible
-additions: an older client ignores the unknown op). New keys and new ops are compatible additions (ignored by older
+`proto` is bumped only for incompatible changes (`COSMETICS`, `SERVICE_CALL`, `SERVICE_RESULT` and the
+feature-gated `VOICE_*` / `SETTINGS_*` ops are compatible additions: an older client ignores the unknown op, and a
+peer that did not list the feature never receives them). New keys and new ops are compatible additions (ignored by older
 peers). The API version (`HELLO.api`, `mod.toml` `api`) is independent of `proto`.
 
 ## 10. Server behaviour (blockheads-server, M5)

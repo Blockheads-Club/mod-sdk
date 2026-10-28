@@ -109,6 +109,7 @@ confirmed a red warning: [`docs/native.md`](docs/native.md), example [`sdk/nativ
 | `crates/bhmod-index` | Checks, builds and signs the public mod index ([`docs/index.md`](docs/index.md)) |
 | `crates/bhmod-core` | The shared mod host (GPL, built from M1 on) |
 | `crates/bhmod-wasm` | The WASM runtime of the host: wasmtime, Cranelift / Pulley, deadlines, memory limits, compile cache (GPL) |
+| `crates/bhmod-voice` | Voice chat core of the hosts: session crypto, frame layouts, server relay, jitter buffer, mixer, VAD (GPL; no audio devices) |
 
 **Developing:** `scripts/build-wasm.sh` (needs `rustup target add wasm32-wasip2`), then `cargo test --workspace`. CI
 also runs clippy, rustfmt, the WIT check, the examples, the Luau ⇄ WASM conformance suite and a 100 % line coverage
@@ -118,6 +119,6 @@ gate (`cargo llvm-cov --workspace --ignore-filename-regex 'bhmod-wasm/src/wit' -
 
 ## ⚖️ License
 Your mod is yours: pick any licence you like. The API, schemas, tools and examples here are `MIT OR Apache-2.0`;
-`bhmod-core` and `bhmod-wasm` are GPL-3.0-or-later with an exception for mods. Details: [LICENSING.md](LICENSING.md).
+`bhmod-core`, `bhmod-wasm` and `bhmod-voice` are GPL-3.0-or-later with an exception for mods. Details: [LICENSING.md](LICENSING.md).
 
 Not affiliated with Majic Jungle or Noodlecake. Mods must not include original game files.

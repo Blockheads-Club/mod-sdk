@@ -108,6 +108,7 @@ fn valid() -> Vec<(&'static str, &'static str, &'static str, Message)> {
                 api: "0.1.0".into(),
                 runtimes: vec!["wasm".into(), "lua".into()],
                 cached: vec![],
+                features: vec![],
             }),
         ),
         (
@@ -121,6 +122,21 @@ fn valid() -> Vec<(&'static str, &'static str, &'static str, Message)> {
                 api: "0.1.0".into(),
                 runtimes: vec!["wasm".into(), "lua".into(), "jvm".into()],
                 cached: vec![h("landclaim-1.4.0.bhmod")],
+                features: vec![],
+            }),
+        ),
+        (
+            "00-hello-features",
+            "C->S",
+            "Modded PC client that speaks the voice and settings ops.",
+            Message::Hello(Hello {
+                proto: 1,
+                loader: "0.4.0".into(),
+                platform: "pc-linux-x86_64".into(),
+                api: "0.4.0".into(),
+                runtimes: vec!["wasm".into(), "lua".into()],
+                cached: vec![],
+                features: vec![feature::VOICE.into(), feature::SETTINGS.into()],
             }),
         ),
         (
@@ -133,6 +149,8 @@ fn valid() -> Vec<(&'static str, &'static str, &'static str, Message)> {
                 client_required: true,
                 count: 2,
                 players: None,
+                features: vec![],
+                voice_udp_port: None,
             }),
         ),
         (
@@ -145,6 +163,8 @@ fn valid() -> Vec<(&'static str, &'static str, &'static str, Message)> {
                 client_required: false,
                 count: 1,
                 players: None,
+                features: vec![],
+                voice_udp_port: None,
             }),
         ),
         (
@@ -157,6 +177,22 @@ fn valid() -> Vec<(&'static str, &'static str, &'static str, Message)> {
                 client_required: false,
                 count: 1,
                 players: Some(PlayerCount { online: 3, capacity: 16 }),
+                features: vec![],
+                voice_udp_port: None,
+            }),
+        ),
+        (
+            "01-server-hello-features",
+            "S->C",
+            "Server speaking the voice and settings ops, with a dedicated voice UDP port.",
+            Message::ServerHello(ServerHello {
+                proto: 1,
+                mods_hash: mods_hash([]),
+                client_required: false,
+                count: 1,
+                players: None,
+                features: vec![feature::VOICE.into(), feature::SETTINGS.into()],
+                voice_udp_port: Some(15152),
             }),
         ),
         ("02-list-request", "C->S", "Empty map body.", Message::ListRequest),
@@ -344,6 +380,104 @@ fn valid() -> Vec<(&'static str, &'static str, &'static str, Message)> {
                 outcome: Err(ServiceFailure { code: service_error::PROVIDER_ERROR, message: "no such account".into() }),
             }),
         ),
+        (
+            "15-voice-key-client",
+            "C->S",
+            "The client's X25519 public key (bytes 0x01..=0x20).",
+            Message::VoiceKey(VoiceKey { public: std::array::from_fn(|i| i as u8 + 1), peer: None, udp_port: None }),
+        ),
+        (
+            "15-voice-key-server",
+            "S->C",
+            "The server's public key, the client's speaker id 7 and the voice UDP port.",
+            Message::VoiceKey(VoiceKey {
+                public: std::array::from_fn(|i| 0xa0 + i as u8),
+                peer: Some(7),
+                udp_port: Some(15152),
+            }),
+        ),
+        (
+            "16-voice-frame",
+            "both",
+            "Nonce 1 and a 19-byte sealed body (3-byte plaintext + 16-byte tag; content arbitrary here, see bhmod-voice for real frames).",
+            Message::VoiceFrame(VoiceFrame { nonce: 1, sealed: (0..19).collect() }),
+        ),
+        (
+            "17-voice-state-full",
+            "S->C",
+            "Full state: player-a talks, player-b has no mod loader; icon visibility.",
+            Message::VoiceState(VoiceState {
+                full: true,
+                players: BTreeMap::from([("player-a".into(), "talking".into()), ("player-b".into(), "none".into())]),
+                speakers: BTreeMap::from([("player-a".into(), 1)]),
+                icons: BTreeMap::from([("no_voice".into(), true), ("speaking".into(), true)]),
+            }),
+        ),
+        (
+            "17-voice-state-delta",
+            "S->C",
+            "Delta: player-a stopped talking.",
+            Message::VoiceState(VoiceState {
+                full: false,
+                players: BTreeMap::from([("player-a".into(), "ready".into())]),
+                ..Default::default()
+            }),
+        ),
+        (
+            "18-voice-ctrl",
+            "C->S",
+            "The player muted the microphone but still hears others.",
+            Message::VoiceCtrl(VoiceCtrl { self_mute: true, deafen: false }),
+        ),
+        (
+            "19-settings-schema",
+            "S->C",
+            "One int field `radius` (8..=64, default 32); schema and values are canonical CBOR byte strings.",
+            Message::SettingsSchema(SettingsSchema {
+                mod_id: "voice".into(),
+                schema: cbor::encode(&Value::Map(vec![(
+                    Value::text("fields"),
+                    Value::Array(vec![Value::Map(vec![
+                        (Value::text("key"), Value::text("radius")),
+                        (Value::text("type"), Value::text("int")),
+                        (Value::text("min"), Value::Uint(8)),
+                        (Value::text("max"), Value::Uint(64)),
+                        (Value::text("default"), Value::Uint(32)),
+                    ])]),
+                )])),
+                values: cbor::encode(&Value::Map(vec![(Value::text("radius"), Value::Uint(32))])),
+            }),
+        ),
+        (
+            "1a-settings-set",
+            "C->S",
+            "An admin sets voice.radius to 48.",
+            Message::SettingsSet(SettingsSet {
+                mod_id: "voice".into(),
+                key: "radius".into(),
+                value: cbor::encode(&Value::Uint(48)),
+            }),
+        ),
+        ("1b-settings-result-ok", "S->C", "Stored.", Message::SettingsResult(SettingsResult { outcome: Ok(()) })),
+        (
+            "1b-settings-result-error",
+            "S->C",
+            "Out of range (INVALID_VALUE).",
+            Message::SettingsResult(SettingsResult {
+                outcome: Err(SettingsFailure {
+                    code: settings_error::INVALID_VALUE,
+                    message: Some("radius must be 8..=64".into()),
+                }),
+            }),
+        ),
+        (
+            "1b-settings-result-denied",
+            "S->C",
+            "Not an admin (NOT_PERMITTED), no message.",
+            Message::SettingsResult(SettingsResult {
+                outcome: Err(SettingsFailure { code: settings_error::NOT_PERMITTED, message: None }),
+            }),
+        ),
     ]
 }
 
@@ -498,6 +632,72 @@ fn invalid() -> Vec<(&'static str, String, &'static str)> {
             ),
             "type",
         ),
+        ("voice-frame-short-nonce", "bc1601020304".into(), "truncated"),
+        ("voice-frame-no-tag", format!("bc16{}{}", "01".repeat(8), "00".repeat(15)), "invalid"),
+        (
+            "voice-key-short",
+            format!("bc15{}", cbor_hex(Value::Map(vec![(Value::text("pub"), Value::Bytes(vec![1; 31]))]))),
+            "type",
+        ),
+        (
+            "voice-key-port-too-big",
+            format!(
+                "bc15{}",
+                cbor_hex(Value::Map(vec![
+                    (Value::text("pub"), Value::Bytes(vec![1; 32])),
+                    (Value::text("udpPort"), Value::Uint(65536)),
+                ]))
+            ),
+            "type",
+        ),
+        (
+            "voice-state-icon-not-bool",
+            format!(
+                "bc17{}",
+                cbor_hex(Value::Map(vec![
+                    (Value::text("full"), Value::Bool(true)),
+                    (Value::text("players"), Value::Map(vec![])),
+                    (Value::text("icons"), Value::Map(vec![(Value::text("speaking"), Value::Uint(1))])),
+                ]))
+            ),
+            "type",
+        ),
+        (
+            "voice-ctrl-missing-deafen",
+            format!("bc18{}", cbor_hex(Value::Map(vec![(Value::text("selfMute"), Value::Bool(true))]))),
+            "missing",
+        ),
+        (
+            "settings-set-value-text",
+            format!(
+                "bc1a{}",
+                cbor_hex(Value::Map(vec![
+                    (Value::text("mod"), Value::text("voice")),
+                    (Value::text("key"), Value::text("radius")),
+                    (Value::text("value"), Value::text("48")),
+                ]))
+            ),
+            "type",
+        ),
+        (
+            "settings-result-error-without-code",
+            format!("bc1b{}", cbor_hex(Value::Map(vec![(Value::text("ok"), Value::Bool(false))]))),
+            "missing",
+        ),
+        (
+            "server-hello-features-not-text",
+            format!(
+                "bc01{}",
+                cbor_hex(Value::Map(vec![
+                    (Value::text("count"), Value::Uint(0)),
+                    (Value::text("proto"), Value::Uint(1)),
+                    (Value::text("features"), Value::Array(vec![Value::Uint(1)])),
+                    (Value::text("modsHash"), Value::Bytes(h("x").to_vec())),
+                    (Value::text("clientRequired"), Value::Bool(false)),
+                ]))
+            ),
+            "type",
+        ),
         (
             "reject-text-big-reason",
             format!(
@@ -550,6 +750,7 @@ fn valid_vectors() {
                 "dataLength": c.data.len(), "dataSha256": sha_hex(&c.data),
             }),
             Message::Channel(c) => json!({ "raw": true, "channelId": c.channel_id, "payload": to_hex(&c.payload) }),
+            Message::VoiceFrame(f) => json!({ "raw": true, "nonce": f.nonce, "sealed": to_hex(&f.sealed) }),
             _ => cbor_json(&cbor::decode(&bytes[2..]).unwrap()),
         };
         index.push(json!({

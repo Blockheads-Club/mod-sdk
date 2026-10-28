@@ -8,7 +8,7 @@ Short version: **your mod is yours. Pick any licence you like** (MIT, GPL, propr
 | --- | --- |
 | API definitions (`wit/`), JSON Schemas (`schema/`), protocol spec and test vectors (`docs/`, `vectors/`) | `MIT OR Apache-2.0` |
 | Language SDKs / bindings, templates, examples (`examples/`), `bhmod-manifest`, `bhmod-proto`, the `bhmod` CLI | `MIT OR Apache-2.0` |
-| `crates/bhmod-core` (the shared mod host used by the GPL server, PC and Android hosts) and `crates/bhmod-wasm` (its WASM runtime) | `GPL-3.0-or-later` |
+| `crates/bhmod-core` (the shared mod host used by the GPL server, PC and Android hosts), `crates/bhmod-wasm` (its WASM runtime) and `crates/bhmod-voice` (the hosts' voice chat core) | `GPL-3.0-or-later` |
 
 `MIT OR Apache-2.0` means you may use those files under either licence, at your choice
 ([LICENSE-MIT](LICENSE-MIT), [LICENSE-APACHE](LICENSE-APACHE)). `bhmod-core` and `bhmod-wasm` are under the GNU GPL version 3 or

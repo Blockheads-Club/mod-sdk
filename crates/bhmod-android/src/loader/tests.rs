@@ -115,8 +115,16 @@ fn info(id: &str, bytes: &[u8]) -> ModInfo {
 }
 
 fn server_hello(hash: Hash, count: u64) -> Vec<u8> {
-    Message::ServerHello(ServerHello { proto: 1, mods_hash: hash, client_required: true, count, players: None })
-        .encode()
+    Message::ServerHello(ServerHello {
+        proto: 1,
+        mods_hash: hash,
+        client_required: true,
+        count,
+        players: None,
+        features: vec![],
+        voice_udp_port: None,
+    })
+    .encode()
 }
 
 #[test]
