@@ -766,6 +766,20 @@ mod tests {
     impl VoiceHost for Nothing {}
 
     #[test]
+    fn reply_accessors_and_runs() {
+        let u = VoiceReply::Unit;
+        assert_eq!(
+            (u.as_bool(), u.as_percent(), u.as_state(), u.as_icons()),
+            (false, 100, VoiceState::None, Icons::default())
+        );
+        assert_eq!(VoiceReply::Percent(5).as_percent(), 5);
+        assert!(VoiceReply::Bool(true).as_bool());
+        assert_eq!(VoiceReply::State(VoiceState::Talking).as_state(), VoiceState::Talking);
+        assert_eq!(VoiceReply::Icons(Icons { deafen: false, ..Icons::default() }).as_icons().deafen, false);
+        assert_eq!(VoiceCall::Master.run(&Nothing), Err(ApiError::Unsupported));
+    }
+
+    #[test]
     fn defaults_are_unsupported() {
         let n = Nothing;
         let u = Err::<(), _>(ApiError::Unsupported);

@@ -111,7 +111,7 @@ impl SettingsNet {
 
     /// Once per poll: fresh `SETTINGS_SCHEMA`s for admins after settings changed (any source), and every schema for
     /// players who became admins. Returns `(player, packet)` pairs.
-    pub fn refresh(&mut self, host: &mut ModHost, is_admin: impl Fn(&str) -> bool) -> Vec<(String, Vec<u8>)> {
+    pub fn refresh(&mut self, host: &mut ModHost, is_admin: &dyn Fn(&str) -> bool) -> Vec<(String, Vec<u8>)> {
         let changed = host.take_changed_settings();
         let mut out = Vec::new();
         for p in &self.speakers {

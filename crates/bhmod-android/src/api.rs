@@ -27,6 +27,7 @@ fn manifest_json(m: &Manifest) -> Value {
             "players": bhmod_core::config::required_permissions(p).iter().filter_map(|x| x.strip_prefix("players:")).collect::<Vec<_>>(),
             "netHttp": p.net_http,
             "channels": p.channels,
+            "voice": p.voice,
             "native": p.native,
         },
     })
