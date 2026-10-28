@@ -439,7 +439,7 @@ fn trait_defaults_for_0_1_code() {
     assert_eq!(api.ui_set_button("b", button), Err(ApiError::Unsupported));
     assert!(!api.ui_remove_button("b"));
     assert_eq!(api.ui_open_settings("m"), Err(ApiError::Unsupported));
-    assert_eq!((nb.platform(), nb.player_sleeping("p"), nb.player_alive("p")), ("unknown".to_string(), false, false));
+    assert_eq!((nb.platform(), nb.player_sleeping("p"), nb.player_alive("p")), ("unknown".to_string(), false, true));
     assert_eq!((nb.local_player(), nb.player_has_mod("p", "m"), nb.has_touch()), (None, false, false));
     assert_eq!(
         (api.host_platform(), api.player_sleeping("p"), api.player_alive("p")),

@@ -153,7 +153,8 @@ implement it compiles and behaves exactly as before; without the voice mod no ne
     Option<String>` (the player's current key; the default returns `default_key`);
   - `fn platform(&self) -> String` (`unknown`), `fn player_sleeping(&self, id) -> bool`, `fn player_alive(&self, id)
     -> bool`, `fn local_player(&self) -> Option<String>`, `fn player_has_mod(&self, id, mod_id) -> bool`,
-    `fn has_touch(&self) -> bool` (all false / `None` by default).
+    `fn has_touch(&self) -> bool` (all false / `None` by default, except `player_alive`, which defaults to true so
+    a host that does not track deaths never silences proximity voice).
   - New `UiCommand` variants through the existing `GameBridge::ui`: `SetOverhead {player, icon}`,
     `ClearOverhead {player}`, `SetButton {id, button}`, `RemoveButton {id}`, `OpenSettings {mod_id}` (`ClearMod`
     also removes the mod's icons and buttons).

@@ -163,10 +163,11 @@ pub trait GameBridge {
         false
     }
 
-    /// True while a player's blockhead is alive (API 0.3.4). The default (hosts that do not track it) is false.
+    /// True while a player's blockhead is alive (API 0.3.4). The default (hosts that do not track it) is true, so a
+    /// host without death tracking never silences proximity voice.
     fn player_alive(&self, id: &str) -> bool {
         let _ = id;
-        false
+        true
     }
 
     /// The player of this client (API 0.3.4 `players.local-player`); `None` on the server (the default).
