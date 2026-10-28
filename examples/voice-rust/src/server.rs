@@ -13,14 +13,12 @@ use crate::config::{ServerConfig, Transport};
 use crate::glue::{log_err, now_ms, on_custom, role_of, wit_activation, wit_mode};
 use crate::ledger::{Ledger, Mute};
 use crate::model::{ModeSet, Role as R};
-use crate::payload::{changed_keys, Info};
+use crate::payload::changed_keys;
 use crate::roles;
 use crate::routing::{routes_for, Peer};
 
 /// Ticks between permission-group refreshes (5 s).
 const GROUP_REFRESH: u64 = 25;
-/// Ticks a player may stay without voice chat when `allow_vanilla` is off (20 s).
-const VANILLA_GRACE: u64 = 100;
 const LEDGER_KEY: &str = "ledger";
 
 #[derive(Default)]
@@ -28,18 +26,12 @@ struct Server {
     cfg: ServerConfig,
     channels: Channels,
     ledger: Ledger,
-    /// Player ids whose blockhead died and has not moved since.
-    dead: BTreeSet<String>,
     /// Permission groups per player id (from the `permissions` service).
     groups: BTreeMap<String, BTreeSet<String>>,
     /// What `set-allowed` last told each player (modes, activations).
     allowed: BTreeMap<String, (u8, u8)>,
     /// Speakers whose routes are empty already.
     silent: BTreeSet<String>,
-    /// Tick each player joined at.
-    joined: BTreeMap<String, u64>,
-    /// Players kicked for having no voice chat (kicked once).
-    kicked: BTreeSet<String>,
     tick: u64,
 }
 
@@ -142,13 +134,13 @@ fn allowed_for(s: &Server, p: &Player) -> ModeSet {
 /// One routing pass (every tick, 5 Hz).
 fn tick() {
     let now = now_ms();
-    let (expired, refresh, tick) = with(|s| {
+    let (expired, refresh) = with(|s| {
         s.tick += 1;
         let gone = s.ledger.expire(now);
         if !gone.is_empty() {
             save_ledger(&s.ledger);
         }
-        (gone, s.tick % GROUP_REFRESH == 0 && !roles::groups(&s.cfg).is_empty(), s.tick)
+        (gone, s.tick % GROUP_REFRESH == 0 && !roles::groups(&s.cfg).is_empty())
     });
     for id in expired {
         if let Some(p) = players::get(&id) {
@@ -158,11 +150,15 @@ fn tick() {
     if refresh {
         refresh_groups();
     }
+    route_all();
+}
+
+/// Publishes every speaker's routes (each tick, and at once when someone sleeps, wakes or respawns).
+fn route_all() {
     let online = players::online();
     let states: Vec<wv::VoiceState> = online.iter().map(|p| wv::state(p).unwrap_or(wv::VoiceState::None)).collect();
-    let (peers, kick) = with(|s| {
-        let mut kick = Vec::new();
-        let peers: Vec<Peer> = online
+    let peers: Vec<Peer> = with(|s| {
+        online
             .iter()
             .zip(&states)
             .map(|(p, st)| {
@@ -177,29 +173,25 @@ fn tick() {
                         s.allowed.insert(id.clone(), (allowed.0, acts.0));
                     }
                 }
-                let joined = *s.joined.entry(id.clone()).or_insert(tick);
-                if !voice && !s.cfg.allow_vanilla && tick - joined >= VANILLA_GRACE && s.kicked.insert(id.clone()) {
-                    kick.push(id.clone());
-                }
                 Peer {
                     pos: p.pos().map(|q| (q.x, q.y)),
                     allowed,
                     channel: s.channels.channel_of(&id),
-                    dead: s.dead.contains(&id),
-                    sleeping: false, // No API tells whether a blockhead sleeps (see README).
+                    dead: !p.alive(),
+                    sleeping: p.sleeping(),
                     voice,
                 }
             })
-            .collect();
-        (peers, kick)
+            .collect()
     });
     let cfg = with(|s| s.cfg.clone());
+    let width = terrain::world_width();
     for (i, p) in online.iter().enumerate() {
         if !peers[i].voice {
             continue;
         }
         let routes =
-            routes_for(&cfg, i, &peers, None, &mut |a, b| terrain::solid_count(a.0, a.1, b.0, b.1).unwrap_or(0));
+            routes_for(&cfg, i, &peers, width, &mut |a, b| terrain::solid_count(a.0, a.1, b.0, b.1).unwrap_or(0));
         let id = p.id();
         let silent = routes.is_empty();
         if silent && with(|s| s.silent.contains(&id)) {
@@ -219,22 +211,14 @@ fn tick() {
             with(|s| if silent { s.silent.insert(id) } else { s.silent.remove(&id) });
         }
     }
-    for id in kick {
-        if let Some(p) = players::get(&id) {
-            let _ = p.kick("This server needs voice chat: install the voice mod.");
-        }
-    }
 }
 
 fn forget(id: &str) {
     with(|s| {
         s.channels.leave(id);
-        s.dead.remove(id);
         s.groups.remove(id);
         s.allowed.remove(id);
         s.silent.remove(id);
-        s.joined.remove(id);
-        s.kicked.remove(id);
     });
 }
 
@@ -334,8 +318,8 @@ fn run(sender: &Sender<'_>, args: &[String]) -> Reply {
     }
 }
 
-/// The `voice` service: `info()` (remote, for the caller's client), `channel-of(player)`,
-/// `join-channel(player, name)`, `leave-channel(player)` (local, for clan / team mods).
+/// The `voice` service for clan / team mods: `channel-of(player)`, `join-channel(player, name)`,
+/// `leave-channel(player)`.
 pub fn call_service(method: &str, args: &Value) -> Result<Value, String> {
     let arg = |i: usize| match args {
         Value::List(l) => l.get(i),
@@ -346,13 +330,6 @@ pub fn call_service(method: &str, args: &Value) -> Result<Value, String> {
         players::from_value_handle(h as u64).ok_or_else(|| "that player left".to_string())
     };
     match method {
-        "info" => {
-            let p = services::caller().and_then(|c| c.player).ok_or("info is for clients")?;
-            Ok(with(|s| {
-                let channel = s.channels.channel_of(&p.id()).and_then(|k| s.channels.display(&k).map(str::to_string));
-                Info { modes: allowed_for(s, &p), activations: s.cfg.activations, channel }.to_value()
-            }))
-        }
         "channel-of" => {
             let p = player(0)?;
             Ok(with(|s| s.channels.channel_of(&p.id()).and_then(|k| s.channels.display(&k).map(str::to_string)))
@@ -400,16 +377,10 @@ pub fn enable() -> Result<(), String> {
             forget(&p.id());
         }
     })?;
-    events::on(EventKind::Death, |ctx| {
-        if let Some(p) = ctx.player() {
-            with(|s| s.dead.insert(p.id()));
-        }
-    })?;
-    events::on(EventKind::PlayerMove, |ctx| {
-        if let Some(p) = ctx.player() {
-            with(|s| s.dead.remove(&p.id()));
-        }
-    })?;
+    // Sleeping and death change who may talk nearby: re-route at once instead of at the next tick.
+    for name in ["player:sleep", "player:wake", "player:respawn"] {
+        on_custom(name, |_| route_all())?;
+    }
     let cmd = Command::new("voice")
         .description("Voice chat: channels, mutes and gains.")
         .usage("/voice help")

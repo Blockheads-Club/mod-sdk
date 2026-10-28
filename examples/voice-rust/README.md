@@ -10,13 +10,14 @@ License: GPL-3.0-or-later.
 
 ## For players
 
-| Action | PC (rebindable) | Android |
+| Action | PC (rebindable) | Touch screen (Android) |
 | --- | --- | --- |
 | Talk nearby | hold `V` | hold the round mic button |
 | Talk to your channel | hold `B` | long-press the mic button, pick a mode |
 | Talk to everyone (if allowed) | hold `G` | same |
 | Admin broadcast (staff) | hold `J` | same |
 | Volumes, local mutes | `F8` or `/voicemenu` (`/vm`) | the headphones button |
+| One player's volume or mute | click their blockhead | tap their blockhead |
 | Mute your microphone / deafen | `F9` / `F10` | the voice settings |
 
 - The microphone stays **off** until you say yes in the first dialog (setting `mic`: ask / on / off).
@@ -45,12 +46,15 @@ Defaults:
 | `channels`, `channels_player_created`, `channels_max_per_player` | none, on, 1 | Fixed channels (name, optional password); player channels |
 | `broadcast_overrides_deafen` | off | Broadcast reaches deafened players |
 | `icon_speaking` ... `icon_admin_mute` | on | Overhead icon visibility |
-| `allow_vanilla` | on | Off: players with no voice chat 20 s after joining are kicked |
 | `speaker_gain` | none | Per-player speaker volume (`{ player, percent }`) |
 
 **Who may talk.** A list holds `owner`, `admin`, `mod`, `everyone` (a role includes the higher ones: `["mod"]` lets
 moderators, admins and the owner talk) and **permission groups**: any other name `g` matches players who have the node
 `group.<g>` in the official Permissions mod (`perms`, `/perm grant <player> group.<g>`). Groups are re-read every 5 s.
+
+**Players without the mod** (vanilla clients) may join by default; they neither hear nor talk and others see a
+"no voice" icon above them. Whether they may join at all is the host's `client-required` override for this mod
+(`[voice] client-required = true` in `mods.toml`, or the toggle in the host app), not a setting of the mod.
 
 Commands (`/voice help`):
 
@@ -70,8 +74,12 @@ Other mods (clans, teams) can put players into channels through the `voice` serv
   muffle (`voice.set-routes`): proximity by distance (with `terrain.solid-count` for muffling), global and broadcast
   to everyone, channel to the channel's members. It tells each client what it may use (`voice.set-allowed`) and
   applies caps, transport, icons, mutes and speaker gains.
-- **Client**: binds the push-to-talk keys, shows the Android button, opens the mode picker and the volume dialog,
-  draws overhead icons from the `voice:*` events and asks the server (remote service `voice.info`) what it may use.
+  Proximity distance and pan go the short way round the world (`terrain.world-width`); dead (`player.alive`) and
+  sleeping (`player.sleeping`) speakers follow the admin's rules, re-routed at once on `player:sleep|wake|respawn`.
+- **Client**: binds the push-to-talk keys, shows the on-screen button on touch screens (`ui.has-touch`), offers the
+  modes the server allows (`voice.allowed`, `voice:allowed`) in the long-press picker, opens the volume dialogs
+  (also for a tapped or clicked blockhead, `ui-pick`), draws overhead icons from the `voice:*` events (never above the
+  local player) and keeps the default-mode setting in step with `voice:mode`.
 
 ## Building and testing
 
@@ -88,10 +96,7 @@ the real mod host in `crates/bhmod-wasm/tests/voice_mod.rs` (after `scripts/buil
 `index/v/voice.toml` is the draft entry for the public mod index (`Blockheads-Club/mods`); its `sha256` and `size`
 must be refreshed from `bhmod pack` of the released package.
 
-## Known limits (API 0.3.4)
+## Known limits
 
-- No API tells whether a blockhead sleeps: `sleeping_can_talk` has no effect yet.
-- Death is taken from the `death` event and cleared by the next `player-move`; there is no respawn event.
-- Mods cannot read the world width, so proximity distance does not wrap around the world's seam (muffling does).
-- Clicking a blockhead to set its volume needs a pick event the API does not have; the volume dialog and `/voicevol`
-  stand in.
+- Hosts that do not implement `player.alive` report every player as not alive, so proximity voice there needs
+  `dead_can_talk = true` until the host tracks it.

@@ -4,17 +4,16 @@ use std::cell::RefCell;
 
 use blockheads_mod::cbor::Value;
 use blockheads_mod::prelude::*;
-use blockheads_mod::services::Target;
 use blockheads_mod::ui::{Answer, ButtonKind, Dialog, DialogButton, Field};
 use blockheads_mod::{input, ui as wui, voice as wv};
 
-use crate::command::{parse_volume, VolumeCmd};
+use crate::command::{parse_percent, parse_volume, VolumeCmd};
 use crate::config::{ClientConfig, MicChoice};
-use crate::glue::{log_err, on_custom, wit_activation, wit_mode};
-use crate::model::{Icon, Mode, State};
+use crate::glue::{from_wit_mode, log_err, on_custom, wit_activation, wit_mode};
+use crate::model::{Icon, Mode, ModeSet, State};
 use crate::payload::{
-    button_event, input_event, mic_event, picker_modes, state_event, talk_event, volume_text, ButtonAction, Info,
-    VolumeLine,
+    button_event, input_event, mic_event, mode_event, pick_event, picker_modes, player_text, state_event, talk_event,
+    volume_text, ButtonAction, VolumeLine,
 };
 
 const PTT: &str = "ptt";
@@ -26,14 +25,13 @@ const DEAFEN_ACTION: &str = "deafen";
 #[derive(Default)]
 struct Client {
     cfg: ClientConfig,
-    info: Info,
     /// The on-screen button is held and talking.
     held: bool,
-    self_mute: bool,
-    deafen: bool,
     consent_dialog: Option<u32>,
     picker_dialog: Option<(u32, Vec<Mode>)>,
     menu_dialog: Option<u32>,
+    /// The per-player volume dialog and its player id.
+    player_dialog: Option<(u32, String)>,
 }
 
 thread_local! {
@@ -65,7 +63,15 @@ fn from_wit_state(s: wv::VoiceState) -> State {
     }
 }
 
+/// True for the player of this client (no icon above oneself, no volume row).
+fn is_me(id: &str) -> bool {
+    players::local_player().is_some_and(|me| me.id() == id)
+}
+
 fn show_icon(p: &Player, state: State) {
+    if is_me(&p.id()) {
+        return;
+    }
     match state.icon() {
         Some(i) => log_err("overhead icon", wui::set_overhead(p, wit_icon(i))),
         None => {
@@ -87,14 +93,11 @@ fn apply() {
     log_err("master volume", wv::set_master(cfg.master_volume));
     log_err("vad threshold", wv::set_vad_threshold(cfg.vad_threshold));
     log_err("default mode", wv::set_default_mode(wit_mode(cfg.default_mode)));
-    if wv::set_activation(wit_activation(cfg.activation)).is_err() {
-        // Not allowed here: push-to-talk is always the fallback the server is asked to allow.
-        let _ = wv::set_activation(wv::Activation::Ptt);
-    }
-    if cfg.mic == MicChoice::On {
+    apply_activation(&cfg);
+    if cfg.mic == MicChoice::On && !matches!(wv::mic(), Ok(wv::MicState::On)) {
         log_err("microphone", wv::set_mic(true));
     }
-    if cfg.shows_button(&host::host_name()) {
+    if cfg.shows_button(wui::has_touch()) {
         let ptt = wui::Button {
             icon: "mic".into(),
             label: None,
@@ -120,6 +123,13 @@ fn apply() {
     with(|c| c.cfg = cfg);
 }
 
+/// The player's activation, or push-to-talk when the server does not allow it.
+fn apply_activation(cfg: &ClientConfig) {
+    if wv::set_activation(wit_activation(cfg.activation)).is_err() {
+        let _ = wv::set_activation(wv::Activation::Ptt);
+    }
+}
+
 fn dialog(title: &str, text: &str, field: Option<Field>, buttons: &[(&str, ButtonKind)]) -> Option<u32> {
     let buttons = buttons.iter().map(|(l, k)| DialogButton { label: l.to_string(), kind: *k }).collect();
     ui::show_dialog(&Dialog { title: title.into(), text: text.into(), field, buttons }).ok()
@@ -140,37 +150,37 @@ fn set_choice(mic: MicChoice) {
     log_err("mic setting", settings::set("mic", &Value::Text(mic.name().into())));
 }
 
-/// Asks the server what this player may do, then runs `then`.
-fn fetch_info(then: impl FnOnce() + 'static) {
-    let sent = services::call_remote(&Target::Server, "voice", "^1", "info", &[], 3000, move |r| {
-        if let Ok(v) = r {
-            with(|c| c.info = Info::from_value(&v));
-        }
-        then();
-    });
-    if let Err(e) = sent {
-        log::debug(&format!("voice info: {}", String::from(e)));
+fn open_picker() {
+    let allowed = wv::allowed()
+        .map_or(ModeSet::EMPTY, |a| a.modes.into_iter().map(from_wit_mode).fold(ModeSet::EMPTY, ModeSet::with));
+    let current = with(|c| c.cfg.default_mode);
+    let modes = picker_modes(allowed, current);
+    if modes.is_empty() {
+        let _ = ui::toast("No other talk mode on this server.");
+        return;
     }
+    let mut buttons: Vec<(&str, ButtonKind)> = modes.iter().map(|m| (m.label(), ButtonKind::Secondary)).collect();
+    buttons.push(("Cancel", ButtonKind::Secondary));
+    let text = format!("Now: {}. Talk to:", current.label());
+    let id = dialog("Talk mode", &text, None, &buttons);
+    with(|c| c.picker_dialog = id.map(|id| (id, modes)));
 }
 
-fn open_picker() {
-    fetch_info(|| {
-        let (allowed, current) = with(|c| (c.info.modes, c.cfg.default_mode));
-        let modes = picker_modes(allowed, current);
-        if modes.is_empty() {
-            let _ = ui::toast("No other talk mode on this server.");
-            return;
-        }
-        let buttons: Vec<(&str, ButtonKind)> = modes.iter().map(|m| (m.label(), ButtonKind::Secondary)).collect();
-        let text = format!("Now: {}. Talk to:", current.label());
-        let id = dialog("Talk mode", &text, None, &buttons);
-        with(|c| c.picker_dialog = id.map(|id| (id, modes)));
-    });
+/// The volume dialog of one player (a tapped or clicked blockhead).
+fn open_player(id: &str) {
+    let Some(p) = players::get(id).filter(|p| !is_me(&p.id())) else { return };
+    let (percent, muted) = (wv::player_volume(&p).unwrap_or(100), wv::player_muted(&p).unwrap_or(false));
+    let field = Field { placeholder: "0-200".into(), initial: percent.to_string(), max_length: 4 };
+    let mute = if muted { "Unmute" } else { "Mute" };
+    let buttons = [("Apply", ButtonKind::Primary), (mute, ButtonKind::Danger), ("Cancel", ButtonKind::Secondary)];
+    let dialog_id = dialog("Voice volume", &player_text(&p.alias(), percent, muted), Some(field), &buttons);
+    with(|c| c.player_dialog = dialog_id.map(|d| (d, p.id())));
 }
 
 fn open_menu() {
     let lines: Vec<VolumeLine> = players::online()
         .iter()
+        .filter(|p| !is_me(&p.id()))
         .map(|p| VolumeLine {
             alias: p.alias(),
             percent: wv::player_volume(p).unwrap_or(100),
@@ -220,6 +230,7 @@ fn on_answer(a: Answer) {
         Consent,
         Picker(Vec<Mode>),
         Menu,
+        Player(String),
         Other,
     }
     let which = with(|c| {
@@ -231,6 +242,8 @@ fn on_answer(a: Answer) {
         } else if c.menu_dialog == Some(a.dialog) {
             c.menu_dialog = None;
             Which::Menu
+        } else if c.player_dialog.as_ref().is_some_and(|(id, _)| *id == a.dialog) {
+            Which::Player(c.player_dialog.take().map(|(_, p)| p).unwrap_or_default())
         } else {
             Which::Other
         }
@@ -260,6 +273,21 @@ fn on_answer(a: Answer) {
             1 => log_err("settings screen", wui::open_settings(&host::mod_id())),
             _ => {}
         },
+        Which::Player(id) => {
+            let Some(p) = players::get(&id) else { return };
+            let line = match a.button {
+                0 => match a.text.as_deref().and_then(parse_percent) {
+                    Some(v) => wv::set_player_volume(&p, v).map(|_| format!("{} at {v} %.", p.alias())),
+                    None => Ok("Type a volume from 0 to 200.".to_string()),
+                },
+                1 => {
+                    let on = !wv::player_muted(&p).unwrap_or(false);
+                    wv::mute_player(&p, on).map(|_| format!("{} {}.", p.alias(), if on { "muted" } else { "unmuted" }))
+                }
+                _ => return,
+            };
+            let _ = ui::toast(&line.unwrap_or_else(|e| format!("Voice: {}", String::from(e))));
+        }
         Which::Other => {}
     }
 }
@@ -275,18 +303,12 @@ fn on_input(action: &str, pressed: bool) {
     match action {
         MENU_ACTION => open_menu(),
         MUTE_ACTION => {
-            let on = with(|c| {
-                c.self_mute = !c.self_mute;
-                c.self_mute
-            });
+            let on = !wv::self_muted().unwrap_or(false);
             log_err("self mute", wv::set_self_mute(on));
             let _ = ui::toast(if on { "Microphone muted." } else { "Microphone on." });
         }
         DEAFEN_ACTION => {
-            let on = with(|c| {
-                c.deafen = !c.deafen;
-                c.deafen
-            });
+            let on = !wv::deafened().unwrap_or(false);
             log_err("deafen", wv::set_deafen(on));
             let _ = ui::toast(if on { "Voice chat deafened." } else { "Voice chat audible." });
         }
@@ -355,6 +377,21 @@ pub fn enable() -> Result<(), String> {
             refresh_icon(&id);
         }
     })?;
+    on_custom(&format!("{me}:ui-pick"), |v| {
+        if let Some(id) = pick_event(v) {
+            open_player(&id);
+        }
+    })?;
+    // The loader's own mode picker may change the default mode: keep the setting in step.
+    on_custom("voice:mode", |v| {
+        if let Some(m) = mode_event(v) {
+            if with(|c| std::mem::replace(&mut c.cfg.default_mode, m)) != m {
+                log_err("default mode", settings::set("default_mode", &Value::Text(m.name().into())));
+            }
+        }
+    })?;
+    // What the server allows changed: fall back to push-to-talk if the chosen activation is not allowed any more.
+    on_custom("voice:allowed", |_| apply_activation(&with(|c| c.cfg.clone())))?;
     on_custom("voice:mic", |v| {
         if mic_event(v).as_deref() == Some("denied") {
             let _ = ui::toast("The microphone was refused. Allow it in the system settings to talk.");
@@ -371,9 +408,8 @@ pub fn enable() -> Result<(), String> {
     for p in players::online() {
         refresh_icon(&p.id());
     }
-    if with(|c| c.cfg.mic) == MicChoice::Ask {
+    if with(|c| c.cfg.mic) == MicChoice::Ask && !matches!(wv::mic(), Ok(wv::MicState::On)) {
         ask_consent();
     }
-    fetch_info(|| {});
     Ok(())
 }

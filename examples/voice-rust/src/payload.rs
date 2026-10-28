@@ -3,7 +3,7 @@
 
 use blockheads_mod::cbor::Value;
 
-use crate::model::{ActSet, Activation, Mode, ModeSet, State};
+use crate::model::{Mode, ModeSet, State};
 
 /// `voice:state` `{player, state}`.
 pub fn state_event(v: &Value) -> Option<(String, State)> {
@@ -57,47 +57,24 @@ pub fn changed_keys(v: &Value) -> Vec<String> {
     }
 }
 
-/// What the server tells a client through the remote `voice` service method `info`.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct Info {
-    /// The modes this player may talk in.
-    pub modes: ModeSet,
-    /// The activations the server allows.
-    pub activations: ActSet,
-    /// The player's channel (display name).
-    pub channel: Option<String>,
+/// `<mod>:ui-pick` `{player}` (a tapped or clicked blockhead).
+pub fn pick_event(v: &Value) -> Option<String> {
+    Some(v.get("player")?.as_str()?.to_string())
 }
 
-impl Info {
-    /// The service answer.
-    pub fn to_value(&self) -> Value {
-        let names = |v: Vec<&str>| Value::List(v.into_iter().map(Value::from).collect());
-        Value::Map(vec![
-            ("activations".into(), names(self.activations.list().into_iter().map(Activation::name).collect())),
-            ("channel".into(), self.channel.clone().map_or(Value::Null, Value::Text)),
-            ("modes".into(), names(self.modes.modes().into_iter().map(Mode::name).collect())),
-        ])
-    }
-
-    /// Reads the service answer.
-    pub fn from_value(v: &Value) -> Info {
-        let list = |k: &str| match v.get(k) {
-            Some(Value::List(l)) => l.iter().filter_map(Value::as_str).collect::<Vec<_>>(),
-            _ => Vec::new(),
-        };
-        Info {
-            modes: list("modes").into_iter().filter_map(Mode::parse).fold(ModeSet::EMPTY, ModeSet::with),
-            activations: list("activations")
-                .into_iter()
-                .filter_map(Activation::parse)
-                .fold(ActSet::default(), ActSet::with),
-            channel: v.get("channel").and_then(Value::as_str).map(str::to_string),
-        }
-    }
+/// `voice:mode` `{mode}` (the default mode changed).
+pub fn mode_event(v: &Value) -> Option<Mode> {
+    Mode::parse(v.get("mode")?.as_str()?)
 }
 
-/// The modes the long-press picker offers: the allowed ones except the current default (a dialog has at most three
-/// buttons, and there are four modes).
+/// The text of the volume dialog for one player.
+pub fn player_text(alias: &str, percent: u16, muted: bool) -> String {
+    let state = if muted { "muted" } else { "not muted" };
+    format!("{alias}: volume {percent} % ({state}) on this device. Type 0-200 and press Apply.")
+}
+
+/// The modes the long-press picker offers: the allowed ones except the current default (at most three, so a Cancel
+/// button fits in a four-button dialog).
 pub fn picker_modes(allowed: ModeSet, current: Mode) -> Vec<Mode> {
     allowed.modes().into_iter().filter(|m| *m != current).take(3).collect()
 }
@@ -179,17 +156,14 @@ mod tests {
     }
 
     #[test]
-    fn info_round_trip() {
-        let i = Info {
-            modes: ModeSet::of(&[Mode::Proximity, Mode::Broadcast]),
-            activations: ActSet::default().with(Activation::Ptt),
-            channel: Some("Red".into()),
-        };
-        let v = Value::decode(&i.to_value().encode()).unwrap();
-        assert_eq!(Info::from_value(&v), i);
-        let none = Info::default();
-        assert_eq!(Info::from_value(&none.to_value()), none);
-        assert_eq!(Info::from_value(&Value::Null), none);
+    fn pick_mode_and_player_text() {
+        assert_eq!(pick_event(&map(vec![("player", t("7"))])).as_deref(), Some("7"));
+        assert_eq!(pick_event(&Value::Null), None);
+        assert_eq!(mode_event(&map(vec![("mode", t("channel"))])), Some(Mode::Channel));
+        assert_eq!(mode_event(&map(vec![("mode", t("x"))])), None);
+        assert_eq!(mode_event(&Value::Null), None);
+        assert!(player_text("Bob", 80, false).starts_with("Bob: volume 80 % (not muted)"));
+        assert!(player_text("Bob", 80, true).contains("(muted)"));
     }
 
     #[test]

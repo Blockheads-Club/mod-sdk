@@ -9,11 +9,13 @@ use std::path::Path;
 use std::rc::Rc;
 
 use bhmod_core::input::InputCommand;
-use bhmod_core::types::{ApiError, CommandSender, Event, LogLevel, Pos, Role, Side};
+use bhmod_core::types::{ApiError, CommandSender, LogLevel, Pos, Role, Side};
 use bhmod_core::ui::{ButtonAction, OverheadIcon, UiCommand};
 use bhmod_core::value::Value as CborValue;
-use bhmod_core::voice::{Activation, Caps, Icons, Mode, Route, TransportConfig, VoiceEvent, VoiceState};
-use bhmod_core::{GameBridge, HostOptions, ModHost, ModState, RemoteCall, RemoteError, VoiceHost};
+use bhmod_core::voice::{
+    Activation, Allowance, Caps, Icons, MicState, Mode, Route, TransportConfig, VoiceEvent, VoiceState,
+};
+use bhmod_core::{GameBridge, HostOptions, ModHost, ModState, PlayerEvent, VoiceHost};
 use bhmod_wasm::{WasmConfig, WasmRuntime};
 
 fn example(name: &str) -> std::path::PathBuf {
@@ -47,6 +49,9 @@ struct Rec {
     overrides: Cell<Option<bool>>,
     /// Client calls, as text.
     calls: RefCell<Vec<String>>,
+    /// Client: the modes the server allows (mask).
+    allowed_modes: Cell<u8>,
+    self_muted: Cell<bool>,
 }
 
 impl Rec {
@@ -116,6 +121,22 @@ impl VoiceHost for Rec {
     fn set_player_volume(&self, player: &str, percent: u16) -> Result<(), ApiError> {
         self.call(format!("volume {player} {percent}"))
     }
+    fn mute_player(&self, player: &str, muted: bool) -> Result<(), ApiError> {
+        self.call(format!("mute {player} {muted}"))
+    }
+    fn set_self_mute(&self, on: bool) -> Result<(), ApiError> {
+        self.self_muted.set(on);
+        self.call(format!("self-mute {on}"))
+    }
+    fn self_muted(&self) -> Result<bool, ApiError> {
+        Ok(self.self_muted.get())
+    }
+    fn allowed(&self) -> Result<Allowance, ApiError> {
+        Ok(Allowance { modes: self.allowed_modes.get(), ..Allowance::default() })
+    }
+    fn mic(&self) -> Result<MicState, ApiError> {
+        Ok(MicState::Off)
+    }
 }
 
 /// An online player: id, alias, role, tile.
@@ -126,24 +147,27 @@ struct Bridge {
     host: &'static str,
     players: RefCell<Vec<Online>>,
     logs: RefCell<Vec<String>>,
-    kicks: RefCell<Vec<String>>,
+    /// Dead and sleeping player ids.
+    dead: RefCell<Vec<String>>,
+    asleep: RefCell<Vec<String>>,
+    local: Option<&'static str>,
     ui: RefCell<Vec<UiCommand>>,
     input: RefCell<Vec<InputCommand>>,
-    remote: RefCell<Vec<RemoteCall>>,
     voice: Rec,
 }
 
 impl Bridge {
-    fn new(side: Side, host: &'static str) -> Rc<Bridge> {
+    fn new(side: Side, host: &'static str, local: Option<&'static str>) -> Rc<Bridge> {
         Rc::new(Bridge {
             side,
             host,
             players: RefCell::default(),
             logs: RefCell::default(),
-            kicks: RefCell::default(),
+            dead: RefCell::default(),
+            asleep: RefCell::default(),
+            local,
             ui: RefCell::default(),
             input: RefCell::default(),
-            remote: RefCell::default(),
             voice: Rec::default(),
         })
     }
@@ -184,9 +208,8 @@ impl GameBridge for Bridge {
         true
     }
     fn broadcast(&self, _text: &str) {}
-    fn kick(&self, id: &str, _reason: &str) -> bool {
-        self.kicks.borrow_mut().push(id.into());
-        true
+    fn kick(&self, _id: &str, _reason: &str) -> bool {
+        false
     }
     fn is_builtin_command(&self, _name: &str) -> bool {
         false
@@ -194,9 +217,17 @@ impl GameBridge for Bridge {
     fn player_pos(&self, id: &str) -> Option<Pos> {
         self.players.borrow().iter().find(|p| p.0 == id).and_then(|p| p.3)
     }
-    fn service_send(&self, call: &RemoteCall) -> Result<(), RemoteError> {
-        self.remote.borrow_mut().push(call.clone());
-        Ok(())
+    fn player_alive(&self, id: &str) -> bool {
+        !self.dead.borrow().iter().any(|d| d == id)
+    }
+    fn player_sleeping(&self, id: &str) -> bool {
+        self.asleep.borrow().iter().any(|d| d == id)
+    }
+    fn local_player(&self) -> Option<String> {
+        self.local.map(str::to_string)
+    }
+    fn has_touch(&self) -> bool {
+        self.side == Side::Client
     }
     fn ui(&self, _mod_id: &str, command: &UiCommand) -> Result<(), ApiError> {
         self.ui.borrow_mut().push(command.clone());
@@ -241,12 +272,12 @@ fn server_half() {
     install(tmp.path(), "perms", "perms");
     fs::write(
         tmp.path().join("mods.toml"),
-        "[voice]\ngrant = [\"voice\", \"channels\", \"players:kick\"]\n[voice.settings]\nmode_global = true\ntalk_global = [\"vip\"]\n",
+        "[voice]\ngrant = [\"voice\"]\n[voice.settings]\nmode_global = true\ntalk_global = [\"vip\"]\n",
     )
     .unwrap();
-    let b = Bridge::new(Side::Server, "fake-server 1.0");
+    let b = Bridge::new(Side::Server, "fake-server 1.0", None);
     // Trivial bridge calls the mod never makes.
-    assert!(b.send_chat("x", "y") && !b.is_builtin_command("voice"));
+    assert!(b.send_chat("x", "y") && !b.is_builtin_command("voice") && !b.kick("x", "y"));
     b.broadcast("z");
     b.join("a", "ALICE", Role::Admin, Some((0, 0)), VoiceState::Ready);
     b.join("b", "BOB", Role::Player, Some((10, 0)), VoiceState::Ready);
@@ -306,22 +337,30 @@ fn server_half() {
     assert!(b.routes("b").iter().any(|r| r.0 == "c" && r.1 & CHANNEL != 0), "{:?}", b.routes("b"));
     assert!(say(&mut h, "c", "/voice channel leave")[0].contains("left Red"));
 
-    // Dead speakers are silent nearby until they move again.
-    h.fire(Event::Death { player: Some("b".into()), blockhead: 1 });
+    // Dead and sleeping speakers are silent nearby; the player:* events re-route at once (no tick needed).
+    let near = |b: &Bridge| b.routes("b").iter().any(|r| r.1 == PROX);
+    b.dead.borrow_mut().push("b".into());
     h.tick(0.2);
-    assert!(b.routes("b").iter().all(|r| r.1 & PROX == 0), "{:?}", b.routes("b"));
-    h.fire(Event::PlayerMove { player: "b".into(), from: Pos { x: 10, y: 0 }, to: Pos { x: 10, y: 0 } });
-    h.tick(0.2);
-    assert!(b.routes("b").iter().any(|r| r.1 == PROX));
+    assert!(!near(&b), "{:?}", b.routes("b"));
+    b.dead.borrow_mut().clear();
+    h.player_event(PlayerEvent::Respawn, "b");
+    assert!(near(&b));
+    b.asleep.borrow_mut().push("b".into());
+    h.player_event(PlayerEvent::Sleep, "b");
+    assert!(!near(&b));
+    h.set_setting_cbor("voice", "sleeping_can_talk", &CborValue::Bool(true).encode()).unwrap();
+    h.player_event(PlayerEvent::Wake, "b");
+    assert!(near(&b));
 
-    // Settings: a new cap reaches the host; players without voice get kicked after 20 s once not allowed.
+    // The world wraps: Carol at x 1020 is 4 tiles left of Alice at x 0 in a world 1024 wide (radius 32: pan -4/32).
+    b.players.borrow_mut()[2].3 = Some(Pos { x: 1020, y: 0 });
+    h.tick(0.2);
+    let to_a = b.routes("c").into_iter().find(|r| r.0 == "a" && r.1 == PROX).expect("alice hears carol");
+    assert!((to_a.3 + 0.125).abs() < 1e-6, "carol is 4 tiles to alice's left: {to_a:?}");
+
+    // Settings: a new cap reaches the host.
     h.set_setting_cbor("voice", "max_bitrate", &CborValue::Int(32000).encode()).unwrap();
-    h.set_setting_cbor("voice", "allow_vanilla", &CborValue::Bool(false).encode()).unwrap();
     assert_eq!(b.voice.caps.borrow().unwrap().max_bitrate, 32000);
-    for _ in 0..100 {
-        h.tick(0.2);
-    }
-    assert_eq!(*b.kicks.borrow(), ["v"]);
     h.disable_all();
     assert!(!b.log_text().contains("voice: saving mutes"), "{}", b.log_text());
 }
@@ -330,10 +369,11 @@ fn server_half() {
 fn client_half() {
     let tmp = tempfile::tempdir().unwrap();
     install(tmp.path(), "voice-rust", "voice");
-    fs::write(tmp.path().join("mods.toml"), "[voice]\ngrant = [\"voice\", \"channels\", \"players:kick\"]\n").unwrap();
-    let b = Bridge::new(Side::Client, "bhmod-android 0.3");
+    fs::write(tmp.path().join("mods.toml"), "[voice]\ngrant = [\"voice\"]\n").unwrap();
+    let b = Bridge::new(Side::Client, "bhmod-android 0.3", Some("me"));
     b.join("a", "ALICE", Role::Player, None, VoiceState::Ready);
     b.join("v", "VAN", Role::Player, None, VoiceState::None);
+    b.join("me", "ME", Role::Player, None, VoiceState::Ready);
     let mut h = host(tmp.path(), b.clone(), Side::Client);
     h.enable("World", "wid");
     assert_eq!(h.mods()[0].state, ModState::Enabled, "{}", b.log_text());
@@ -368,8 +408,6 @@ fn client_half() {
     assert!(h.ui_result(consent, 0, None));
     assert!(b.voice.calls.borrow().contains(&"mic true".into()));
     assert_eq!(h.settings_values("voice").unwrap()["mic"], "on");
-    // The client asked the server for its allowed modes.
-    assert!(b.remote.borrow().iter().any(|c| c.service == "voice" && c.method == "info"));
 
     // Keys and the button.
     b.voice.calls.borrow_mut().clear();
@@ -402,4 +440,49 @@ fn client_half() {
     let reply = h.command(CommandSender::Player("a".into()), "/voicevol ALICE 40").unwrap();
     assert_eq!(reply, ["ALICE at 40 %."]);
     assert!(b.voice.calls.borrow().contains(&"volume a 40".into()));
+
+    // The local player gets no icon, and picking a blockhead opens its volume dialog (not for oneself).
+    b.ui.borrow_mut().clear();
+    h.voice_event(&VoiceEvent::TalkStart { player: "me".into(), mode: Mode::Proximity });
+    h.ui_pick("me");
+    assert!(b.ui.borrow().is_empty(), "{:?}", b.ui.borrow());
+    h.ui_pick("a");
+    let pick = last_dialog(&b);
+    assert_eq!(pick.1, ["Apply", "Mute", "Cancel"]);
+    assert!(h.ui_result(pick.0, 0, Some("150".into())));
+    assert!(b.voice.calls.borrow().contains(&"volume a 150".into()));
+    h.ui_pick("a");
+    h.ui_result(last_dialog(&b).0, 1, None);
+    assert!(b.voice.calls.borrow().contains(&"mute a true".into()));
+
+    // Long press: the mode picker lists the other allowed modes and Cancel; the choice is kept as a setting.
+    b.voice.allowed_modes.set(0b1111);
+    h.ui_button("voice", "ptt", ButtonAction::Press);
+    h.ui_button("voice", "ptt", ButtonAction::LongPress);
+    let picker = last_dialog(&b);
+    assert_eq!(picker.1, ["Everyone", "Channel", "Broadcast", "Cancel"]);
+    h.ui_result(picker.0, 1, None);
+    assert_eq!(h.settings_values("voice").unwrap()["default_mode"], "channel");
+    // The loader's own picker reports a new default mode: the setting follows.
+    h.voice_event(&VoiceEvent::Mode(Mode::Global));
+    assert_eq!(h.settings_values("voice").unwrap()["default_mode"], "global");
+
+    // Self mute toggles from the host's switch.
+    h.input_event("voice", "self-mute", true);
+    h.input_event("voice", "self-mute", true);
+    assert!(b.voice.calls.borrow().ends_with(&["self-mute true".into(), "self-mute false".into()]));
+}
+
+/// The last dialog the client opened: its id and button labels.
+fn last_dialog(b: &Bridge) -> (u32, Vec<String>) {
+    b.ui.borrow()
+        .iter()
+        .rev()
+        .find_map(|c| match c {
+            UiCommand::ShowDialog { id, dialog } => {
+                Some((*id, dialog.buttons.iter().map(|b| b.label.clone()).collect()))
+            }
+            _ => None,
+        })
+        .unwrap()
 }
