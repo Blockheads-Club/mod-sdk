@@ -51,6 +51,16 @@ public final class Bridge {
         return d.getAbsolutePath();
     }
 
+    /** Voice: asks for RECORD_AUDIO (first opt-in); the answer comes back through Native.micPermission. */
+    public static void requestMic() {
+        Voice.request();
+    }
+
+    /** Voice: true when RECORD_AUDIO is granted already (no dialog needed). */
+    public static boolean micGranted() {
+        return Voice.granted();
+    }
+
     /** A UI command from the game thread; handled later on the UI thread. */
     public static void post(final String json) {
         ui.post(new Runnable() {

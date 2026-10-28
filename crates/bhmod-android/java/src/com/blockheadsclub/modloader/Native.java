@@ -18,6 +18,10 @@ final class Native {
     static native String install(String path, String sha256, String source, boolean nativeConfirmed);
     static native boolean setEnabled(String id, boolean on);
     static native boolean remove(String id);
+    /** The answer of the RECORD_AUDIO dialog (voice chat). */
+    static native void micPermission(boolean granted);
+    /** Push-to-talk down / up (seam for the voice HUD button). */
+    static native void ptt(boolean down);
 
     /** Runs a native call; false when the library is not loaded (yet). */
     static boolean ok(Runnable r) {

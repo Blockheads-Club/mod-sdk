@@ -14,6 +14,7 @@ pub mod inbox;
 pub mod loader;
 pub mod menus;
 pub mod ui;
+pub mod voice;
 pub mod weapons;
 
 #[cfg(test)]
@@ -78,6 +79,17 @@ pub fn budgets() -> bhmod_core::budget::Budgets {
     }
 }
 
+/// `HELLO.features` of this client: `voice-unsequenced` when the game's ENet can be reached for unsequenced sends
+/// (`android::enet::available`). `bhmod-proto`'s `Hello` has no `features` field yet; the voice protocol work (V4)
+/// adds it and passes this list.
+pub fn features(unsequenced: bool) -> Vec<&'static str> {
+    if unsequenced {
+        vec![voice::net::FEATURE]
+    } else {
+        Vec::new()
+    }
+}
+
 /// What this build can run.
 pub fn caps() -> Caps {
     Caps { loader: semver::Version::parse(VERSION).expect("crate version"), runtimes: kinds() }
@@ -136,6 +148,8 @@ mod tests {
         assert!(super::budgets().hard > bhmod_core::budget::Budgets::default().hard);
         let t = tempfile::tempdir().unwrap();
         assert_eq!(super::runtimes(t.path()).len(), o.runtimes.len());
+        assert_eq!(super::features(true), vec!["voice-unsequenced"]);
+        assert!(super::features(false).is_empty());
     }
 
     /// The JVM is off until the glue switches it on, then it is advertised and created like the others.
