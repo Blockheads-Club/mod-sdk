@@ -27,6 +27,8 @@ final class Native {
     static native boolean micGuardAvailable();
     /** Arms (true) or drops the lifecycle guard around our RECORD_AUDIO dialog. */
     static native void micGuard(boolean on);
+    /** The player touched a loader window: the game's idle pause restarts at the next frame, as for a touch on the game. */
+    static native void touched();
     /** Push-to-talk down / up (host seam: talks in the default mode without going through a mod). */
     static native void ptt(boolean down);
     /** An on-screen button of a mod: `action` = press, long-press or release. */
