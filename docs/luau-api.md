@@ -256,7 +256,8 @@ frozen 0.2 and 0.1 WIT in [`../wit/compat/blockheads-api-0.2.0/`](../wit/compat/
 ## Host behaviour (M1)
 
 - One Luau VM per mod, sandbox mode (globals and every `bh` table are read-only), 32 MiB memory limit.
-- Each call into the mod has a 25 ms hard deadline enforced by the Luau interrupt (a `pcall` cannot swallow it:
+- Each call into the mod has a 25 ms hard deadline (1 s for `on_enable` and the first call after a load: a cold
+  start) enforced by the Luau interrupt (a `pcall` cannot swallow it:
   the interrupt keeps firing until the call unwinds) and a 5 ms soft limit that logs a warning. A Luau error, a
   timeout, running out of memory or a host panic is a fault; 3 faults within 60 s disable the mod.
 - `main.luau` runs once, when the world has loaded, then `on_enable`. An error there disables the mod.
