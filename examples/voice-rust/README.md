@@ -29,7 +29,7 @@ License: GPL-3.0-or-later.
 
 ## For admins
 
-Settings are in `mods.toml` under `[voice.settings]`, the host app's Settings tab, or `/mod set voice <key> <value>`.
+Settings are in `mods.toml` under `[voice.settings]`, the host app's Settings tab, or `/mods set voice <key> <value>`.
 Defaults:
 
 | Key | Default | Meaning |
