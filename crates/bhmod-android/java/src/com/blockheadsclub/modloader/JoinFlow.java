@@ -51,7 +51,7 @@ final class JoinFlow {
         return Strings.t(c && sv ? "side_both" : c ? "side_client" : "side_server");
     }
 
-    /** Permission chips for a `{world, players, netHttp, channels, native}` object. */
+    /** Permission chips for a `{world, players, netHttp, channels, voice, native}` object. */
     static List<String> perms(JSONObject p) {
         List<String> out = new ArrayList<>();
         if (p == null) p = new JSONObject();
@@ -65,6 +65,7 @@ final class JoinFlow {
         JSONArray net = p.optJSONArray("netHttp");
         if (net != null && net.length() > 0) out.add(Strings.t("perm_net"));
         if (p.optBoolean("channels")) out.add(Strings.t("perm_channels"));
+        if (p.optBoolean("voice")) out.add(Strings.t("perm_voice"));
         if (p.optBoolean("native")) out.add(Strings.t("perm_native"));
         if (out.isEmpty()) out.add(Strings.t("perm_none"));
         return out;

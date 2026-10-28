@@ -49,6 +49,8 @@ final class Strings {
         p("perm_chat", "Chat", "Sohbet", "Чат", "Чат");
         p("perm_players", "Manages players", "Oyuncuları yönetir", "Управляет игроками", "Ойыншыларды басқарады");
         p("perm_channels", "Talks to the server", "Sunucuyla konuşur", "Общается с сервером", "Сервермен байланысады");
+        p("perm_voice", "Voice chat: microphone and speakers", "Sesli sohbet: mikrofon ve hoparlör",
+            "Голосовой чат: микрофон и динамики", "Дауыстық чат: микрофон мен динамиктер");
         p("perm_net", "Uses the internet", "İnterneti kullanır", "Использует интернет", "Интернетті пайдаланады");
         p("perm_native", "Native · full access", "Yerel kod · tam erişim", "Нативный · полный доступ", "Нативті · толық қатынас");
         p("jvm_title", "Java mods", "Java modları", "Java-моды", "Java модтары");

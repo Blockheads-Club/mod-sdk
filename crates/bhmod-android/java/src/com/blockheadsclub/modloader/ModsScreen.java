@@ -428,6 +428,7 @@ final class ModsScreen {
             o.put("players", p.optJSONArray("players") == null ? new JSONArray() : p.optJSONArray("players"));
             o.put("netHttp", p.optJSONArray("net-http") == null ? new JSONArray() : p.optJSONArray("net-http"));
             o.put("channels", p.optBoolean("channels"));
+            o.put("voice", p.optBoolean("voice"));
             o.put("native", p.optBoolean("native"));
         } catch (Exception ignored) {
         }
