@@ -136,7 +136,7 @@ itself through a small C ABI and load only from the reviewed index, after the pl
   <tr>
     <td align="center" width="25%"><a href="https://github.com/Blockheads-Club/blockheads-server"><img src="https://raw.githubusercontent.com/Blockheads-Club/blockheads-server/dev/app/static/server-icon.svg" width="64" alt=""><br><b>Server</b></a><br><sub>Runs your server mods</sub></td>
     <td align="center" width="25%"><a href="https://github.com/Blockheads-Club/blockheads-pc"><img src="https://raw.githubusercontent.com/Blockheads-Club/blockheads-pc/dev/app/static/pc-icon.svg" width="64" alt=""><br><b>Blockheads PC</b></a><br><sub>Runs client mods on PC</sub></td>
-    <td align="center" width="25%"><a href="https://github.com/Blockheads-Club/blockheads-patcher"><img src="https://raw.githubusercontent.com/Blockheads-Club/blockheads-patcher/dev/app/static/favicon.svg" width="64" alt=""><br><b>Patcher</b></a><br><sub>Installs the Android loader</sub></td>
+    <td align="center" width="25%"><a href="https://github.com/Blockheads-Club/blockheads-patcher"><img src="https://raw.githubusercontent.com/Blockheads-Club/blockheads-patcher/dev/app/src/lib/assets/patcher-icon.svg" width="64" alt=""><br><b>Patcher</b></a><br><sub>Installs the Android loader</sub></td>
     <td align="center" width="25%"><a href="https://github.com/Blockheads-Club/mods"><img src="https://raw.githubusercontent.com/Blockheads-Club/mods/dev/.github/readme/icon.svg" width="64" alt=""><br><b>Mods</b></a><br><sub>The public mod list</sub></td>
   </tr>
 </table>
